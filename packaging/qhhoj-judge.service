@@ -1,0 +1,48 @@
+# packaging/qhhoj-judge.service (directives the unit must not set are enforced by packaging/check-unit.sh)
+# Relaxed settings, each needed by isolate (setuid root, runs the sandboxed programs):
+#   - no NoNewPrivileges: it would stop the setuid bit on /usr/local/bin/isolate from taking effect at exec.
+#   - no SystemCallFilter / SystemCallArchitectures: isolate needs @mount and @privileged, and sandboxed
+#     programs inherit the filter; GAS32 needs the i386 ABI.
+#   - ReadWritePaths includes /run/isolate: isolate keeps its lock files and cgroup state there, and
+#     ProtectSystem=strict makes /run read-only.
+#   - UMask=0022 (not 0077): the sandbox runs as isolate's own uid and must read the program and the case
+#     input the daemon copies into /box; a 0077 umask would make those directories unreadable.
+#     CacheDirectoryMode=0700 keeps the cache itself private.
+[Unit]
+Description=QHHOJ judge (judge-v2)
+Documentation=file:///opt/qhhoj-judge/current/README.md
+After=isolate.service network-online.target remote-fs.target
+Requires=isolate.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=exec
+User=qhhoj-judge
+Group=qhhoj-judge
+ExecStart=/opt/qhhoj-judge/current/qhhoj-judge --config /etc/qhhoj-judge/config.toml
+LoadCredential=judge-key:/etc/qhhoj-judge/key
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=150
+CacheDirectory=qhhoj-judge
+CacheDirectoryMode=0700
+ProtectSystem=strict
+ReadWritePaths=/var/cache/qhhoj-judge /var/local/lib/isolate /run/isolate
+ReadOnlyPaths=/srv/qhhoj/problem-data
+# Kept hardening: RestrictSUIDSGID only blocks creating setuid files, so executing the existing setuid isolate still works.
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
