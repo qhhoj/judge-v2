@@ -3,10 +3,38 @@
 
 use judge_grader::languages::LanguageRegistry;
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
+use std::io::Read;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Reads a child's pipe to the end on its own thread, so a chatty command never blocks on a full pipe.
+fn drain_pipe(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
+}
+
+/// Whether `child` exited successfully within the version timeout (killed otherwise).
+fn exited_ok(child: &mut Child) -> bool {
+    let deadline = Instant::now() + VERSION_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() <= deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
 
 /// The first non-empty output line of a successful `argv`, run outside the sandbox (10 s at most).
 fn first_line(argv: &[String]) -> Option<String> {
@@ -18,21 +46,14 @@ fn first_line(argv: &[String]) -> Option<String> {
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
-    let deadline = Instant::now() + VERSION_TIMEOUT;
-    while child.try_wait().ok()?.is_none() {
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() {
+    let (stdout, stderr) = (drain_pipe(child.stdout.take()), drain_pipe(child.stderr.take()));
+    let ok = exited_ok(&mut child);
+    let (stdout, stderr) = (stdout.join().ok()?, stderr.join().ok()?);
+    if !ok {
         return None;
     }
     // javac -version and some others print to stderr.
-    let text = if output.stdout.is_empty() { output.stderr } else { output.stdout };
+    let text = if stdout.is_empty() { stderr } else { stdout };
     String::from_utf8_lossy(&text).lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)
 }
 
@@ -66,6 +87,7 @@ mod tests {
     const LANGS: &str = "[[language]]\nkey='SH'\nname='sh'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo; echo 5.2; echo extra']\n\
         [[language]]\nkey='FAILS'\nname='f'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1.0; exit 3']\n\
         [[language]]\nkey='NOPE'\nname='n'\nsource='a'\nrun=['x']\nversion=['/nonexistent/bin']\n\
+        [[language]]\nkey='CHATTY'\nname='c'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','head -c 300000 /dev/zero >&2; echo 9.1']\n\
         [[language]]\nkey='TEXT'\nname='t'\nsource='a'\nkind='text'\nrun=[]\nversion=[]\n";
 
     #[test]
@@ -76,7 +98,12 @@ mod tests {
         assert_eq!(versions.get("TEXT").map(String::as_str), Some("builtin"));
         assert!(!versions.contains_key("NOPE"), "missing binary");
         assert!(!versions.contains_key("FAILS"), "non-zero exit");
+        assert_eq!(
+            versions.get("CHATTY").map(String::as_str),
+            Some("9.1"),
+            "a full stderr pipe does not block"
+        );
         let kept = available(registry, &versions);
-        assert_eq!(kept.keys(), ["SH", "TEXT"]);
+        assert_eq!(kept.keys(), ["CHATTY", "SH", "TEXT"]);
     }
 }

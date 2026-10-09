@@ -79,7 +79,12 @@ fn release(running: &Arc<Mutex<Option<Running>>>, r: &AssignmentRef) -> Release 
 
 impl SlotPool for Pool {
     /// Refuses only when no slot is free; draining does not refuse (preflight I2).
+    /// A repeated Assign for a ref this judge already holds is ignored: a second run would reset its outbox.
     fn assign(&self, assignment: Assignment) -> Result<(), SlotsFull> {
+        if self.outboxes.contains(&assignment.r) {
+            tracing::warn!(submission_id = %assignment.r.submission_id, generation = assignment.r.generation, "duplicate Assign ignored");
+            return Ok(());
+        }
         for slot in &self.slots {
             let mut running = slot.running.lock().unwrap();
             if running.is_none() {

@@ -153,7 +153,9 @@ async fn source(deps: &WorkerDeps, a: &Assignment) -> Result<SubmissionSource, O
         return Ok(SubmissionSource::Inline(a.source.clone()));
     }
     let path = source_path(deps, &a.r);
-    let fetched = deps.fetch.fetch(&a.r, a.source_size.min(MAX_FILE_SOURCE), &path).await;
+    // source_size 0 = not announced: only the 64 MiB cap applies.
+    let announced = if a.source_size == 0 { MAX_FILE_SOURCE } else { a.source_size.min(MAX_FILE_SOURCE) };
+    let fetched = deps.fetch.fetch(&a.r, announced, &path).await;
     if let Err(error) = fetched {
         tracing::warn!(judge = %deps.judge, submission_id = %a.r.submission_id, %error, "source fetch failed");
         return Err(Outcome::Retry(RetryReason::DataUnavailable));

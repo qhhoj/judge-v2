@@ -66,7 +66,10 @@ impl Runner for Scripted {
 struct FixedFetch;
 #[tonic::async_trait]
 impl SourceFetch for FixedFetch {
-    async fn fetch(&self, _r: &AssignmentRef, _max: u64, dest: &Path) -> Result<(), String> {
+    async fn fetch(&self, _r: &AssignmentRef, max: u64, dest: &Path) -> Result<(), String> {
+        if max < 9 {
+            return Err("larger than announced".into());
+        }
         std::fs::write(dest, "from-file").map_err(|e| e.to_string())
     }
 }
@@ -246,7 +249,7 @@ async fn lagging_data_is_retry_and_a_bad_code_is_internal_error() {
 async fn file_sources_are_fetched() {
     let w = world(1, 1, Duration::ZERO);
     let mut a = assignment("f", "p", 5);
-    (a.source, a.source_is_file) = (Vec::new(), true);
+    (a.source, a.source_is_file, a.source_size) = (Vec::new(), true, 9);
     w.pool.assign(a).unwrap();
     final_of(&w, "f").await;
     assert_eq!(w.seen.lock().unwrap()[0], "PY3 v5 from-file");
@@ -307,7 +310,7 @@ async fn grading_pauses_above_the_watermark_until_acks_free_it() {
 async fn the_fetched_source_is_removed_after_the_run() {
     let w = world(1, 1, Duration::ZERO);
     let mut a = assignment("tmp", "p", 5);
-    (a.source, a.source_is_file) = (Vec::new(), true);
+    (a.source, a.source_is_file, a.source_size) = (Vec::new(), true, 9);
     w.pool.assign(a).unwrap();
     final_of(&w, "tmp").await;
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -333,4 +336,31 @@ async fn an_abort_releases_a_held_gate() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     w.pool.abort(&AssignmentRef { submission_id: "held".into(), generation: 1 });
     assert!(matches!(final_of(&w, "held").await, Body::Final { outcome: Outcome::Aborted, .. }));
+}
+
+#[tokio::test]
+async fn a_file_source_without_an_announced_size_is_capped_only_by_the_limit() {
+    let w = world(1, 1, Duration::ZERO);
+    let mut a = assignment("unsized", "p", 5);
+    (a.source, a.source_is_file, a.source_size) = (Vec::new(), true, 0);
+    w.pool.assign(a).unwrap();
+    assert!(matches!(final_of(&w, "unsized").await, Body::Final { outcome: Outcome::Graded, .. }));
+    let mut small = assignment("small", "p", 5);
+    (small.source, small.source_is_file, small.source_size) = (Vec::new(), true, 3);
+    w.pool.assign(small).unwrap();
+    let retry = Outcome::Retry(RetryReason::DataUnavailable);
+    assert!(matches!(final_of(&w, "small").await, Body::Final { outcome, .. } if outcome == retry));
+}
+
+#[tokio::test]
+async fn a_repeated_assign_for_a_held_ref_starts_no_second_run() {
+    let w = world(2, 20, Duration::from_millis(10));
+    w.pool.assign(assignment("twice", "p", 5)).unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    w.pool.assign(assignment("twice", "p", 5)).unwrap();
+    assert_eq!(w.pool.busy(), 1, "no second slot taken");
+    final_of(&w, "twice").await;
+    let accepted = bodies(&w, "twice").iter().filter(|b| matches!(b, Body::Accepted)).count();
+    assert_eq!(accepted, 1);
+    assert_eq!(w.seen.lock().unwrap().len(), 1);
 }

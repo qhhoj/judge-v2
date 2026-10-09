@@ -212,6 +212,11 @@ impl Outboxes {
         self.notify.notify_one();
     }
 
+    /// Whether `r` has an outbox (it is running, or its messages wait for an ack).
+    pub fn contains(&self, r: &AssignmentRef) -> bool {
+        self.inner.lock().unwrap().contains_key(r)
+    }
+
     pub fn last_seq(&self, r: &AssignmentRef) -> u32 {
         self.inner.lock().unwrap().get(r).map_or(0, Outbox::last_seq)
     }

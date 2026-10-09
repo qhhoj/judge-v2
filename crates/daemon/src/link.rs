@@ -207,6 +207,8 @@ impl Session<'_> {
         let mut draining = self.ctx.draining.clone();
         // Until Draining is sent; a closed drain channel means the daemon never drains.
         let mut watching = true;
+        // Only bridge messages (pings included) keep the session alive; our own sends do not.
+        let mut idle_at = tokio::time::Instant::now() + IDLE;
         self.flush().await;
         loop {
             tokio::select! {
@@ -218,13 +220,14 @@ impl Session<'_> {
                         self.tx.send(wire::draining()).await.ok();
                     }
                 }
-                message = tokio::time::timeout(IDLE, inbound.message()) => {
-                    let message = message.map_err(|_| LinkError::Protocol("idle for 60 s".into()))??;
-                    let Some(message) = message else { return Ok(()) };
+                message = inbound.message() => {
+                    let Some(message) = message? else { return Ok(()) };
+                    idle_at = tokio::time::Instant::now() + IDLE;
                     if !self.handle(message).await? {
                         return Ok(());
                     }
                 }
+                _ = tokio::time::sleep_until(idle_at) => return Err(LinkError::Protocol("idle for 60 s".into())),
                 _ = self.ctx.outboxes.notified() => self.flush().await,
             }
         }
