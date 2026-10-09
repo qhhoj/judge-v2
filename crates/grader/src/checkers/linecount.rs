@@ -1,27 +1,91 @@
-use super::{CheckError, CheckInput, CheckOutcome, Checker, read_file};
+use super::tokens::open;
+use super::{CheckError, CheckInput, CheckOutcome, Checker};
+use std::io::{self, BufRead};
 
+/// Compares non-empty lines, each trimmed. Partial points per matching line; any extra line earns nothing.
 pub struct LineCount;
 
-fn lines(bytes: &[u8]) -> Vec<&[u8]> {
-    let mut lines: Vec<&[u8]> = bytes.split(|b| *b == b'\n').map(|l| l.trim_ascii()).collect();
-    while lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
+/// Reads the non-empty, trimmed lines of a stream one at a time. Lines end at `\n` or `\r`.
+pub struct Lines<R> {
+    reader: R,
+    line: Vec<u8>,
+}
+
+impl<R: BufRead> Lines<R> {
+    pub fn new(reader: R) -> Self {
+        Lines { reader, line: Vec::new() }
     }
-    lines
+
+    pub fn next_line(&mut self) -> io::Result<Option<&[u8]>> {
+        loop {
+            self.line.clear();
+            if !self.read_segment()? {
+                return Ok(None);
+            }
+            if !self.line.trim_ascii().is_empty() {
+                return Ok(Some(self.line.trim_ascii()));
+            }
+        }
+    }
+
+    /// Appends bytes up to the next line break. False when the input ended with nothing read.
+    fn read_segment(&mut self) -> io::Result<bool> {
+        let mut read_any = false;
+        loop {
+            let buf = self.reader.fill_buf()?;
+            if buf.is_empty() {
+                return Ok(read_any);
+            }
+            read_any = true;
+            let end = buf.iter().position(|b| matches!(b, b'\n' | b'\r'));
+            let take = end.unwrap_or(buf.len());
+            self.line.extend_from_slice(&buf[..take]);
+            self.reader.consume(end.map_or(take, |i| i + 1));
+            if end.is_some() {
+                return Ok(true);
+            }
+        }
+    }
 }
 
 impl Checker for LineCount {
     fn check(&self, io: &CheckInput) -> Result<CheckOutcome, CheckError> {
-        let (output, answer) = (read_file(io.output)?, read_file(io.answer)?);
-        let (got, want) = (lines(&output), lines(&answer));
-        if want.is_empty() {
-            return Ok(if got.is_empty() { CheckOutcome::pass() } else { CheckOutcome::fail("") });
-        }
-        let matched = want.iter().zip(&got).filter(|(w, g)| w == g).count();
-        let passed = matched == want.len() && got.len() == want.len();
-        let fraction = matched as f64 / want.len() as f64;
-        Ok(CheckOutcome { passed, fraction, ..CheckOutcome::fail("") })
+        let mut got = Lines::new(open(io.output)?);
+        let mut want = Lines::new(open(io.answer)?);
+        let (matched, total, extra) = compare(&mut got, &mut want).map_err(|e| CheckError(e.to_string()))?;
+        Ok(outcome(matched, total, extra))
     }
+}
+
+fn compare<A: BufRead, B: BufRead>(
+    got: &mut Lines<A>,
+    want: &mut Lines<B>,
+) -> io::Result<(usize, usize, bool)> {
+    let (matched, total) = count_matches(got, want)?;
+    let extra = got.next_line()?.is_some();
+    Ok((matched, total, extra))
+}
+
+fn count_matches<A: BufRead, B: BufRead>(
+    got: &mut Lines<A>,
+    want: &mut Lines<B>,
+) -> io::Result<(usize, usize)> {
+    let (mut matched, mut total) = (0, 0);
+    while let Some(expected) = want.next_line()? {
+        total += 1;
+        if got.next_line()?.is_some_and(|line| line == expected) {
+            matched += 1;
+        }
+    }
+    Ok((matched, total))
+}
+
+fn outcome(matched: usize, total: usize, extra: bool) -> CheckOutcome {
+    if extra {
+        return CheckOutcome::fail("");
+    }
+    let fraction = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
+    CheckOutcome { passed: matched == total, fraction, feedback: String::new(), extended: String::new() }
 }
 
 #[cfg(test)]
@@ -44,9 +108,25 @@ mod tests {
     }
 
     #[test]
-    fn extra_lines_fail_but_keep_points() {
+    fn extra_lines_fail_and_earn_no_points() {
         let r = run(&LineCount, b"a\nb\nzzz\n", b"a\nb\n");
         assert!(!r.passed);
-        assert_eq!(r.fraction, 1.0);
+        assert_eq!(r.fraction, 0.0);
+    }
+
+    #[test]
+    fn blank_lines_in_the_middle_are_dropped() {
+        assert!(run(&LineCount, b"a\n\nb\n", b"a\nb\n").passed);
+    }
+
+    #[test]
+    fn carriage_return_also_ends_a_line() {
+        assert!(run(&LineCount, b"a\rb\r", b"a\nb\n").passed);
+    }
+
+    #[test]
+    fn empty_answer_passes_only_on_empty_output() {
+        assert!(run(&LineCount, b"\n\n", b"").passed);
+        assert_eq!(run(&LineCount, b"x", b"").fraction, 0.0);
     }
 }
