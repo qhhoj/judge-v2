@@ -1,0 +1,10 @@
+checker:
+  args:
+    files: chk.pas
+    lang: PAS
+    type: default
+  name: bridged
+test_cases:
+  - in: 1.in
+    out: 1.out
+    points: 100

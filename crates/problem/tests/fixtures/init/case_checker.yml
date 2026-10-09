@@ -1,0 +1,9 @@
+checker: standard
+test_cases:
+  - checker: identical
+    in: 1.in
+    out: 1.out
+    points: 50
+  - in: 2.in
+    out: 2.out
+    points: 50

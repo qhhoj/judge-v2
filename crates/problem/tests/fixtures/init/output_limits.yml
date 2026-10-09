@@ -1,0 +1,9 @@
+checker: standard
+output_limit_length: 1024
+output_prefix_length: 64
+test_cases:
+  - in: 1.in
+    out: 1.out
+    output_limit_length: 10
+    output_prefix_length: 5
+    points: 100

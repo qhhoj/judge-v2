@@ -1,0 +1,5 @@
+checker: floatsrel
+test_cases:
+  - in: 1.in
+    out: 1.out
+    points: 100
