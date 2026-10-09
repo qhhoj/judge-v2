@@ -129,6 +129,19 @@ mod with_isolate {
     }
 
     #[test]
+    fn run_exits_1_when_the_problem_cannot_be_judged() {
+        let (_dir, _problem, file) = fixture("sol.py", "print(3)\n");
+        let languages = format!("{ROOT}/languages.toml");
+        let testlib = format!("{ROOT}/assets/testlib");
+        let base = box_base(30);
+        let args = ["run", "--problem", "/nonexistent/aplusb", "--lang", "PY3", "--languages", &languages];
+        let out =
+            run_within(&[&args[..], &["--testlib", &testlib, "--box-base", &base, &file]].concat(), LIMIT);
+        assert_eq!(out.code, Some(1), "{}{}", out.stdout, out.stderr);
+        assert!(!out.stderr.is_empty());
+    }
+
+    #[test]
     fn run_exits_1_on_a_compile_error() {
         let out = run_source("C", "sol.c", "int main(void) { return missing_symbol; }\n", 24);
         assert_eq!(out.code, Some(1), "{}{}", out.stdout, out.stderr);

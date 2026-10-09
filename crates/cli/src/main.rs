@@ -25,6 +25,12 @@ enum Command {
     Selftest(selftest::SelftestArgs),
 }
 
+/// `run` exits 1 for anything but a graded submission, a failure to judge included.
+fn report_failure(error: anyhow::Error) -> anyhow::Result<bool> {
+    eprintln!("qhhoj-judge: {error:#}");
+    Ok(false)
+}
+
 /// 0 when `ok`, 1 when not, 2 on an error (a bad config included).
 fn exit(ok: anyhow::Result<bool>) -> ExitCode {
     match ok {
@@ -56,7 +62,7 @@ fn daemon(config: &std::path::Path) -> anyhow::Result<bool> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     exit(match cli.command {
-        Some(Command::Run(args)) => run_cmd::run(args),
+        Some(Command::Run(args)) => run_cmd::run(args).or_else(report_failure),
         Some(Command::Selftest(args)) => {
             selftest_paths(&cli.config, &args).and_then(|(l, t)| selftest::selftest(&l, &t, &args))
         }

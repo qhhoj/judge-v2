@@ -1,5 +1,10 @@
+# No job of this workflow has run on GitHub yet (judge-v2 has no remote). change-file and rust were replayed
+# locally command by command; isolate-suite and release have never run anywhere (see the notes on each).
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
+# Third-party actions are pinned by commit SHA (the comment names the tag); bump them deliberately.
+permissions:
+  contents: read
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "2"
@@ -9,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: the PR adds a change file
@@ -20,15 +25,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # the shape check reads the released proto-v1.* tags
-      - uses: arduino/setup-protoc@v3
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "29.3"
       # rust-toolchain.toml pins the compiler, rustfmt and clippy
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all
@@ -48,6 +53,9 @@ jobs:
           cargo run --locked -q -p judge-proto --example check_shape -- "$RUNNER_TEMP/released.shape.json"
       - name: the systemd unit keeps its directives
         run: bash packaging/check-unit.sh
+  # NEVER RUN: this job has not run on a GitHub-hosted runner (judge-v2 has no remote yet). It needs sudo, systemd
+  # and cgroup v2 delegation. When it first fails, look at `systemctl status isolate.service`, the isolate smoke
+  # step (`isolate --cg -b 0 --init`), /sys/fs/cgroup/isolate.slice, then at individual language installs.
   isolate-suite:
     runs-on: ubuntu-24.04
     needs: rust
@@ -55,12 +63,12 @@ jobs:
     env:
       JUDGE_SUITE_REQUIRE: C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,BF,GAS64,TEXT
     steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/setup-protoc@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "29.3"
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: compilers and runtimes
         run: |
           sudo apt-get update
@@ -74,8 +82,11 @@ jobs:
           JAVA_HOME=/usr/lib/jvm/default-java /usr/local/lib/kotlinc/bin/kotlinc -version
       - name: build and start isolate 2.6 (cgroups v2)
         run: |
-          git clone --depth 1 --branch v2.6 https://github.com/ioi/isolate "$RUNNER_TEMP/isolate"
+          # setuid root once installed: pinned to the commit of tag v2.6, verified after the checkout
+          git clone https://github.com/ioi/isolate "$RUNNER_TEMP/isolate"
           cd "$RUNNER_TEMP/isolate"
+          git checkout --detach 19ec4bd3fac386ae4cb95a7d43d8188710154661
+          test "$(git rev-parse HEAD)" = 19ec4bd3fac386ae4cb95a7d43d8188710154661
           make isolate isolate-cg-keeper
           sudo make install
           sudo cp systemd/isolate.service systemd/isolate.slice /etc/systemd/system/
@@ -90,21 +101,23 @@ jobs:
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
             --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
+  # NEVER RUN: needs isolate-suite to pass first, and packaging/build-release.sh has not run in CI (musl target).
   release:
     runs-on: ubuntu-24.04
     needs: isolate-suite
     if: github.ref == 'refs/heads/main'
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/setup-protoc@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "29.3"
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: bash packaging/build-release.sh "0.1.0-${GITHUB_SHA::12}"
-      - uses: actions/upload-artifact@v4
+      # version = the Cargo workspace version (knope bumps it) + build metadata
+      - run: RELEASE_SUFFIX="+${GITHUB_SHA::12}" bash packaging/build-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qhhoj-judge
           path: target/release-pkg/*.tar.gz
