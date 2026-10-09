@@ -132,3 +132,12 @@ fn an_interactor_that_fails_or_crashes_is_an_error_not_a_verdict() {
     let mut g = game(18, crashing);
     assert!(matches!(play(&mut g, GOOD), Err(GradeError::Checker(m)) if m.contains("crashed")));
 }
+
+#[test]
+fn a_dead_interactor_is_an_error_even_when_the_solution_then_fails_on_eof() {
+    // The parity fixture: an interactor that exits 3 at once; the solution exits non-zero on the EOF.
+    let gives_up_on_eof = "#include <iostream>\n#include <string>\nint main(){ std::cout << 500 << std::endl; std::string r; if (!(std::cin >> r)) return 1; }\n";
+    let mut g = game(20, "int main() { return 3; }\n");
+    let result = play(&mut g, gives_up_on_eof);
+    assert!(matches!(result, Err(GradeError::Checker(ref m)) if m.starts_with("interactor:")), "{result:?}");
+}

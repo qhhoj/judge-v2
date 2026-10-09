@@ -60,6 +60,8 @@ pub fn interactor_limits(solution: &Limits) -> Limits {
 }
 
 const SIGPIPE_REASON: &str = "SIGPIPE";
+/// testlib's exit code for `_fail` (a jury error).
+const TESTLIB_FAIL_EXIT: i32 = 3;
 
 /// A solution that failed on its own wins over the interactor. The exception is SIGPIPE: the solution
 /// wrote to an interactor that had already finished, so the interactor's verdict is the real one.
@@ -190,9 +192,23 @@ fn interactor_outcome(boxes: &Boxes) -> Result<CheckOutcome, GradeError> {
     interpret(CustomKind::Testlib, &report).map_err(|e| GradeError::Checker(format!("interactor: {}", e.0)))
 }
 
+/// The interactor itself failed: testlib's `_fail` (exit 3) or a crash other than a broken pipe. The case is
+/// then IE whatever the solution did (a solution that read the dead interactor's EOF is not to blame).
+pub fn interactor_failed(verdict: &RunVerdict) -> bool {
+    match verdict {
+        RunVerdict::Ir { exit_code } => *exit_code == TESTLIB_FAIL_EXIT,
+        RunVerdict::Rte { reason } => reason != SIGPIPE_REASON,
+        _ => false,
+    }
+}
+
+fn interactor_verdict(boxes: &Boxes) -> Result<RunVerdict, GradeError> {
+    Ok(classify(&boxes.helper.read_meta()?, OutputUse { written: 0, cap: u64::MAX }))
+}
+
 fn decide(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeError> {
     let result = solution_result(boxes, x)?;
-    if solution_wins(&result.verdict) {
+    if solution_wins(&result.verdict) && !interactor_failed(&interactor_verdict(boxes)?) {
         return Ok(result);
     }
     Ok(Interactive { check: Some(interactor_outcome(boxes)?), ..result })
@@ -220,6 +236,16 @@ mod tests {
         assert!(solution_wins(&RunVerdict::Rte { reason: "SIGSEGV".into() }));
         assert!(!solution_wins(&RunVerdict::Rte { reason: "SIGPIPE".into() }));
         assert!(!solution_wins(&RunVerdict::Ok));
+    }
+
+    #[test]
+    fn an_interactor_fail_or_crash_is_its_own_failure_but_a_verdict_or_broken_pipe_is_not() {
+        assert!(interactor_failed(&RunVerdict::Ir { exit_code: 3 }));
+        assert!(interactor_failed(&RunVerdict::Rte { reason: "SIGSEGV".into() }));
+        assert!(!interactor_failed(&RunVerdict::Ir { exit_code: 1 }), "testlib WA");
+        assert!(!interactor_failed(&RunVerdict::Rte { reason: "SIGPIPE".into() }));
+        assert!(!interactor_failed(&RunVerdict::Ok));
+        assert!(!interactor_failed(&RunVerdict::Tle));
     }
 
     fn spawn(program: &str, args: &[&str]) -> Child {

@@ -237,7 +237,7 @@ fn a_failed_batch_case_skips_its_batch_and_later_batches_still_score() {
 }
 
 #[test]
-fn a_pretest_run_grades_only_the_pretests() {
+fn a_pretest_run_grades_only_the_pretests_and_a_full_run_stops_at_a_failed_pretest() {
     let mut b = bench(12);
     let init = "pretest_test_cases:\n- {in: p.in, out: p.out, points: 10}\ntest_cases:\n- {in: 1.in, out: 1.out, points: 50}\n- {in: 2.in, out: 2.out, points: 50}\n";
     let mut files = APLUSB.to_vec();
@@ -251,9 +251,10 @@ fn a_pretest_run_grades_only_the_pretests() {
     assert_eq!(b.judge(&problem, &pretests, &mut rec), Outcome::Graded);
     assert_eq!(rec.started, Some((true, 1)));
     assert_eq!(rec.shape(), [(Status::Wa, 0.0)], "the pretest input 7 1 is answered 0");
+    // DMOJ's full run: the pretest first (worth 0 there), and failing it skips the tests.
     let (_, rec) = b.run("pre", "PY3", PY_SUM);
-    assert_eq!(rec.started, Some((false, 2)));
-    assert_eq!(rec.shape(), [(Status::Ac, 50.0), (Status::Ac, 50.0)]);
+    assert_eq!(rec.started, Some((false, 3)));
+    assert_eq!(rec.shape(), [(Status::Wa, 0.0), (Status::Sc, 0.0), (Status::Sc, 0.0)]);
 }
 
 const INTERACTOR: &str = r#"#include "testlib.h"
