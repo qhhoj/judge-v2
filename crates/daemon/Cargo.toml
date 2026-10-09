@@ -23,6 +23,8 @@ tracing-subscriber.workspace = true
 prometheus.workspace = true
 rand.workspace = true
 http.workspace = true
+judge-proto.workspace = true
+tonic = { workspace = true, features = ["tls-ring"] }
 
 [dev-dependencies]
 tempfile.workspace = true
