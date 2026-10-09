@@ -1,0 +1,1 @@
+{"type":"BridgeMessage","message":{"assign":{"ref":{"submissionId":"01920000-0000-7000-8000-000000000001","generation":2},"problemCode":"outonly","dataVersion":"0","languageKey":"OUTPUT","sourceIsFile":true,"sourceSize":"10485760","timeLimitS":1,"memoryLimitKib":"65536","pretestsOnly":true,"meta":{"inContest":-1,"attemptNo":3,"userId":"01920000-0000-7000-8000-0000000000bb"}}}}

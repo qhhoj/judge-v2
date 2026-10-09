@@ -1,0 +1,1 @@
+{"type":"JudgeMessage","message":{"final":{"ref":{"submissionId":"01920000-0000-7000-8000-000000000001","generation":1},"seq":2,"outcome":"OUTCOME_COMPILE_ERROR","log":"main.cpp:1:1: error: expected unqualified-id"}}}

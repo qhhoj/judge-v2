@@ -11,6 +11,7 @@ pub mod v1 {
 /// The encoded `FileDescriptorSet` of the contract, for the compatibility check.
 pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/judge_descriptor.bin"));
 
+pub mod golden;
 pub mod shape;
 
 /// `proto/version.json`: bumped with every additive change inside v1 (`Hello`/`Welcome.protocol_minor`).

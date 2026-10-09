@@ -1,0 +1,1 @@
+{"type":"BridgeMessage","message":{"error":{"code":"ERROR_CODE_SEQ_GAP","message":"seq 7 after 5"}}}
