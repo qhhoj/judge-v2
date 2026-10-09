@@ -1,5 +1,8 @@
 //! init.yml model, case plan, verdict model, `.data-version` and directory caches.
 
+pub mod init;
+pub mod verdict;
+
 #[cfg(test)]
 mod tests {
     #[test]
