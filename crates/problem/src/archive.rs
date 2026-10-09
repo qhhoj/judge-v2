@@ -28,8 +28,11 @@ fn archive_error(message: impl std::fmt::Display) -> DataError {
     DataError::Archive(message.to_string())
 }
 
+/// Zips made on Windows store `tests\1.in`; `\` is a separator, never part of a name. The segments are
+/// checked after the conversion.
 fn safe_relative(name: &str) -> Result<PathBuf, DataError> {
-    let path = Path::new(name);
+    let name = name.replace('\\', "/");
+    let path = Path::new(&name);
     let normal = path.components().all(|c| matches!(c, Component::Normal(_)));
     if name.is_empty() || !normal {
         return Err(archive_error(format!("unsafe entry name {name:?}")));
@@ -125,6 +128,16 @@ mod tests {
         let big = vec![b'x'; 1001];
         let out = tempfile::tempdir().unwrap();
         assert!(extract_zip(zip_with(&[("big", &big)]).path(), out.path(), &limits()).is_err());
+    }
+
+    #[test]
+    fn windows_separators_become_directories() {
+        let zip = zip_with(&[("tests\\1.in", b"7\n")]);
+        let out = tempfile::tempdir().unwrap();
+        extract_zip(zip.path(), out.path(), &limits()).unwrap();
+        assert_eq!(std::fs::read(out.path().join("tests/1.in")).unwrap(), b"7\n");
+        let evil = zip_with(&[("..\\evil", b"x")]);
+        assert!(extract_zip(evil.path(), out.path(), &limits()).is_err());
     }
 
     #[test]

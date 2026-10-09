@@ -63,9 +63,6 @@ pub fn plan_cases(init: &InitYaml, options: &PlanOptions) -> Result<CasePlan, In
     for entry in entries {
         builder.add_entry(entry, &problem)?;
     }
-    if builder.cases.len() > MAX_SUBMISSION_CASES {
-        return Err(invalid(format!("more than {MAX_SUBMISSION_CASES} cases")));
-    }
     Ok(CasePlan { pretested, cases: builder.cases })
 }
 
@@ -103,6 +100,9 @@ impl Builder {
     }
 
     fn push(&mut self, entry: &CaseEntry, options: &Inherited, scoring: Scoring) -> Result<(), InitError> {
+        if self.cases.len() >= MAX_SUBMISSION_CASES {
+            return Err(invalid(format!("more than {MAX_SUBMISSION_CASES} cases")));
+        }
         let (Some(input), Some(output)) = (&entry.input, &entry.out) else {
             return Err(invalid("a case needs both `in` and `out`"));
         };

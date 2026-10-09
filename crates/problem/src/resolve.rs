@@ -3,10 +3,12 @@
 use crate::archive::{ZipLimits, extract_zip};
 use crate::code::problem_dir;
 use crate::data_version::{
-    DataError, WaitPolicy, read_regular_to_string, read_stamp, regular_file, wait_for_stamp,
+    DataError, StampSource, WaitPolicy, read_regular_to_string, regular_file, wait_for_stamp,
 };
 use crate::dir_cache::{CacheLease, DirCache};
 use crate::init::{InitYaml, parse_init};
+use std::fs::File;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,33 +29,32 @@ fn is_relative_name(name: &str) -> bool {
         && name.split('/').all(|seg| !seg.is_empty() && !seg.starts_with('.'))
 }
 
-/// `base/name` when every directory on the way is a real directory and the file is a regular file (preflight I11).
-fn regular_under(base: &Path, name: &str) -> Result<PathBuf, DataError> {
+/// Opens `base/name` once and judges the opened handle (preflight I11): the last segment is opened with
+/// `O_NOFOLLOW`, the handle must be a regular file, and the kernel's own path for the handle must be exactly
+/// `base/name`, so no directory on the way was a symlink. Nothing is checked by path and then reopened.
+fn open_beneath(base: &Path, name: &str) -> Result<File, DataError> {
     if !is_relative_name(name) {
         return Err(DataError::Io(format!("bad file name {name:?}")));
     }
-    let mut path = base.to_path_buf();
-    let segments: Vec<&str> = name.split('/').collect();
-    for dir in &segments[..segments.len() - 1] {
-        path.push(dir);
-        if !std::fs::symlink_metadata(&path)?.file_type().is_dir() {
-            return Err(DataError::Io(format!("{} is not a directory", path.display())));
-        }
+    let expected = base.canonicalize()?.join(name);
+    let file = regular_file(&expected)?;
+    let opened = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+    if opened != expected {
+        return Err(DataError::Io(format!("{} resolves through a symlink", expected.display())));
     }
-    path.push(segments[segments.len() - 1]);
-    regular_file(&path)?;
-    Ok(path)
+    Ok(file)
 }
 
 impl ResolvedProblem {
     /// A case file named by init.yml (relative, maybe in a subdirectory), never a dotfile or a symlink.
-    pub fn case_file(&self, name: &str) -> Result<PathBuf, DataError> {
-        regular_under(&self.files_dir, name)
+    /// The caller reads or copies from the returned handle, not from a path.
+    pub fn open_case_file(&self, name: &str) -> Result<File, DataError> {
+        open_beneath(&self.files_dir, name)
     }
 
     /// A file stored next to init.yml (checker, interactor and grader sources), same rules.
-    pub fn data_file(&self, name: &str) -> Result<PathBuf, DataError> {
-        regular_under(&self.data_dir, name)
+    pub fn open_data_file(&self, name: &str) -> Result<File, DataError> {
+        open_beneath(&self.data_dir, name)
     }
 }
 
@@ -62,42 +63,57 @@ pub struct Resolver {
     pub cache: Arc<DirCache>,
     pub wait: WaitPolicy,
     pub zip: ZipLimits,
+    pub stamps: Arc<dyn StampSource>,
 }
 
 impl Resolver {
+    /// Two passes: init.yml and the extracted archive are accepted only if the stamp is the same before
+    /// and after (and no upload is running). A second disagreement is `Unavailable`.
     pub fn resolve(&self, code: &str, assigned: u64) -> Result<ResolvedProblem, DataError> {
         let dir = problem_dir(&self.root, code)?;
         if !std::fs::symlink_metadata(&dir)?.file_type().is_dir() {
             return Err(DataError::Io(format!("{} is not a real directory", dir.display())));
         }
-        match self.read_consistent(&dir, assigned)? {
-            Some(found) => self.finish(code, dir, found),
-            None => match self.read_consistent(&dir, assigned)? {
-                Some(found) => self.finish(code, dir, found),
-                None => Err(DataError::Unavailable { assigned, found: read_stamp(&dir)? }),
-            },
+        for _ in 0..2 {
+            if let Some(problem) = self.attempt(code, &dir, assigned)? {
+                return Ok(problem);
+            }
         }
+        Err(DataError::Unavailable { assigned, found: self.stamps.read(&dir)? })
     }
 
-    /// init.yml read between two stamp reads; None when the stamp moved meanwhile.
-    fn read_consistent(&self, dir: &Path, assigned: u64) -> Result<Option<(u64, InitYaml)>, DataError> {
-        let before = wait_for_stamp(dir, assigned, &self.wait)?;
+    /// None when the stamp moved while init.yml was read or the archive extracted; the work is discarded.
+    fn attempt(&self, code: &str, dir: &Path, assigned: u64) -> Result<Option<ResolvedProblem>, DataError> {
+        let version = wait_for_stamp(dir, assigned, &self.wait, self.stamps.as_ref())?;
         let init = parse_init(&read_regular_to_string(&dir.join("init.yml"))?)?;
-        let after = read_stamp(dir)?.unwrap_or(0);
-        Ok((before == after).then_some((before, init)))
+        let problem = self.finish(code, dir, (version, init))?;
+        // Marker after the read: an upload that began since the first read must not slip through.
+        let stamp = self.stamps.read(dir)?.unwrap_or(0);
+        let unchanged = stamp == version && !self.stamps.upload_in_progress(dir);
+        if unchanged {
+            return Ok(Some(problem));
+        }
+        if let Some(lease) = problem.lease {
+            let key = lease.key().to_string();
+            drop(lease);
+            self.cache.invalidate(&key);
+        }
+        Ok(None)
     }
 
     fn finish(
         &self,
         code: &str,
-        dir: PathBuf,
+        dir: &Path,
         (version, init): (u64, InitYaml),
     ) -> Result<ResolvedProblem, DataError> {
+        let data_dir = dir.to_path_buf();
         let Some(archive) = init.archive.clone() else {
+            let files_dir = data_dir.clone();
             return Ok(ResolvedProblem {
                 init,
-                files_dir: dir.clone(),
-                data_dir: dir,
+                files_dir,
+                data_dir,
                 data_version_used: version,
                 lease: None,
             });
@@ -108,29 +124,34 @@ impl Resolver {
         let zip = dir.join(&archive);
         let key = archive_key(code, version, &zip)?;
         let lease = self.cache.get_or_build(&key, |into| extract_zip(&zip, into, &self.zip))?;
-        Ok(ResolvedProblem {
-            init,
-            files_dir: lease.path().to_path_buf(),
-            data_dir: dir,
-            data_version_used: version,
-            lease: Some(lease),
-        })
+        let files_dir = lease.path().to_path_buf();
+        Ok(ResolvedProblem { init, files_dir, data_dir, data_version_used: version, lease: Some(lease) })
     }
 }
 
+/// Versioned problems key on the stamp. A legacy problem without a stamp keys on the archive's identity
+/// (mtime, size, inode, ctime), so an rsync that replaces the archive is not served stale.
 fn archive_key(code: &str, version: u64, zip: &Path) -> Result<String, DataError> {
     if version > 0 {
         return Ok(format!("{code}/{version}"));
     }
+    use std::os::unix::fs::MetadataExt;
     let meta = std::fs::symlink_metadata(zip)?;
-    let mtime = meta.modified()?.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    Ok(format!("{code}/0-{mtime}-{}", meta.len()))
+    Ok(format!("{code}/0-{}-{}-{}-{}", meta.mtime(), meta.size(), meta.ino(), meta.ctime()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_version::FsStamps;
+    use std::io::Read;
     use std::time::Duration;
+
+    fn read_all(mut file: File) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        bytes
+    }
 
     fn resolver(root: &Path, cache: &Path) -> Resolver {
         Resolver {
@@ -138,6 +159,7 @@ mod tests {
             cache: Arc::new(DirCache::new(cache.into(), 1 << 30)),
             wait: WaitPolicy { timeout: Duration::from_millis(200), poll: Duration::from_millis(20) },
             zip: ZipLimits::default(),
+            stamps: Arc::new(FsStamps),
         }
     }
 
@@ -157,7 +179,7 @@ mod tests {
         write_problem(root.path(), Some("3\n"));
         let problem = resolver(root.path(), cache.path()).resolve("sum", 3).unwrap();
         assert_eq!(problem.data_version_used, 3);
-        assert_eq!(problem.case_file("1.in").unwrap(), root.path().join("sum/1.in"));
+        assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"1 2\n");
     }
 
     #[test]
@@ -191,7 +213,7 @@ mod tests {
             "",
             "missing.in",
         ] {
-            assert!(problem.case_file(name).is_err(), "{name}");
+            assert!(problem.open_case_file(name).is_err(), "{name}");
         }
     }
 
@@ -202,7 +224,7 @@ mod tests {
         std::fs::create_dir_all(root.path().join("sum/sub")).unwrap();
         std::fs::write(root.path().join("sum/sub/1.in"), "4\n").unwrap();
         let problem = resolver(root.path(), cache.path()).resolve("sum", 0).unwrap();
-        assert_eq!(problem.case_file("sub/1.in").unwrap(), root.path().join("sum/sub/1.in"));
+        assert_eq!(read_all(problem.open_case_file("sub/1.in").unwrap()), b"4\n");
     }
 
     #[test]
@@ -214,9 +236,9 @@ mod tests {
         std::os::unix::fs::symlink("/etc/hostname", dir.join("1.in")).unwrap();
         std::os::unix::fs::symlink("/etc", dir.join("sub")).unwrap();
         let problem = resolver(root.path(), cache.path()).resolve("sum", 0).unwrap();
-        assert!(matches!(problem.case_file("1.in"), Err(DataError::Io(_))));
-        assert!(matches!(problem.case_file("sub/hostname"), Err(DataError::Io(_))));
-        assert!(matches!(problem.data_file("1.in"), Err(DataError::Io(_))));
+        assert!(matches!(problem.open_case_file("1.in"), Err(DataError::Io(_))));
+        assert!(matches!(problem.open_case_file("sub/hostname"), Err(DataError::Io(_))));
+        assert!(matches!(problem.open_data_file("1.in"), Err(DataError::Io(_))));
     }
 
     #[test]
@@ -269,7 +291,7 @@ mod tests {
         let problem = resolver(root.path(), cache.path()).resolve("zipped", 4).unwrap();
         assert!(problem.files_dir.starts_with(cache.path()));
         assert!(problem.files_dir.ends_with("zipped/4"));
-        assert_eq!(std::fs::read(problem.case_file("1.in").unwrap()).unwrap(), b"5\n");
+        assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"5\n");
     }
 
     #[test]
@@ -278,5 +300,192 @@ mod tests {
         let r = resolver(root.path(), cache.path());
         assert!(matches!(r.resolve("nothing", 0), Err(DataError::Io(_))));
         assert!(matches!(r.resolve("../x", 0), Err(DataError::BadCode(_))));
+    }
+
+    /// Real stamps, plus a hook that runs before the n-th `read` (1-based) and may rewrite files on disk.
+    struct ScriptedStamps {
+        reads: std::sync::atomic::AtomicUsize,
+        before_read: Box<dyn Fn(usize) + Send + Sync>,
+    }
+
+    impl ScriptedStamps {
+        fn new(before_read: impl Fn(usize) + Send + Sync + 'static) -> Arc<Self> {
+            Arc::new(ScriptedStamps { reads: Default::default(), before_read: Box::new(before_read) })
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl StampSource for ScriptedStamps {
+        fn read(&self, dir: &Path) -> Result<Option<u64>, DataError> {
+            let n = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            (self.before_read)(n);
+            FsStamps.read(dir)
+        }
+
+        fn upload_in_progress(&self, dir: &Path) -> bool {
+            FsStamps.upload_in_progress(dir)
+        }
+    }
+
+    fn init_with_cases(count: usize) -> String {
+        let cases: String =
+            (0..count).map(|i| format!("- {{in: {i}.in, out: {i}.out, points: 1}}\n")).collect();
+        format!("test_cases:\n{cases}")
+    }
+
+    fn set_stamp(dir: &Path, version: u64) {
+        std::fs::write(dir.join(".tmp-stamp"), version.to_string()).unwrap();
+        std::fs::rename(dir.join(".tmp-stamp"), dir.join(".data-version")).unwrap();
+    }
+
+    fn scripted_problem(stamps: Arc<ScriptedStamps>, root: &Path, cache: &Path) -> Resolver {
+        Resolver { stamps, ..resolver(root, cache) }
+    }
+
+    #[test]
+    fn a_stamp_that_moves_during_the_init_read_is_reread() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let dir = root.path().join("sum");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("init.yml"), init_with_cases(1)).unwrap();
+        set_stamp(&dir, 4);
+        let hook_dir = dir.clone();
+        let stamps = ScriptedStamps::new(move |n| {
+            if n == 2 {
+                std::fs::write(hook_dir.join("init.yml"), init_with_cases(2)).unwrap();
+                set_stamp(&hook_dir, 5);
+            }
+        });
+        let problem = scripted_problem(stamps.clone(), root.path(), cache.path()).resolve("sum", 4).unwrap();
+        assert_eq!((problem.data_version_used, problem.init.test_cases.len()), (5, 2));
+        assert_eq!(stamps.reads(), 4);
+    }
+
+    #[test]
+    fn a_stamp_that_keeps_moving_is_unavailable() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), Some("4"));
+        let dir = root.path().join("sum");
+        let stamps = ScriptedStamps::new(move |n| {
+            if n == 2 || n == 4 {
+                set_stamp(&dir, 3 + n as u64 / 2 + 1);
+            }
+        });
+        let error = scripted_problem(stamps, root.path(), cache.path()).resolve("sum", 4).unwrap_err();
+        assert_eq!(error, DataError::Unavailable { assigned: 4, found: Some(6) });
+    }
+
+    #[test]
+    fn a_steady_stamp_is_read_exactly_twice() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), Some("4"));
+        let stamps = ScriptedStamps::new(|_| {});
+        scripted_problem(stamps.clone(), root.path(), cache.path()).resolve("sum", 4).unwrap();
+        assert_eq!(stamps.reads(), 2);
+    }
+
+    fn write_zip(path: &Path, content: &[u8]) {
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        writer.start_file("1.in", zip::write::SimpleFileOptions::default()).unwrap();
+        std::io::Write::write_all(&mut writer, content).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn an_archive_swapped_during_extraction_is_discarded_and_rebuilt_under_the_new_version() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let dir = root.path().join("zipped");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("init.yml"),
+            "archive: t.zip\ntest_cases:\n- {in: 1.in, out: 1.out, points: 1}\n",
+        )
+        .unwrap();
+        write_zip(&dir.join("t.zip"), b"old\n");
+        set_stamp(&dir, 4);
+        let hook_dir = dir.clone();
+        let stamps = ScriptedStamps::new(move |n| {
+            if n == 2 {
+                write_zip(&hook_dir.join("t.zip"), b"new\n");
+                set_stamp(&hook_dir, 5);
+            }
+        });
+        let problem = scripted_problem(stamps, root.path(), cache.path()).resolve("zipped", 4).unwrap();
+        assert_eq!(problem.data_version_used, 5);
+        assert!(problem.files_dir.ends_with("zipped/5"));
+        assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"new\n");
+        assert!(!cache.path().join("zipped/4").exists(), "the half-old entry is gone");
+    }
+
+    #[test]
+    fn an_upload_marker_makes_the_resolve_wait_then_fail() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), Some("4"));
+        std::fs::write(root.path().join("sum/.data-version.writing"), "").unwrap();
+        let error = resolver(root.path(), cache.path()).resolve("sum", 4).unwrap_err();
+        assert!(matches!(error, DataError::Unavailable { .. }));
+    }
+
+    #[test]
+    fn an_opened_case_file_is_the_one_that_was_checked() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), None);
+        let problem = resolver(root.path(), cache.path()).resolve("sum", 0).unwrap();
+        let handle = problem.open_case_file("1.in").unwrap();
+        let path = root.path().join("sum/1.in");
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("/etc/hostname", &path).unwrap();
+        assert_eq!(read_all(handle), b"1 2\n", "a swap after the open changes nothing");
+    }
+
+    #[test]
+    fn a_directory_alias_inside_the_problem_is_refused_too() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), None);
+        let dir = root.path().join("sum");
+        std::fs::create_dir_all(dir.join("real")).unwrap();
+        std::fs::write(dir.join("real/2.in"), "x").unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("alias")).unwrap();
+        let problem = resolver(root.path(), cache.path()).resolve("sum", 0).unwrap();
+        assert!(problem.open_case_file("real/2.in").is_ok());
+        assert!(matches!(problem.open_case_file("alias/2.in"), Err(DataError::Io(_))));
+    }
+
+    #[test]
+    fn a_replaced_unstamped_archive_of_the_same_size_is_not_served_stale() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let dir = root.path().join("zipped");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("init.yml"),
+            "archive: t.zip\ntest_cases:\n- {in: 1.in, out: 1.out, points: 1}\n",
+        )
+        .unwrap();
+        write_zip(&dir.join("t.zip"), b"old\n");
+        let r = resolver(root.path(), cache.path());
+        assert_eq!(read_all(r.resolve("zipped", 0).unwrap().open_case_file("1.in").unwrap()), b"old\n");
+        let replacement = dir.join("t.new");
+        write_zip(&replacement, b"new\n");
+        let times = std::fs::metadata(dir.join("t.zip")).unwrap().modified().unwrap();
+        std::fs::File::options().write(true).open(&replacement).unwrap().set_modified(times).unwrap();
+        std::fs::rename(&replacement, dir.join("t.zip")).unwrap();
+        assert_eq!(read_all(r.resolve("zipped", 0).unwrap().open_case_file("1.in").unwrap()), b"new\n");
+    }
+
+    #[test]
+    fn an_upload_that_starts_after_the_first_stamp_read_is_not_accepted() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), Some("4"));
+        let marker = root.path().join("sum/.data-version.writing");
+        let stamps = ScriptedStamps::new(move |n| {
+            if n == 2 {
+                std::fs::write(&marker, "").unwrap();
+            }
+        });
+        let error = scripted_problem(stamps, root.path(), cache.path()).resolve("sum", 4).unwrap_err();
+        assert!(matches!(error, DataError::Unavailable { .. }), "{error:?}");
     }
 }

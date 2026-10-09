@@ -7,6 +7,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub const STAMP_NAME: &str = ".data-version";
+/// An uploader creates this file before its first change and removes it after writing the stamp.
+pub const WRITING_MARKER: &str = ".data-version.writing";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DataError {
@@ -42,15 +44,16 @@ pub struct WaitPolicy {
     pub poll: Duration,
 }
 
-/// Opens a problem file only if it is a regular file, never through a symlink (preflight I11):
+/// Opens a problem file once, never through a symlink (preflight I11), and judges the opened handle:
 /// a symlink planted on the data root must not copy the judge key or another box's files into a box.
+/// `O_NONBLOCK` keeps a planted FIFO from hanging the open; the `fstat` of the handle then refuses it.
 pub fn regular_file(path: &Path) -> Result<std::fs::File, DataError> {
-    if !std::fs::symlink_metadata(path)?.file_type().is_file() {
-        return Err(DataError::Io(format!("{} is not a regular file", path.display())));
-    }
-    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)?;
     if !file.metadata()?.is_file() {
-        return Err(DataError::Io(format!("{} changed while opening", path.display())));
+        return Err(DataError::Io(format!("{} is not a regular file", path.display())));
     }
     Ok(file)
 }
@@ -77,6 +80,28 @@ pub fn read_stamp(dir: &Path) -> Result<Option<u64>, DataError> {
     text.trim().parse().map(Some).map_err(|_| DataError::BadStamp(text))
 }
 
+/// Where the judge learns a problem's data version. The filesystem in production; scripted in tests,
+/// so a stamp that moves between two reads can be reproduced exactly.
+pub trait StampSource: Send + Sync {
+    fn read(&self, dir: &Path) -> Result<Option<u64>, DataError>;
+
+    /// True while an uploader is rewriting the problem's files: the stamp is written last, so it is
+    /// still the old version during the whole upload.
+    fn upload_in_progress(&self, dir: &Path) -> bool;
+}
+
+pub struct FsStamps;
+
+impl StampSource for FsStamps {
+    fn read(&self, dir: &Path) -> Result<Option<u64>, DataError> {
+        read_stamp(dir)
+    }
+
+    fn upload_in_progress(&self, dir: &Path) -> bool {
+        std::fs::symlink_metadata(dir.join(WRITING_MARKER)).is_ok()
+    }
+}
+
 pub fn check_stamp(found: Option<u64>, assigned: u64) -> StampCheck {
     match found {
         None => StampCheck::Use(0),
@@ -85,11 +110,18 @@ pub fn check_stamp(found: Option<u64>, assigned: u64) -> StampCheck {
     }
 }
 
-pub fn wait_for_stamp(dir: &Path, assigned: u64, policy: &WaitPolicy) -> Result<u64, DataError> {
+pub fn wait_for_stamp(
+    dir: &Path,
+    assigned: u64,
+    policy: &WaitPolicy,
+    stamps: &dyn StampSource,
+) -> Result<u64, DataError> {
     let deadline = Instant::now() + policy.timeout;
     loop {
-        let found = read_stamp(dir)?;
-        if let StampCheck::Use(version) = check_stamp(found, assigned) {
+        let found = stamps.read(dir)?;
+        if let (false, StampCheck::Use(version)) =
+            (stamps.upload_in_progress(dir), check_stamp(found, assigned))
+        {
             return Ok(version);
         }
         if Instant::now() >= deadline {
@@ -154,7 +186,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".data-version"), "1").unwrap();
         let started = Instant::now();
-        let error = wait_for_stamp(dir.path(), 2, &quick()).unwrap_err();
+        let error = wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap_err();
         assert_eq!(error, DataError::Unavailable { assigned: 2, found: Some(1) });
         assert!(started.elapsed() >= Duration::from_millis(300));
     }
@@ -170,7 +202,32 @@ mod tests {
             std::fs::write(&temp, "2\n").unwrap();
             std::fs::rename(temp, stamp).unwrap();
         });
-        assert_eq!(wait_for_stamp(dir.path(), 2, &quick()).unwrap(), 2);
+        assert_eq!(wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap(), 2);
         writer.join().unwrap();
+    }
+
+    #[test]
+    fn an_upload_marker_holds_the_wait_until_it_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".data-version"), "2").unwrap();
+        let marker = dir.path().join(WRITING_MARKER);
+        std::fs::write(&marker, "").unwrap();
+        let error = wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap_err();
+        assert_eq!(error, DataError::Unavailable { assigned: 2, found: Some(2) });
+        let remover = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            std::fs::remove_file(marker).unwrap();
+        });
+        assert_eq!(wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap(), 2);
+        remover.join().unwrap();
+    }
+
+    #[test]
+    fn a_fifo_is_refused_without_hanging() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(status.success());
+        assert!(matches!(regular_file(&fifo), Err(DataError::Io(_))));
     }
 }

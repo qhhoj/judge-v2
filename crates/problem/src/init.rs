@@ -73,7 +73,7 @@ pub struct CaseEntry {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum CheckerSpec {
     Name(String),
     WithArgs {
@@ -296,5 +296,26 @@ mod tests {
             parse_init("test_cases: []\ninteractive: {files: [i.cpp, h.h], type: testlib, lang: CPP17}\n")
                 .unwrap();
         assert_eq!(many.interactive.unwrap().files.first(), Some("i.cpp"));
+    }
+
+    #[test]
+    fn unknown_keys_are_refused_at_every_nesting_level() {
+        let top = parse_init("test_cases: []\nsymlinks: true\n").unwrap_err();
+        assert_eq!(top, InitError::Unsupported("symlinks".into()));
+        let batched = "test_cases:\n- points: 1\n  batched:\n  - {in: a, out: b, weird: 1}\n";
+        assert_eq!(parse_init(batched).unwrap_err(), InitError::Unsupported("weird".into()));
+        let file_io = parse_init("test_cases: []\nfile_io: {input: a, output: b, mode: x}\n").unwrap_err();
+        assert_eq!(file_io, InitError::Unsupported("mode".into()));
+        let interactive =
+            "test_cases: []\ninteractive: {files: i.cpp, type: testlib, lang: CPP17, extra: 1}\n";
+        assert_eq!(parse_init(interactive).unwrap_err(), InitError::Unsupported("extra".into()));
+        let signature = "test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h, nope: 1}\n";
+        assert_eq!(parse_init(signature).unwrap_err(), InitError::Unsupported("nope".into()));
+    }
+
+    #[test]
+    fn unknown_checker_keys_are_not_accepted_silently() {
+        let error = parse_init("test_cases: []\nchecker: {name: floats, typo: 1}\n").unwrap_err();
+        assert!(matches!(error, InitError::Invalid(_) | InitError::Unsupported(_)), "{error:?}");
     }
 }
