@@ -1,6 +1,18 @@
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
 jobs:
+  change-file:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: the PR adds a change file
+        run: |
+          git diff --name-only --diff-filter=A "origin/${{ github.base_ref }}...HEAD" -- '.changeset/*.md' | grep -v '^.changeset/README.md$' | grep -q . \
+            || { echo "no new .changeset/*.md: run knope document-change"; exit 1; }
   rust:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

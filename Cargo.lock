@@ -244,7 +244,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "conformance"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "judge-proto",
  "prost",
@@ -631,7 +631,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "judge-cli"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "judge-daemon"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "http",
@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "judge-grader"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "hex",
  "judge-problem",
@@ -685,7 +685,7 @@ dependencies = [
 
 [[package]]
 name = "judge-problem"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "hex",
  "libc",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "judge-proto"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "judge-sandbox"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "libc",
  "tempfile",

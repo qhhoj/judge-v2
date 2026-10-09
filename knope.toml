@@ -1,0 +1,34 @@
+# Versioning: https://knope.tech. Change files are .changeset/*.md (Changesets format).
+[package]
+versioned_files = ["Cargo.toml"] # [workspace.package] version; crates inherit it
+changelog = "CHANGELOG.md"
+ignore_conventional_commits = true # bumps come from change files only
+
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "cargo metadata --format-version 1 > /dev/null" # refreshes Cargo.lock
+
+[[workflows.steps]]
+type = "Command"
+command = "git add -A && git commit -m \"chore: release $version\""
+variables = { "$version" = "Version" }
+
+[[workflows]]
+name = "tag"
+
+[[workflows.steps]]
+type = "Command"
+command = "git tag v$version" # local only, never pushed
+variables = { "$version" = "Version" }
