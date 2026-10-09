@@ -8,6 +8,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Tests that run real isolate boxes (tests/daemon_isolate.rs).
+isolate = ["judge-grader/isolate"]
+
 [dependencies]
 judge-problem.workspace = true
 judge-sandbox.workspace = true
