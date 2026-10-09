@@ -38,6 +38,7 @@ compile = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe", "-o", "main", "main.c
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
 signature = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP11"
@@ -47,6 +48,7 @@ compile = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe", "-o", "main", "main.c
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
 signature = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP14"
@@ -56,6 +58,7 @@ compile = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe", "-o", "main", "main.c
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
 signature = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP17"
@@ -75,6 +78,7 @@ compile = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe", "-o", "main", "main.c
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
 signature = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP23"
@@ -84,6 +88,7 @@ compile = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe", "-o", "main", "main.c
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
 signature = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CLANGX"
@@ -93,6 +98,7 @@ compile = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe", "-o", "main", "ma
 run = ["./main"]
 version = ["/usr/bin/clang++", "-dumpversion"]
 signature = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
 
 [[language]]
 key = "PY3"

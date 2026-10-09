@@ -1,5 +1,6 @@
 //! Compile, run and check.
 
+pub mod artefacts;
 pub mod checkers;
 pub mod compile;
 pub mod error;
