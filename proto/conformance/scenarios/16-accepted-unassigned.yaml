@@ -1,0 +1,24 @@
+name: 16-accepted-unassigned
+summary: Accepted for a ref never assigned to the session is a protocol error; the session's own work takes the lost-judge path.
+applies_to: [bridge]
+timings: {resumeGraceMs: 300}
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}, {id: s2, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s2}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {error: {code: ERROR_CODE_PROTOCOL}}}
+  - closed: {judge: j1, status: INVALID_ARGUMENT}
+  - wait: {ms: 800}
+end_state:
+  submissions:
+    s1: {status: QU, requeueCount: 1}
+    s2: {status: QU, judgeGeneration: 0}

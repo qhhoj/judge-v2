@@ -1,0 +1,12 @@
+name: 07-blocked-while-connected
+summary: Blocking a connected judge force-disconnects it and refuses its reconnect.
+applies_to: [bridge]
+setup: {judges: [{name: j1}]}
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {block: j1}
+  - bridge: {to: j1, message: {disconnect: {forced: true}}}
+  - closed: {judge: j1, status: PERMISSION_DENIED}
+  - open: {judge: j1, expect: UNAUTHENTICATED}

@@ -1,0 +1,27 @@
+name: 11-grade
+summary: One submission from Assign to Final; every message is acked with its seq.
+applies_to: [bridge, judge]
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1, dataVersion: 3}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*", protocolMinor: 0}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}, problemCode: p1, dataVersion: "3", languageKey: CPP17, shortCircuit: true, meta: {attemptNo: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {compiled: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, log: "warning: unused x"}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3, caseCount: 2}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3}}}
+  - judge: {from: j1, message: {cases: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 4, cases: [{position: 1, status: STATUS_AC, timeS: 0.01, memoryKib: "1024", points: 1, total: 1}, {position: 2, status: STATUS_AC, timeS: 0.02, memoryKib: "2048", points: 1, total: 1}]}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 4}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 5, outcome: OUTCOME_GRADED, dataVersionUsed: "3"}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 5}}}
+end_state:
+  submissions:
+    s1: {status: D, result: AC, judgeGeneration: 1, judgeSeq: 5, judgedDataVersion: 3, error: "warning: unused x", requeueCount: 0, caseCount: 2}
+  gradedJobs: 1

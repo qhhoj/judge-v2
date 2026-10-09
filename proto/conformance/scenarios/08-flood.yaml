@@ -1,0 +1,11 @@
+name: 08-flood
+summary: More than 1000 messages in a second close the session, even ones that write nothing.
+applies_to: [bridge]
+setup: {judges: [{name: j1}]}
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - judge: {from: j1, message: {pong: {nonce: "7", busy: 0}}, repeat: 1100}
+  - bridge: {to: j1, message: {error: {code: ERROR_CODE_FLOOD}}}
+  - closed: {judge: j1, status: RESOURCE_EXHAUSTED}

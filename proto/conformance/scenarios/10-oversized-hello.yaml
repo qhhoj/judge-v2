@@ -1,0 +1,11 @@
+name: 10-oversized-hello
+summary: A Hello over 256 KiB is refused before the judge is registered.
+applies_to: [bridge]
+setup: {judges: [{name: j1}]}
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {slots: 1, build: {$repeat: [x, 300000]}}}}
+  - bridge: {to: j1, message: {error: {code: ERROR_CODE_TOO_LARGE}}}
+  - closed: {judge: j1, status: RESOURCE_EXHAUSTED}
+end_state:
+  judges: {j1: {online: false}}

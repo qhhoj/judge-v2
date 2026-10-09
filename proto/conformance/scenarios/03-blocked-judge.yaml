@@ -1,0 +1,8 @@
+name: 03-blocked-judge
+summary: A blocked judge is refused even with the right key.
+applies_to: [bridge]
+setup: {judges: [{name: j1, blocked: true}]}
+steps:
+  - open: {judge: j1, expect: UNAUTHENTICATED}
+end_state:
+  judges: {j1: {online: false}}

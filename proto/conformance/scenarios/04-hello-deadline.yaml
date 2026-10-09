@@ -1,0 +1,8 @@
+name: 04-hello-deadline
+summary: A session that sends no Hello within handshakeMs is closed.
+applies_to: [bridge]
+timings: {handshakeMs: 300}
+setup: {judges: [{name: j1}]}
+steps:
+  - open: {judge: j1}
+  - closed: {judge: j1, status: DEADLINE_EXCEEDED}

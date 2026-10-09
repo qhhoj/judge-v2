@@ -1,0 +1,8 @@
+name: 02-bad-key
+summary: A wrong key is refused from the metadata, before any message is read.
+applies_to: [bridge]
+setup: {judges: [{name: j1}]}
+steps:
+  - open: {judge: j1, wrong_key: true, expect: UNAUTHENTICATED}
+end_state:
+  judges: {j1: {online: false}}

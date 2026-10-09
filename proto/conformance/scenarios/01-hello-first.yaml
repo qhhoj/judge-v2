@@ -1,0 +1,11 @@
+name: 01-hello-first
+summary: Any first message but Hello is a protocol error and closes the session.
+applies_to: [bridge]
+setup: {judges: [{name: j1}]}
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {pong: {nonce: "1"}}}
+  - bridge: {to: j1, message: {error: {code: ERROR_CODE_PROTOCOL}}}
+  - closed: {judge: j1, status: INVALID_ARGUMENT}
+end_state:
+  judges: {j1: {online: false}}
