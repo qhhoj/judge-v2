@@ -12,8 +12,8 @@ pub fn expand(value: &Value, bindings: &Bindings) -> Result<Value, String> {
     match value {
         Value::String(text) => expand_text(text, bindings),
         Value::Array(items) => items.iter().map(|item| expand(item, bindings)).collect(),
-        Value::Object(fields) if fields.contains_key("$repeat") => repeat(&fields["$repeat"]),
-        Value::Object(fields) if fields.contains_key("$cases") => cases(&fields["$cases"]),
+        Value::Object(fields) if fields.contains_key("$repeat") => generator(fields, "$repeat", repeat),
+        Value::Object(fields) if fields.contains_key("$cases") => generator(fields, "$cases", cases),
         Value::Object(fields) => fields
             .iter()
             .map(|(key, item)| Ok((key.clone(), expand(item, bindings)?)))
@@ -31,6 +31,18 @@ fn expand_text(text: &str, bindings: &Bindings) -> Result<Value, String> {
             .ok_or_else(|| format!("unbound placeholder {{{{{name}}}}}")),
         None => Ok(Value::String(text.to_string())),
     }
+}
+
+/// A generator object holds nothing but its own key.
+fn generator(
+    fields: &serde_json::Map<String, Value>,
+    key: &str,
+    build: fn(&Value) -> Result<Value, String>,
+) -> Result<Value, String> {
+    if fields.len() != 1 {
+        return Err(format!("{key} must be the only key of its object"));
+    }
+    build(&fields[key])
 }
 
 fn repeat(arguments: &Value) -> Result<Value, String> {

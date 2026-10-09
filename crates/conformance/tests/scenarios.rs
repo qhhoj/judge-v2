@@ -17,7 +17,7 @@ fn every_scenario_loads_and_its_messages_parse() {
 #[test]
 fn the_suite_holds_every_scenario_of_the_spec() {
     let scenarios = load_all(&scenarios_dir()).unwrap();
-    assert_eq!(scenarios.len(), 36, "scenarios 01-33 plus 21b, 28b, 28c");
+    assert_eq!(scenarios.len(), 40, "scenarios 01-37 plus 21b, 28b, 28c");
     let for_judge: BTreeSet<String> = scenarios
         .into_iter()
         .filter(|scenario| scenario.applies_to.contains(&Role::Judge))
@@ -98,4 +98,34 @@ fn placeholders_and_generators_expand() {
 fn steps_deserialize_from_one_key_maps() {
     let step: Step = serde_json::from_value(json!({"wait": {"ms": 5}})).unwrap();
     assert!(matches!(step, Step::Wait { ms: 5 }));
+}
+
+fn load_text(name: &str, text: &str) -> Result<conformance::Scenario, String> {
+    let dir = std::env::temp_dir().join(format!("conformance-{name}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("x.yaml");
+    std::fs::write(&path, text).unwrap();
+    load(&path)
+}
+
+#[test]
+fn an_unknown_grpc_status_or_alias_is_refused_when_the_scenario_loads() {
+    let head = "name: x\nsummary: s\napplies_to: [bridge]\n";
+    let status = "setup: {judges: [{name: j1}]}\nsteps:\n  - closed: {judge: j1, status: NOPE}\n";
+    assert!(load_text("status", &format!("{head}{status}")).unwrap_err().contains("unknown status NOPE"));
+    let alias = "setup: {judges: [{name: j1, as: ghost}]}\nsteps:\n  - open: {judge: j1}\n";
+    assert!(load_text("alias", &format!("{head}{alias}")).unwrap_err().contains("ghost"));
+}
+
+#[test]
+fn a_connection_that_is_as_another_judge_authenticates_as_it() {
+    let text = "name: x\nsummary: s\napplies_to: [bridge]\nsetup: {judges: [{name: j1}, {name: j1b, as: j1}]}\nsteps:\n  - open: {judge: j1b}\n";
+    let scenario = load_text("identity", text).unwrap();
+    assert_eq!((scenario.identity("j1b"), scenario.identity("j1")), ("j1", "j1"));
+}
+
+#[test]
+fn a_generator_next_to_other_keys_is_refused() {
+    let value = json!({"$repeat": ["a", 2], "extra": 1});
+    assert!(expand(&value, &Bindings::new()).unwrap_err().contains("only key"));
 }

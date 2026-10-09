@@ -5,13 +5,23 @@ use serde_json::Value;
 
 /// Ok when every field `expected` names matches `actual`; a field missing from
 /// `actual` holds its proto3 default, except that an empty object `{}` needs the
-/// field present (a oneof member, an empty message). `"*"` matches anything.
+/// field present (a oneof member, an empty message). `"*"` matches any present value.
 pub fn matches(expected: &Value, actual: &Value) -> Result<(), String> {
+    // the top-level keys name the oneof member of a message: it must be the one sent,
+    // however empty the expectation for its fields is
+    if let Value::Object(members) = expected
+        && let Some(missing) = members.keys().find(|key| actual.get(key.as_str()).is_none_or(Value::is_null))
+    {
+        return Err(format!("$.{missing}: expected this message, got {actual}"));
+    }
     match_at("$", expected, actual)
 }
 
 fn match_at(path: &str, expected: &Value, actual: &Value) -> Result<(), String> {
     match (expected, actual) {
+        (Value::String(star), Value::Null) if star == "*" => {
+            Err(format!("{path}: expected a value, got none"))
+        }
         (Value::String(star), _) if star == "*" => Ok(()),
         // `{}` names a oneof member or an empty message: it must be there
         (Value::Object(fields), Value::Null) if fields.is_empty() => {

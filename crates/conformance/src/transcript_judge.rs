@@ -36,13 +36,19 @@ pub async fn play_judge(
     endpoint: String,
 ) -> Result<OpenSessions, String> {
     let client = JudgeLinkClient::connect(endpoint).await.map_err(|error| error.to_string())?;
-    let mut conns: HashMap<String, Conn> = HashMap::new();
+    let mut player = Player { scenario, bindings, client, conns: HashMap::new() };
     for (index, step) in scenario.steps.iter().enumerate() {
-        judge_step(step, bindings, &client, &mut conns)
-            .await
-            .map_err(|error| format!("step {}: {error}", index + 1))?;
+        player.step(step).await.map_err(|error| format!("step {}: {error}", index + 1))?;
     }
-    Ok(OpenSessions(conns))
+    Ok(OpenSessions(player.conns))
+}
+
+/// Everything the judge role needs while it walks the steps.
+struct Player<'a> {
+    scenario: &'a Scenario,
+    bindings: &'a Bindings,
+    client: JudgeLinkClient<Channel>,
+    conns: HashMap<String, Conn>,
 }
 
 fn with_credentials<T>(message: T, judge: &str, wrong_key: bool) -> Result<Request<T>, String> {
@@ -54,42 +60,52 @@ fn with_credentials<T>(message: T, judge: &str, wrong_key: bool) -> Result<Reque
     Ok(request)
 }
 
-async fn judge_step(
-    step: &Step,
-    bindings: &Bindings,
-    client: &JudgeLinkClient<Channel>,
-    conns: &mut HashMap<String, Conn>,
-) -> Result<(), String> {
-    match step {
-        Step::Open { judge, wrong_key, expect } => {
-            if let Some(conn) = open(client.clone(), judge, *wrong_key, expect).await? {
-                conns.insert(judge.clone(), conn);
+impl Player<'_> {
+    async fn step(&mut self, step: &Step) -> Result<(), String> {
+        match step {
+            Step::Open { judge, wrong_key, expect } => {
+                let identity = self.scenario.identity(judge);
+                if let Some(conn) = open(self.client.clone(), identity, *wrong_key, expect).await? {
+                    self.conns.insert(judge.clone(), conn);
+                }
+                Ok(())
             }
-            Ok(())
+            Step::Judge { from, message, repeat } => {
+                let conn = self.conns.get(from).ok_or(format!("{from} has no session"))?;
+                send(conn, &parse_judge(message, self.bindings)?, *repeat).await
+            }
+            Step::Bridge { to, message } => {
+                expect_bridge(self.conns.entry(to.clone()).or_default(), &expand(message, self.bindings)?)
+                    .await
+            }
+            Step::Quiet { to, ms } => quiet(self.conns.entry(to.clone()).or_default(), *ms).await,
+            Step::Closed { judge, status } => {
+                closed(self.conns.entry(judge.clone()).or_default(), status).await
+            }
+            Step::Drop { judge } => {
+                self.conns.remove(judge);
+                Ok(())
+            }
+            Step::Fetch { judge, reference, expect, bytes } => {
+                self.fetch(judge, reference, (expect, *bytes)).await
+            }
+            Step::Wait { ms } => {
+                tokio::time::sleep(Duration::from_millis(*ms)).await;
+                Ok(())
+            }
+            Step::Api(_) | Step::RestartBridge {} => Ok(()),
         }
-        Step::Judge { from, message, repeat } => {
-            let conn = conns.get(from).ok_or(format!("{from} has no session"))?;
-            send(conn, &parse_judge(message, bindings)?, *repeat).await
-        }
-        Step::Bridge { to, message } => {
-            expect_bridge(conns.entry(to.clone()).or_default(), &expand(message, bindings)?).await
-        }
-        Step::Quiet { to, ms } => quiet(conns.entry(to.clone()).or_default(), *ms).await,
-        Step::Closed { judge, status } => closed(conns.entry(judge.clone()).or_default(), status).await,
-        Step::Drop { judge } => {
-            conns.remove(judge);
-            Ok(())
-        }
-        Step::Fetch { judge, reference, expect, bytes } => {
-            let session_id = conns.get(judge).map(|conn| conn.session_id.clone()).unwrap_or_default();
-            let caller = (judge.as_str(), session_id.as_str());
-            fetch(client.clone(), caller, &expand(reference, bindings)?, (expect, *bytes)).await
-        }
-        Step::Wait { ms } => {
-            tokio::time::sleep(Duration::from_millis(*ms)).await;
-            Ok(())
-        }
-        Step::Api(_) | Step::RestartBridge {} => Ok(()),
+    }
+
+    async fn fetch(
+        &mut self,
+        judge: &str,
+        reference: &serde_json::Value,
+        outcome: (&str, u64),
+    ) -> Result<(), String> {
+        let session_id = self.conns.get(judge).map(|conn| conn.session_id.clone()).unwrap_or_default();
+        let caller = (self.scenario.identity(judge), session_id.as_str());
+        fetch(self.client.clone(), caller, &expand(reference, self.bindings)?, outcome).await
     }
 }
 

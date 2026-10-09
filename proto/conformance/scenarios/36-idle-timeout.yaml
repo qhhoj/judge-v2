@@ -1,0 +1,13 @@
+name: 36-idle-timeout
+summary: A judge that sends nothing for idleMs (it ignores pings, so a hung process) is closed with DEADLINE_EXCEEDED and goes offline.
+applies_to: [bridge]
+timings: {idleMs: 400}
+setup:
+  judges: [{name: j1, answers_pings: false}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - closed: {judge: j1, status: DEADLINE_EXCEEDED}
+end_state:
+  judges: {j1: {online: false}}

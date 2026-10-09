@@ -20,6 +20,5 @@ thiserror.workspace = true
 tonic-prost-build.workspace = true
 pbjson-build.workspace = true
 
-# generated code: the workspace lints (40 lines, complexity 10) apply to the other crates only
-[lints.clippy]
-all = { level = "deny", priority = -1 }
+[lints]
+workspace = true

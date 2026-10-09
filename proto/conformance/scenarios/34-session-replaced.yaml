@@ -1,0 +1,28 @@
+name: 34-session-replaced
+summary: A newer session of the same judge replaces the old one; the old stream ends with Disconnect(forced false) and ABORTED, and its run moves to the new session without entering grace.
+applies_to: [bridge]
+timings: {resumeGraceMs: 300}
+setup:
+  judges: [{name: j1}, {name: j1b, as: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - open: {judge: j1b}
+  - judge: {from: j1b, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}], inFlight: [{ref: {submissionId: "{{s1}}", generation: 1}, lastSeqSent: 1}]}}}
+  - bridge: {to: j1, message: {disconnect: {forced: false}}}
+  - closed: {judge: j1, status: ABORTED}
+  - bridge: {to: j1b, message: {welcome: {sessionId: "*", resume: [{ref: {submissionId: "{{s1}}", generation: 1}, action: ACTION_CONTINUE, fromSeq: 2}]}}}
+  - wait: {ms: 800}
+  - judge: {from: j1b, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, outcome: OUTCOME_COMPILE_ERROR, log: x}}}
+  - bridge: {to: j1b, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+end_state:
+  judges: {j1: {online: true}}
+  submissions:
+    s1: {status: CE, requeueCount: 0, judgeGeneration: 1}

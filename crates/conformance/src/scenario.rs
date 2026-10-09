@@ -11,7 +11,10 @@ use judge_proto::v1::{BridgeMessage, JudgeMessage};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::expand::{Bindings, expand};
+use crate::{
+    expand::{Bindings, expand},
+    play::code_of,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -51,9 +54,21 @@ pub struct Setup {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeSetup {
+    /// The party's name in the steps. It is also the judge's name unless `as` is set.
     pub name: String,
     #[serde(default)]
     pub blocked: bool,
+    /// A second connection of the judge `as` (same name and key), e.g. a session that
+    /// replaces the first one. Steps address each connection by its own `name`.
+    #[serde(default, rename = "as")]
+    pub identity: Option<String>,
+    /// Backend runner only: false makes the fake judge ignore pings (a hung judge).
+    #[serde(default = "yes")]
+    pub answers_pings: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -187,6 +202,12 @@ impl Scenario {
         bindings
     }
 
+    /// The judge name (and key owner) a party authenticates as.
+    pub fn identity<'a>(&'a self, party: &'a str) -> &'a str {
+        let setup = self.setup.judges.iter().find(|judge| judge.name == party);
+        setup.and_then(|judge| judge.identity.as_deref()).unwrap_or(party)
+    }
+
     pub fn validate(&self, file_stem: &str) -> Result<(), String> {
         if self.name != file_stem {
             return Err(format!("name {} must equal the file name", self.name));
@@ -199,6 +220,11 @@ impl Scenario {
             return Err("restart_bridge needs applies_to: [bridge]".into());
         }
         let judges: BTreeSet<&str> = self.setup.judges.iter().map(|judge| judge.name.as_str()).collect();
+        for judge in &self.setup.judges {
+            if let Some(identity) = judge.identity.as_deref().filter(|name| !judges.contains(name)) {
+                return Err(format!("{} is `as` the unknown judge {identity}", judge.name));
+            }
+        }
         let bindings = self.sample_bindings();
         self.steps.iter().enumerate().try_for_each(|(index, step)| {
             check_step(step, &judges, &bindings).map_err(|error| format!("step {}: {error}", index + 1))
@@ -209,7 +235,11 @@ impl Scenario {
 fn check_step(step: &Step, judges: &BTreeSet<&str>, bindings: &Bindings) -> Result<(), String> {
     let known = |name: &str| judges.contains(name).then_some(()).ok_or(format!("unknown judge {name}"));
     match step {
-        Step::Open { judge, .. } | Step::Closed { judge, .. } | Step::Drop { judge } => known(judge),
+        Step::Open { judge, expect: status, .. } | Step::Closed { judge, status } => {
+            known(judge)?;
+            code_of(status).map(|_| ())
+        }
+        Step::Drop { judge } => known(judge),
         Step::Quiet { to, .. } => known(to),
         Step::Judge { from, message, .. } => {
             known(from)?;
@@ -219,7 +249,11 @@ fn check_step(step: &Step, judges: &BTreeSet<&str>, bindings: &Bindings) -> Resu
             known(to)?;
             parse_bridge(message, bindings).map(|_| ())
         }
-        Step::Fetch { judge, reference, .. } => known(judge).and(expand(reference, bindings).map(|_| ())),
+        Step::Fetch { judge, reference, expect, .. } => {
+            known(judge)?;
+            code_of(expect)?;
+            expand(reference, bindings).map(|_| ())
+        }
         Step::Api(_) | Step::Wait { .. } | Step::RestartBridge {} => Ok(()),
     }
 }

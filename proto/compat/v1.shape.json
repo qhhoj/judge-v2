@@ -1,11 +1,15 @@
 {
+  "format": 2,
+  "minor": 1,
   "messages": {
     ".qhhoj.judge.v1.Abort": {
       "fields": {
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -16,12 +20,16 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -32,62 +40,86 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "problem_code",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "data_version",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "language_key",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "5": {
           "name": "source",
           "kind": "Bytes",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "6": {
           "name": "source_is_file",
           "kind": "Bool",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "7": {
           "name": "source_size",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "8": {
           "name": "time_limit_s",
           "kind": "Double",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "9": {
           "name": "memory_limit_kib",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "10": {
           "name": "short_circuit",
           "kind": "Bool",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "11": {
           "name": "pretests_only",
           "kind": "Bool",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "12": {
           "name": "meta",
           "kind": ".qhhoj.judge.v1.Meta",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -98,12 +130,16 @@
         "1": {
           "name": "submission_id",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "generation",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -114,12 +150,16 @@
         "1": {
           "name": "code",
           "kind": ".qhhoj.judge.v1.ErrorCode",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "message",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -130,37 +170,51 @@
         "1": {
           "name": "welcome",
           "kind": ".qhhoj.judge.v1.Welcome",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "2": {
           "name": "ping",
           "kind": ".qhhoj.judge.v1.Ping",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "3": {
           "name": "assign",
           "kind": ".qhhoj.judge.v1.Assign",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "4": {
           "name": "abort",
           "kind": ".qhhoj.judge.v1.Abort",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "5": {
           "name": "ack",
           "kind": ".qhhoj.judge.v1.ResultAck",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "6": {
           "name": "disconnect",
           "kind": ".qhhoj.judge.v1.Disconnect",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "7": {
           "name": "error",
           "kind": ".qhhoj.judge.v1.BridgeError",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         }
       },
       "reserved_numbers": [],
@@ -171,52 +225,72 @@
         "1": {
           "name": "position",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "status",
           "kind": ".qhhoj.judge.v1.Status",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "time_s",
           "kind": "Double",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "memory_kib",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "5": {
           "name": "points",
           "kind": "Double",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "6": {
           "name": "total",
           "kind": "Double",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "7": {
           "name": "batch",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "8": {
           "name": "feedback",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "9": {
           "name": "extended_feedback",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "10": {
           "name": "output_prefix",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -227,17 +301,23 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "cases",
           "kind": ".qhhoj.judge.v1.Case",
-          "repeated": true
+          "repeated": true,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -248,7 +328,9 @@
         "1": {
           "name": "data",
           "kind": "Bytes",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -259,17 +341,23 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "log",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -280,12 +368,16 @@
         "1": {
           "name": "forced",
           "kind": "Bool",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "reason",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -301,12 +393,16 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "session_id",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -317,32 +413,44 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "outcome",
           "kind": ".qhhoj.judge.v1.Outcome",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "log",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "5": {
           "name": "reason",
           "kind": ".qhhoj.judge.v1.RetryReason",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "6": {
           "name": "data_version_used",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -353,22 +461,30 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "pretested",
           "kind": "Bool",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "case_count",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -379,32 +495,44 @@
         "1": {
           "name": "protocol_minor",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "build",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "slots",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "runtimes",
           "kind": ".qhhoj.judge.v1.Runtime",
-          "repeated": true
+          "repeated": true,
+          "optional": false,
+          "oneof": null
         },
         "5": {
           "name": "features",
           "kind": "String",
-          "repeated": true
+          "repeated": true,
+          "optional": false,
+          "oneof": null
         },
         "6": {
           "name": "in_flight",
           "kind": ".qhhoj.judge.v1.InFlight",
-          "repeated": true
+          "repeated": true,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -415,12 +543,16 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "last_seq_sent",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -431,17 +563,23 @@
         "1": {
           "name": "code",
           "kind": ".qhhoj.judge.v1.ErrorCode",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "message",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -452,47 +590,65 @@
         "1": {
           "name": "hello",
           "kind": ".qhhoj.judge.v1.Hello",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "2": {
           "name": "pong",
           "kind": ".qhhoj.judge.v1.Pong",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "3": {
           "name": "accepted",
           "kind": ".qhhoj.judge.v1.Accepted",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "4": {
           "name": "compiled",
           "kind": ".qhhoj.judge.v1.Compiled",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "5": {
           "name": "started",
           "kind": ".qhhoj.judge.v1.GradingStarted",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "6": {
           "name": "cases",
           "kind": ".qhhoj.judge.v1.CaseResults",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "7": {
           "name": "final",
           "kind": ".qhhoj.judge.v1.Final",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "8": {
           "name": "error",
           "kind": ".qhhoj.judge.v1.JudgeError",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         },
         "9": {
           "name": "draining",
           "kind": ".qhhoj.judge.v1.Draining",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         }
       },
       "reserved_numbers": [],
@@ -503,47 +659,65 @@
         "1": {
           "name": "max_message_bytes",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "max_cases_per_message",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "max_cases_per_submission",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "max_log_bytes",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "5": {
           "name": "max_feedback_bytes",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "6": {
           "name": "max_text_bytes",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "7": {
           "name": "max_messages_per_second",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "8": {
           "name": "accept_timeout_ms",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "9": {
           "name": "resume_grace_ms",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -554,17 +728,23 @@
         "1": {
           "name": "in_contest",
           "kind": "Sint32",
-          "repeated": false
+          "repeated": false,
+          "optional": true,
+          "oneof": null
         },
         "2": {
           "name": "attempt_no",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "user_id",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -575,7 +755,9 @@
         "1": {
           "name": "nonce",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -586,17 +768,23 @@
         "1": {
           "name": "nonce",
           "kind": "Uint64",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "busy",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "load",
           "kind": "Double",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -607,12 +795,16 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -623,17 +815,23 @@
         "1": {
           "name": "ref",
           "kind": ".qhhoj.judge.v1.AssignmentRef",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "action",
           "kind": ".qhhoj.judge.v1.Resume.Action",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "from_seq",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -644,17 +842,23 @@
         "1": {
           "name": "language_key",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "name",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "version",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -665,27 +869,37 @@
         "1": {
           "name": "session_id",
           "kind": "String",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "2": {
           "name": "protocol_minor",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "3": {
           "name": "resume",
           "kind": ".qhhoj.judge.v1.Resume",
-          "repeated": true
+          "repeated": true,
+          "optional": false,
+          "oneof": null
         },
         "4": {
           "name": "limits",
           "kind": ".qhhoj.judge.v1.Limits",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         },
         "5": {
           "name": "ping_interval_ms",
           "kind": "Uint32",
-          "repeated": false
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -733,6 +947,22 @@
       "6": "STATUS_IR",
       "7": "STATUS_RTE",
       "8": "STATUS_SC"
+    }
+  },
+  "services": {
+    ".qhhoj.judge.v1.JudgeLink": {
+      "FetchSource": {
+        "input": ".qhhoj.judge.v1.FetchSourceRequest",
+        "output": ".qhhoj.judge.v1.Chunk",
+        "client_streaming": false,
+        "server_streaming": true
+      },
+      "Session": {
+        "input": ".qhhoj.judge.v1.JudgeMessage",
+        "output": ".qhhoj.judge.v1.BridgeMessage",
+        "client_streaming": true,
+        "server_streaming": true
+      }
     }
   }
 }

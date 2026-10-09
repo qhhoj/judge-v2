@@ -1,7 +1,8 @@
 use std::{fs, path::Path};
 
 use judge_proto::shape::{
-    FieldShape, MessageShape, Shape, breaking_changes, declaration_order_problems, shape_of,
+    FieldShape, MessageShape, MethodShape, SHAPE_FORMAT, Shape, bless_problems, breaking_changes,
+    declaration_order_problems, shape_of,
 };
 
 fn stored_shape() -> Shape {
@@ -10,7 +11,7 @@ fn stored_shape() -> Shape {
 }
 
 fn field(name: &str, kind: &str) -> FieldShape {
-    FieldShape { name: name.into(), kind: kind.into(), repeated: false }
+    FieldShape { name: name.into(), kind: kind.into(), ..FieldShape::default() }
 }
 
 fn one_message(fields: &[(i32, FieldShape)], reserved: (&[i32], &[&str])) -> Shape {
@@ -19,7 +20,7 @@ fn one_message(fields: &[(i32, FieldShape)], reserved: (&[i32], &[&str])) -> Sha
         reserved_numbers: reserved.0.to_vec(),
         reserved_names: reserved.1.iter().map(|name| name.to_string()).collect(),
     };
-    Shape { messages: [(".p.M".to_string(), message)].into(), ..Shape::default() }
+    Shape { format: SHAPE_FORMAT, messages: [(".p.M".to_string(), message)].into(), ..Shape::default() }
 }
 
 #[test]
@@ -77,4 +78,80 @@ fn the_protocol_minor_matches_proto_version_json() {
     let version: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(version["package"], "qhhoj.judge.v1");
     assert_eq!(version["minor"], judge_proto::PROTOCOL_MINOR);
+}
+
+fn with_rpc(method: MethodShape) -> Shape {
+    let methods = [("Session".to_string(), method)].into();
+    Shape { format: SHAPE_FORMAT, services: [(".p.S".to_string(), methods)].into(), ..Shape::default() }
+}
+
+fn bidi() -> MethodShape {
+    MethodShape {
+        input: ".p.In".into(),
+        output: ".p.Out".into(),
+        client_streaming: true,
+        server_streaming: true,
+    }
+}
+
+#[test]
+fn the_frozen_shape_lists_the_rpcs_and_optional_fields() {
+    let current = shape_of(judge_proto::FILE_DESCRIPTOR_SET).unwrap();
+    let methods = &current.services[".qhhoj.judge.v1.JudgeLink"];
+    assert!(methods["Session"].client_streaming && methods["Session"].server_streaming);
+    assert!(methods["FetchSource"].server_streaming && !methods["FetchSource"].client_streaming);
+    assert!(current.messages[".qhhoj.judge.v1.Meta"].fields[&1].optional);
+    assert_eq!(current.messages[".qhhoj.judge.v1.JudgeMessage"].fields[&1].oneof.as_deref(), Some("body"));
+}
+
+#[test]
+fn removing_renaming_or_restreaming_an_rpc_is_breaking() {
+    let old = with_rpc(bidi());
+    assert!(breaking_changes(&old, &old).is_empty());
+    let renamed = Shape {
+        services: [(".p.S".to_string(), [("Connect".to_string(), bidi())].into())].into(),
+        ..old.clone()
+    };
+    let restreamed = with_rpc(MethodShape { client_streaming: false, ..bidi() });
+    for new in [Shape { format: SHAPE_FORMAT, ..Shape::default() }, renamed, restreamed] {
+        assert_eq!(breaking_changes(&old, &new).len(), 1, "{new:?}");
+    }
+}
+
+#[test]
+fn dropping_optional_or_leaving_a_oneof_is_breaking() {
+    let optional = FieldShape { optional: true, ..field("a", "TYPE_SINT32") };
+    let old = one_message(&[(1, optional)], (&[], &[]));
+    let plain = one_message(&[(1, field("a", "TYPE_SINT32"))], (&[], &[]));
+    assert_eq!(breaking_changes(&old, &plain).len(), 1);
+    let grouped = FieldShape { oneof: Some("body".into()), ..field("a", "TYPE_SINT32") };
+    let in_oneof = one_message(&[(1, grouped.clone())], (&[], &[]));
+    assert_eq!(breaking_changes(&plain, &in_oneof).len(), 1);
+    assert_eq!(breaking_changes(&in_oneof, &plain).len(), 1);
+}
+
+#[test]
+fn a_shape_of_the_older_format_is_not_compared_on_optional_or_oneof() {
+    let optional = FieldShape { optional: true, ..field("a", "TYPE_SINT32") };
+    let mut old = one_message(&[(1, field("a", "TYPE_SINT32"))], (&[], &[]));
+    old.format = 1;
+    assert!(breaking_changes(&old, &one_message(&[(1, optional)], (&[], &[]))).is_empty());
+}
+
+#[test]
+fn blessing_needs_a_version_bump_and_an_explicit_flag_for_breaking_changes() {
+    let stored = Shape { minor: 1, ..one_message(&[(1, field("a", "TYPE_UINT32"))], (&[], &[])) };
+    let additive = Shape {
+        minor: 2,
+        ..one_message(&[(1, field("a", "TYPE_UINT32")), (2, field("b", "TYPE_STRING"))], (&[], &[]))
+    };
+    let breaking = Shape { minor: 2, ..one_message(&[(1, field("a", "TYPE_UINT64"))], (&[], &[])) };
+    assert!(bless_problems(&stored, &stored, false).is_ok(), "nothing changed");
+    assert!(bless_problems(&stored, &additive, false).is_ok());
+    let unbumped = Shape { minor: 1, ..additive.clone() };
+    assert!(bless_problems(&stored, &unbumped, false).unwrap_err().contains("bump"));
+    assert!(bless_problems(&stored, &breaking, false).unwrap_err().contains("--allow-breaking"));
+    assert!(bless_problems(&stored, &breaking, true).is_ok());
+    let unbumped_breaking = Shape { minor: 1, ..breaking };
+    assert!(bless_problems(&stored, &unbumped_breaking, true).is_err(), "the flag does not waive the bump");
 }
