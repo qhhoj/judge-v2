@@ -1,6 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/judge-proto", "crates/conformance"]
+members = [
+    "crates/judge-proto",
+    "crates/conformance",
+    "crates/problem",
+    "crates/sandbox",
+    "crates/grader",
+    "crates/daemon",
+    "crates/cli",
+]
 
 [workspace.package]
 edition = "2024"
@@ -23,6 +31,26 @@ serde_norway = "=0.9.42"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 thiserror = "2"
+judge-problem = { path = "crates/problem" }
+judge-sandbox = { path = "crates/sandbox" }
+judge-grader = { path = "crates/grader" }
+judge-daemon = { path = "crates/daemon" }
+judge-proto = { path = "crates/judge-proto" }
+conformance = { path = "crates/conformance" }
+anyhow = "1"
+toml = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
+hex = "0.4"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+prometheus = { version = "0.13", default-features = false }
+rand = "0.9"
+regex = "1"
+tempfile = "3"
+libc = "0.2"
+http = "1"
 
 [workspace.lints.clippy]
 too_many_lines = "warn"
