@@ -1,0 +1,267 @@
+// QHHOJ judge <-> bridge contract. Package v1 is frozen for breaking changes:
+// inside v1 only add fields, oneof members and enum values, never renumber,
+// retype or rename; a removed field's number and name go to `reserved`.
+// Fields are declared in field-number order. Readers ignore unknown fields.
+// A breaking change is a new package `qhhoj.judge.v2` served beside v1.
+syntax = "proto3";
+
+package qhhoj.judge.v1;
+
+// The judge dials the bridge. Credentials travel as metadata
+// `x-judge-name` and `x-judge-key`; nothing is read before they check out.
+service JudgeLink {
+  // One per judge. The judge's first message is Hello.
+  rpc Session(stream JudgeMessage) returns (stream BridgeMessage);
+  // The source of a file-only submission in chunks of at most 1 MiB,
+  // only for a ref the calling judge's live session holds.
+  rpc FetchSource(FetchSourceRequest) returns (stream Chunk);
+}
+
+// One run of a submission; a rejudge or requeue is a new generation.
+message AssignmentRef {
+  string submission_id = 1;
+  uint32 generation = 2;
+}
+
+message JudgeMessage {
+  oneof body {
+    Hello hello = 1;
+    Pong pong = 2;
+    Accepted accepted = 3;
+    Compiled compiled = 4;
+    GradingStarted started = 5;
+    CaseResults cases = 6;
+    Final final = 7;
+    JudgeError error = 8;
+    Draining draining = 9;
+  }
+}
+
+message BridgeMessage {
+  oneof body {
+    Welcome welcome = 1;
+    Ping ping = 2;
+    Assign assign = 3;
+    Abort abort = 4;
+    ResultAck ack = 5;
+    Disconnect disconnect = 6;
+    BridgeError error = 7;
+  }
+}
+
+message Runtime {
+  string language_key = 1;
+  string name = 2;
+  string version = 3;
+}
+
+// An assignment the judge still runs or holds unacked messages for.
+message InFlight {
+  AssignmentRef ref = 1;
+  uint32 last_seq_sent = 2;
+}
+
+message Hello {
+  uint32 protocol_minor = 1;
+  string build = 2;
+  uint32 slots = 3;
+  repeated Runtime runtimes = 4;
+  repeated string features = 5;
+  repeated InFlight in_flight = 6;
+}
+
+message Resume {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_CONTINUE = 1;
+    ACTION_DROP = 2;
+  }
+  AssignmentRef ref = 1;
+  Action action = 2;
+  // CONTINUE: replay the outbox from this seq. DROP: the judge stops the run and
+  // still ends it with Final{OUTCOME_ABORTED}, which frees the bridge's slot.
+  uint32 from_seq = 3;
+}
+
+// Enforced by the bridge; the judge clamps its batches (cases per message) and
+// its log clips to them.
+message Limits {
+  uint32 max_message_bytes = 1;
+  uint32 max_cases_per_message = 2;
+  uint32 max_cases_per_submission = 3;
+  uint32 max_log_bytes = 4;
+  uint32 max_feedback_bytes = 5;
+  uint32 max_text_bytes = 6;
+  uint32 max_messages_per_second = 7;
+  uint32 accept_timeout_ms = 8;
+  uint32 resume_grace_ms = 9;
+}
+
+message Welcome {
+  string session_id = 1;
+  uint32 protocol_minor = 2;
+  repeated Resume resume = 3;
+  Limits limits = 4;
+  uint32 ping_interval_ms = 5;
+}
+
+message Ping {
+  uint64 nonce = 1;
+}
+
+message Pong {
+  uint64 nonce = 1;
+  uint32 busy = 2;
+  double load = 3;
+}
+
+message Meta {
+  // Participation number: 0 live, -1 spectate, n virtual; absent outside contests.
+  optional sint32 in_contest = 1;
+  uint32 attempt_no = 2;
+  string user_id = 3;
+}
+
+message Assign {
+  AssignmentRef ref = 1;
+  string problem_code = 2;
+  uint64 data_version = 3;
+  string language_key = 4;
+  // UTF-8 source; empty when source_is_file (fetch it with FetchSource).
+  bytes source = 5;
+  bool source_is_file = 6;
+  uint64 source_size = 7;
+  double time_limit_s = 8;
+  uint64 memory_limit_kib = 9;
+  bool short_circuit = 10;
+  bool pretests_only = 11;
+  Meta meta = 12;
+}
+
+// The judge ends every run it kills with Final{OUTCOME_ABORTED}, before or after
+// Accepted; until then the bridge counts the run against the judge's slots.
+message Abort {
+  AssignmentRef ref = 1;
+}
+
+// Cumulative: every message of `ref` up to `seq` is stored.
+message ResultAck {
+  AssignmentRef ref = 1;
+  uint32 seq = 2;
+}
+
+message Disconnect {
+  bool forced = 1;
+  string reason = 2;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_PROTOCOL = 1;
+  ERROR_CODE_SLOTS_FULL = 2;
+  ERROR_CODE_FLOOD = 3;
+  ERROR_CODE_TOO_LARGE = 4;
+  ERROR_CODE_SEQ_GAP = 5;
+  ERROR_CODE_UNKNOWN_REF = 6;
+  ERROR_CODE_INTERNAL = 7;
+}
+
+message BridgeError {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+message JudgeError {
+  ErrorCode code = 1;
+  string message = 2;
+  AssignmentRef ref = 3;
+}
+
+// Per-assignment messages carry ref and seq (1, 2, ... per ref).
+message Accepted {
+  AssignmentRef ref = 1;
+  uint32 seq = 2;
+}
+
+message Compiled {
+  AssignmentRef ref = 1;
+  uint32 seq = 2;
+  string log = 3;
+}
+
+message GradingStarted {
+  AssignmentRef ref = 1;
+  uint32 seq = 2;
+  bool pretested = 3;
+  uint32 case_count = 4;
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_AC = 1;
+  STATUS_WA = 2;
+  STATUS_TLE = 3;
+  STATUS_MLE = 4;
+  STATUS_OLE = 5;
+  STATUS_IR = 6;
+  STATUS_RTE = 7;
+  STATUS_SC = 8;
+}
+
+message Case {
+  uint32 position = 1;
+  Status status = 2;
+  double time_s = 3;
+  uint64 memory_kib = 4;
+  double points = 5;
+  double total = 6;
+  // 0 = not in a batch, else the 1-based batch number.
+  uint32 batch = 7;
+  string feedback = 8;
+  string extended_feedback = 9;
+  string output_prefix = 10;
+}
+
+message CaseResults {
+  AssignmentRef ref = 1;
+  uint32 seq = 2;
+  repeated Case cases = 3;
+}
+
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_GRADED = 1;
+  OUTCOME_COMPILE_ERROR = 2;
+  OUTCOME_INTERNAL_ERROR = 3;
+  OUTCOME_ABORTED = 4;
+  OUTCOME_RETRY = 5;
+}
+
+enum RetryReason {
+  RETRY_REASON_UNSPECIFIED = 0;
+  RETRY_REASON_DATA_UNAVAILABLE = 1;
+  RETRY_REASON_UNSUPPORTED = 2;
+  RETRY_REASON_RUNTIME_MISSING = 3;
+  RETRY_REASON_SANDBOX_FAILURE = 4;
+}
+
+message Final {
+  AssignmentRef ref = 1;
+  uint32 seq = 2;
+  Outcome outcome = 3;
+  // Compile log (COMPILE_ERROR), message (INTERNAL_ERROR) or reason text (RETRY).
+  string log = 4;
+  RetryReason reason = 5;
+  uint64 data_version_used = 6;
+}
+
+message Draining {}
+
+message FetchSourceRequest {
+  AssignmentRef ref = 1;
+  string session_id = 2;
+}
+
+message Chunk {
+  bytes data = 1;
+}

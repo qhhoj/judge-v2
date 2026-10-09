@@ -1,0 +1,24 @@
+[package]
+name = "judge-proto"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+pbjson.workspace = true
+pbjson-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+pbjson-build.workspace = true
+
+# generated code: the workspace lints (40 lines, complexity 10) apply to the other crates only
+[lints.clippy]
+all = { level = "deny", priority = -1 }
