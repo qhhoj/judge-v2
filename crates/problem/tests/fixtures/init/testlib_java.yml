@@ -1,0 +1,10 @@
+checker:
+  args:
+    files: Chk.java
+    lang: JAVA8
+    type: testlib
+  name: bridged
+test_cases:
+  - in: 1.in
+    out: 1.out
+    points: 100

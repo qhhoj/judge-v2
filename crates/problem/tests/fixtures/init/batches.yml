@@ -1,0 +1,11 @@
+checker: standard
+test_cases:
+  - batched:
+      - in: 1.in
+        out: 1.out
+      - in: 2.in
+        out: 2.out
+    points: 40
+  - in: 3.in
+    out: 3.out
+    points: 60

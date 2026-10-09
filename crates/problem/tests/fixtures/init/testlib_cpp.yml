@@ -1,0 +1,10 @@
+checker:
+  args:
+    files: chk.cpp
+    lang: CPP17
+    type: testlib
+  name: bridged
+test_cases:
+  - in: 1.in
+    out: 1.out
+    points: 100
