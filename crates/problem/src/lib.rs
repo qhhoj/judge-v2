@@ -2,6 +2,7 @@
 
 pub mod init;
 pub mod plan;
+pub mod short_circuit;
 pub mod verdict;
 
 #[cfg(test)]
