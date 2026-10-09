@@ -254,18 +254,6 @@ fn every_manifest_row_gets_its_verdict() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// isolate 2.6 installs a seccomp filter that kills every non-x86-64 system call (`int 0x80` included),
-/// so a 32-bit program dies of SIGSYS whatever it does. GAS32 therefore has no manifest rows; this test
-/// pins the limitation so a change of isolate's filter is noticed.
-#[test]
-fn gas32_programs_are_killed_by_isolates_architecture_filter() {
-    let mut s = suite();
-    if !has_runtime(&s.registry, "GAS32") {
-        return eprintln!("skip GAS32 (no runtime)");
-    }
-    assert_eq!(verdict(&mut s, "aplusb", "GAS32", "GAS32/ac.s"), "RTE");
-}
-
 #[test]
 fn every_required_language_is_in_the_manifest() {
     let manifest = Manifest::load().expanded();

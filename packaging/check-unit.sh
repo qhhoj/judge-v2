@@ -17,7 +17,7 @@ need "RestrictSUIDSGID=yes"
 need "ProtectKernelLogs=yes"
 need "ProtectHostname=yes"
 need "LockPersonality=yes"
-# Each of these breaks setuid isolate, its cgroups or namespaces, the JVM/PyPy JITs or the GAS32 i386 ABI (preflight I12).
+# Each of these breaks setuid isolate, its cgroups or namespaces, or the JVM/PyPy JITs (preflight I12).
 for setting in NoNewPrivileges=yes NoNewPrivileges=true SystemCallFilter SystemCallArchitectures MemoryDenyWriteExecute \
                ProtectKernelTunables ProtectControlGroups PrivateDevices PrivateNetwork RestrictNamespaces \
                CapabilityBoundingSet PrivateUsers DynamicUser; do refuse "$setting"; done

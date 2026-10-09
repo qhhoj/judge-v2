@@ -231,8 +231,8 @@ mod tests {
         let registry = shipped();
         for key in [
             "C", "C11", "CLANG", "CPP03", "CPP11", "CPP14", "CPP17", "CPP20", "CPP23", "CLANGX", "PY3",
-            "PYPY3", "PAS", "JAVA", "JAVA8", "KOTLIN", "RUBY", "D", "LUA", "ADA", "BF", "GAS32", "GAS64",
-            "TEXT", "OUTPUT",
+            "PYPY3", "PAS", "JAVA", "JAVA8", "KOTLIN", "RUBY", "D", "LUA", "ADA", "BF", "GAS64", "TEXT",
+            "OUTPUT",
         ] {
             assert!(registry.get(key).is_some(), "{key} missing");
         }

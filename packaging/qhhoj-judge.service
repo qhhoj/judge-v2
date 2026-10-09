@@ -2,7 +2,7 @@
 # Relaxed settings, each needed by isolate (setuid root, runs the sandboxed programs):
 #   - no NoNewPrivileges: it would stop the setuid bit on /usr/local/bin/isolate from taking effect at exec.
 #   - no SystemCallFilter / SystemCallArchitectures: isolate needs @mount and @privileged, and sandboxed
-#     programs inherit the filter; GAS32 needs the i386 ABI.
+#     programs inherit the filter.
 #   - ReadWritePaths includes /run/isolate: isolate keeps its lock files and cgroup state there, and
 #     ProtectSystem=strict makes /run read-only.
 #   - UMask=0022 (not 0077): the sandbox runs as isolate's own uid and must read the program and the case

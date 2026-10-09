@@ -213,14 +213,6 @@ run = ["/usr/bin/bf", "main.bf"]
 version = ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "bf"]
 
 [[language]]
-key = "GAS32"
-name = "Assembly x86 (gas)"
-source = "main.s"
-compile = ["/bin/sh", "-c", "/usr/bin/as --32 -o main.o main.s && /usr/bin/ld -m elf_i386 -o main main.o"]
-run = ["./main"]
-version = ["/usr/bin/as", "--version"]
-
-[[language]]
 key = "GAS64"
 name = "Assembly x86-64 (gas)"
 source = "main.s"
