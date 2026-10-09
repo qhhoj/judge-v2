@@ -129,15 +129,13 @@ impl Resolver {
     }
 }
 
-/// Versioned problems key on the stamp. A legacy problem without a stamp keys on the archive's identity
-/// (mtime, size, inode, ctime), so an rsync that replaces the archive is not served stale.
+/// The cache key is `code/<version>-<archive identity>`. The identity (mtime, size, inode, ctime) keeps a
+/// deleted-and-recreated code, which may restart at the same `dataVersion`, and an rsync that replaces the
+/// archive from being served stale.
 fn archive_key(code: &str, version: u64, zip: &Path) -> Result<String, DataError> {
-    if version > 0 {
-        return Ok(format!("{code}/{version}"));
-    }
     use std::os::unix::fs::MetadataExt;
     let meta = std::fs::symlink_metadata(zip)?;
-    Ok(format!("{code}/0-{}-{}-{}-{}", meta.mtime(), meta.size(), meta.ino(), meta.ctime()))
+    Ok(format!("{code}/{version}-{}-{}-{}-{}", meta.mtime(), meta.size(), meta.ino(), meta.ctime()))
 }
 
 #[cfg(test)]
@@ -146,6 +144,18 @@ mod tests {
     use crate::data_version::FsStamps;
     use std::io::Read;
     use std::time::Duration;
+
+    fn file_name(path: &Path) -> String {
+        path.file_name().unwrap().to_string_lossy().into_owned()
+    }
+
+    fn entries_of(cache: &Path, code: &str, prefix: &str) -> Vec<String> {
+        let found = std::fs::read_dir(cache.join(code)).into_iter().flatten().flatten();
+        found
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(prefix))
+            .collect()
+    }
 
     fn read_all(mut file: File) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -290,8 +300,30 @@ mod tests {
         std::fs::write(dir.join(".data-version"), "4").unwrap();
         let problem = resolver(root.path(), cache.path()).resolve("zipped", 4).unwrap();
         assert!(problem.files_dir.starts_with(cache.path()));
-        assert!(problem.files_dir.ends_with("zipped/4"));
+        assert!(file_name(&problem.files_dir).starts_with("4-"));
         assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"5\n");
+    }
+
+    #[test]
+    fn a_recreated_code_with_the_same_data_version_is_not_served_from_the_old_cache_entry() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let dir = root.path().join("zipped");
+        std::fs::create_dir_all(&dir).unwrap();
+        let init = "archive: t.zip\ntest_cases:\n- {in: 1.in, out: 1.out, points: 1}\n";
+        std::fs::write(dir.join("init.yml"), init).unwrap();
+        write_zip(&dir.join("t.zip"), b"first problem\n");
+        set_stamp(&dir, 1);
+        let r = resolver(root.path(), cache.path());
+        let first = r.resolve("zipped", 1).unwrap();
+        assert_eq!(read_all(first.open_case_file("1.in").unwrap()), b"first problem\n");
+        drop(first);
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("init.yml"), init).unwrap();
+        write_zip(&dir.join("t.zip"), b"second problem, longer\n");
+        set_stamp(&dir, 1);
+        let second = r.resolve("zipped", 1).unwrap();
+        assert_eq!(read_all(second.open_case_file("1.in").unwrap()), b"second problem, longer\n");
     }
 
     #[test]
@@ -415,9 +447,9 @@ mod tests {
         });
         let problem = scripted_problem(stamps, root.path(), cache.path()).resolve("zipped", 4).unwrap();
         assert_eq!(problem.data_version_used, 5);
-        assert!(problem.files_dir.ends_with("zipped/5"));
+        assert!(file_name(&problem.files_dir).starts_with("5-"));
         assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"new\n");
-        assert!(!cache.path().join("zipped/4").exists(), "the half-old entry is gone");
+        assert!(entries_of(cache.path(), "zipped", "4-").is_empty(), "the half-old entry is gone");
     }
 
     #[test]
