@@ -39,3 +39,24 @@ pub fn language_or_skip(registry: &LanguageRegistry, key: &str) -> Option<Langua
     eprintln!("skip: {key} (runtime not installed on this host)");
     None
 }
+
+pub fn testlib_dir() -> std::path::PathBuf {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/testlib").into()
+}
+
+/// Compiled-helper cache over `cache` with the vendored testlib mounted.
+pub fn artefacts(cache: &Path) -> judge_grader::artefacts::Artefacts {
+    use judge_grader::artefacts::{ArtefactSetup, Artefacts};
+    Artefacts::new(ArtefactSetup {
+        cache: std::sync::Arc::new(judge_problem::dir_cache::DirCache::new(cache.into(), 1 << 30)),
+        registry: std::sync::Arc::new(registry()),
+        build_ids: [("CPP17".to_string(), "test".to_string())].into(),
+        testlib_dir: testlib_dir(),
+    })
+}
+
+pub fn cpp_helper(source: &str) -> judge_grader::artefacts::HelperSource {
+    use judge_grader::program::SourceFile;
+    let file = SourceFile { name: "helper.cpp".into(), bytes: source.as_bytes().to_vec() };
+    judge_grader::artefacts::HelperSource { lang: "CPP17".into(), files: vec![file] }
+}

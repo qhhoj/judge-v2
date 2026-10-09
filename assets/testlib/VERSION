@@ -1,0 +1,6 @@
+testlib.h from https://github.com/MikeMirzayanov/testlib
+tag: 0.9.41
+commit: 68f9f300b6abebec82d2a68d8ca04394f2664fb6
+licence: MIT (assets/testlib/LICENSE), Copyright (c) 2015 Mike Mirzayanov
+fetched: https://raw.githubusercontent.com/MikeMirzayanov/testlib/0.9.41/testlib.h
+Vendored unmodified; sha256 in SHA256SUMS. Only the C++ header is vendored (no testlib.pas, no Java testlib).

@@ -1,5 +1,6 @@
 //! Checkers: built-in ones run here over capped files; custom ones run in isolate (Task 19).
 
+pub mod custom;
 pub mod floats;
 pub mod identical;
 pub mod linecount;
