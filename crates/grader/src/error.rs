@@ -17,6 +17,10 @@ pub enum GradeError {
     RuntimeMissing(String),
     #[error("aborted")]
     Aborted,
+    /// The submission itself cannot be read (an OUTPUT zip entry with an unsupported method, encryption or a
+    /// bad checksum): the contestant's fault, graded as WA by the caller, never a host failure.
+    #[error("unreadable submission: {0}")]
+    UnreadableSubmission(String),
 }
 
 impl From<std::io::Error> for GradeError {

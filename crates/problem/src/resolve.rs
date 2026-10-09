@@ -87,9 +87,10 @@ impl Resolver {
         let version = wait_for_stamp(dir, assigned, &self.wait, self.stamps.as_ref())?;
         let init = parse_init(&read_regular_to_string(&dir.join("init.yml"))?)?;
         let problem = self.finish(code, dir, (version, init))?;
-        // Marker after the read: an upload that began since the first read must not slip through.
-        let stamp = self.stamps.read(dir)?.unwrap_or(0);
-        let unchanged = stamp == version && !self.stamps.upload_in_progress(dir);
+        // Marker, then stamp: an upload that began since the first read is seen by its marker, and one that
+        // ends between the two checks has already written its new stamp (the uploader removes the marker last).
+        let unchanged =
+            !self.stamps.upload_in_progress(dir) && self.stamps.read(dir)?.unwrap_or(0) == version;
         if unchanged {
             return Ok(Some(problem));
         }
@@ -141,7 +142,7 @@ fn archive_key(code: &str, version: u64, zip: &Path) -> Result<String, DataError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_version::FsStamps;
+    use crate::data_version::{FsStamps, WRITING_MARKER};
     use std::io::Read;
     use std::time::Duration;
 
@@ -377,6 +378,64 @@ mod tests {
         Resolver { stamps, ..resolver(root, cache) }
     }
 
+    /// Real stamps; `hook(step, after)` runs before and after every question (stamp read or marker check),
+    /// counted together from 1, so a test can place an uploader's steps between any two of them.
+    struct Stepped {
+        steps: std::sync::atomic::AtomicUsize,
+        hook: Box<dyn Fn(usize, bool) + Send + Sync>,
+    }
+
+    impl Stepped {
+        fn ask<T>(&self, answer: impl FnOnce() -> T) -> T {
+            let step = self.steps.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            (self.hook)(step, false);
+            let value = answer();
+            (self.hook)(step, true);
+            value
+        }
+    }
+
+    impl StampSource for Stepped {
+        fn read(&self, dir: &Path) -> Result<Option<u64>, DataError> {
+            self.ask(|| FsStamps.read(dir))
+        }
+
+        fn upload_in_progress(&self, dir: &Path) -> bool {
+            self.ask(|| FsStamps.upload_in_progress(dir))
+        }
+    }
+
+    #[test]
+    fn an_upload_that_ends_during_the_second_check_is_not_accepted_as_the_old_version() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let dir = root.path().join("sum");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("init.yml"), init_with_cases(1)).unwrap();
+        set_stamp(&dir, 4);
+        let hook_dir = dir.clone();
+        // Steps 1-2 are the first wait (stamp, marker). The upload starts right after them, so init.yml is read
+        // half-new, and it ends (stamp 5, then marker removed) right after step 3, the first second-check question.
+        let hook = move |step: usize, after: bool| match (step, after) {
+            (2, true) => {
+                std::fs::write(hook_dir.join(WRITING_MARKER), "").unwrap();
+                std::fs::write(hook_dir.join("init.yml"), init_with_cases(2)).unwrap();
+            }
+            (3, true) => {
+                set_stamp(&hook_dir, 5);
+                std::fs::remove_file(hook_dir.join(WRITING_MARKER)).unwrap();
+            }
+            _ => {}
+        };
+        let stamps = Arc::new(Stepped { steps: Default::default(), hook: Box::new(hook) });
+        let resolver = Resolver { stamps, ..resolver(root.path(), cache.path()) };
+        let problem = resolver.resolve("sum", 4).unwrap();
+        assert_eq!(
+            (problem.data_version_used, problem.init.test_cases.len()),
+            (5, 2),
+            "never 2 cases as version 4"
+        );
+    }
+
     #[test]
     fn a_stamp_that_moves_during_the_init_read_is_reread() {
         let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -511,13 +570,16 @@ mod tests {
     fn an_upload_that_starts_after_the_first_stamp_read_is_not_accepted() {
         let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         write_problem(root.path(), Some("4"));
-        let marker = root.path().join("sum/.data-version.writing");
-        let stamps = ScriptedStamps::new(move |n| {
-            if n == 2 {
+        let marker = root.path().join("sum").join(WRITING_MARKER);
+        // Steps 1-2 are the first wait (stamp, marker); the upload starts right after and never ends.
+        let hook = move |step: usize, after: bool| {
+            if (step, after) == (2, true) {
                 std::fs::write(&marker, "").unwrap();
             }
-        });
-        let error = scripted_problem(stamps, root.path(), cache.path()).resolve("sum", 4).unwrap_err();
+        };
+        let stamps = Arc::new(Stepped { steps: Default::default(), hook: Box::new(hook) });
+        let resolver = Resolver { stamps, ..resolver(root.path(), cache.path()) };
+        let error = resolver.resolve("sum", 4).unwrap_err();
         assert!(matches!(error, DataError::Unavailable { .. }), "{error:?}");
     }
 }
