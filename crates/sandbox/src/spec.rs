@@ -21,7 +21,8 @@ impl Limits {
             extra_time_s: 0.5,
             memory_kib,
             processes,
-            fsize_kib: output_cap_bytes.div_ceil(1024),
+            // one KiB of slack so output of exactly the cap is not cut off
+            fsize_kib: output_cap_bytes.div_ceil(1024) + 1,
             open_files: 64,
         }
     }
@@ -115,7 +116,7 @@ mod tests {
     fn solution_limits_follow_the_spec() {
         let limits = Limits::for_solution(1.5, 262_144, 1, 5000);
         assert_eq!(limits.wall_s, 5.5);
-        assert_eq!(limits.fsize_kib, 5);
+        assert_eq!(limits.fsize_kib, 6);
         assert_eq!(limits.extra_time_s, 0.5);
     }
 
@@ -130,7 +131,7 @@ mod tests {
             "--extra-time=0.5",
             "--wall-time=5.5",
             "--processes=1",
-            "--fsize=5",
+            "--fsize=6",
             "--open-files=64",
             "--meta=/tmp/4.meta",
             "--stdin=input",

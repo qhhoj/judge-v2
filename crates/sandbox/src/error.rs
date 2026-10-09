@@ -4,6 +4,10 @@ pub enum SandboxError {
     Isolate(String),
     #[error("sandbox i/o: {0}")]
     Io(String),
+    #[error("not a plain box file name: {0:?}")]
+    BadName(String),
+    #[error("box was already used; reset() before running again")]
+    Dirty,
     #[error("bad meta file: {0}")]
     Meta(String),
 }

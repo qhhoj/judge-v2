@@ -3,7 +3,10 @@
 use crate::error::SandboxError;
 use crate::meta::{Meta, parse_meta};
 use crate::spec::{RunSpec, isolate_args};
-use std::path::{Path, PathBuf};
+use std::fs::{File, OpenOptions};
+use std::io::Read;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
@@ -28,6 +31,7 @@ pub struct IsolateBox {
     id: u32,
     core: Option<u32>,
     dir: PathBuf,
+    dirty: bool,
 }
 
 fn isolate(config: &SandboxConfig, id: u32, action: &str) -> Result<String, SandboxError> {
@@ -48,13 +52,14 @@ impl IsolateBox {
         std::fs::create_dir_all(&config.meta_dir)?;
         cleanup_box(config, id)?;
         let root = isolate(config, id, "--init")?;
-        Ok(IsolateBox { config: config.clone(), id, core, dir: Path::new(&root).join("box") })
+        Ok(IsolateBox { config: config.clone(), id, core, dir: Path::new(&root).join("box"), dirty: false })
     }
 
     pub fn reset(&mut self) -> Result<(), SandboxError> {
         cleanup_box(&self.config, self.id)?;
         let root = isolate(&self.config, self.id, "--init")?;
         self.dir = Path::new(&root).join("box");
+        self.dirty = false;
         Ok(())
     }
 
@@ -70,16 +75,40 @@ impl IsolateBox {
         self.config.meta_dir.join(format!("{}.meta", self.id))
     }
 
+    /// Host path of a plain file name inside `/box`: one normal segment, nothing else.
+    fn box_path(&self, name: &str) -> Result<PathBuf, SandboxError> {
+        let plain =
+            matches!(Path::new(name).components().next(), Some(Component::Normal(part)) if part == name);
+        if !plain {
+            return Err(SandboxError::BadName(name.to_string()));
+        }
+        let root = self.dir.canonicalize()?;
+        let target = root.join(name);
+        if target.parent() != Some(root.as_path()) {
+            return Err(SandboxError::BadName(name.to_string()));
+        }
+        Ok(target)
+    }
+
+    /// Copies a host file into the box. `src` is trusted (the daemon's own files); `name` is not.
     pub fn put(&self, name: &str, src: &Path, executable: bool) -> Result<(), SandboxError> {
-        let target = self.dir.join(name);
-        std::fs::copy(src, &target)?;
-        set_mode(&target, if executable { 0o755 } else { 0o644 })
+        let target = self.box_path(name)?;
+        write_new(&target, &mut File::open(src)?, if executable { 0o755 } else { 0o644 })
     }
 
     pub fn put_bytes(&self, name: &str, bytes: &[u8]) -> Result<(), SandboxError> {
-        let target = self.dir.join(name);
-        std::fs::write(&target, bytes)?;
-        set_mode(&target, 0o644)
+        write_new(&self.box_path(name)?, &mut &bytes[..], 0o644)
+    }
+
+    /// Reads at most `cap` bytes of a regular file the program left in the box. A symlink is refused.
+    pub fn read_output(&self, name: &str, cap: u64) -> Result<Vec<u8>, SandboxError> {
+        let path = self.box_path(name)?;
+        if !std::fs::symlink_metadata(&path)?.file_type().is_file() {
+            return Err(SandboxError::BadName(name.to_string()));
+        }
+        let mut bytes = Vec::new();
+        File::open(path)?.take(cap).read_to_end(&mut bytes)?;
+        Ok(bytes)
     }
 
     pub fn put_tree(&self, src_dir: &Path) -> Result<(), SandboxError> {
@@ -105,6 +134,10 @@ impl IsolateBox {
     }
 
     pub fn run(&mut self, spec: &RunSpec) -> Result<Meta, SandboxError> {
+        if self.dirty {
+            return Err(SandboxError::Dirty);
+        }
+        self.dirty = true;
         let _ = std::fs::remove_file(self.meta_path());
         let status =
             self.command(spec).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
@@ -121,24 +154,35 @@ impl Drop for IsolateBox {
         if let Err(error) = cleanup_box(&self.config, self.id) {
             eprintln!("isolate cleanup of box {} failed: {error}", self.id);
         }
+        let _ = std::fs::remove_file(self.meta_path());
     }
 }
 
-fn set_mode(path: &Path, mode: u32) -> Result<(), SandboxError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+/// Creates `target` fresh: an existing file or symlink is unlinked, never followed.
+fn write_new(target: &Path, from: &mut impl Read, mode: u32) -> Result<(), SandboxError> {
+    if std::fs::symlink_metadata(target).is_ok() {
+        std::fs::remove_file(target)?;
+    }
+    let mut file = OpenOptions::new().write(true).create_new(true).mode(mode).open(target)?;
+    std::io::copy(from, &mut file)?;
+    file.set_permissions(std::fs::Permissions::from_mode(mode))?;
     Ok(())
 }
 
+/// Copies a program snapshot, keeping permission bits. Symlinks are refused.
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), SandboxError> {
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let target = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
             std::fs::create_dir_all(&target)?;
             copy_tree(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            let mode = entry.metadata()?.permissions().mode() & 0o777;
+            write_new(&target, &mut File::open(entry.path())?, mode)?;
         } else {
-            std::fs::copy(entry.path(), &target)?; // std::fs::copy keeps the permission bits
+            return Err(SandboxError::BadName(entry.file_name().to_string_lossy().into_owned()));
         }
     }
     Ok(())

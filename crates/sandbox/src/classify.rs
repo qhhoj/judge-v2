@@ -50,7 +50,7 @@ pub fn classify(meta: &Meta, output: OutputUse) -> RunVerdict {
     if status == Some("TO") {
         return RunVerdict::Tle;
     }
-    if output.written >= output.cap || meta.exit_signal == Some(SIGXFSZ) {
+    if output.written > output.cap || meta.exit_signal == Some(SIGXFSZ) {
         return RunVerdict::Ole;
     }
     match status {
@@ -82,14 +82,15 @@ mod tests {
     #[test]
     fn output_at_the_cap_is_ole_even_without_sigxfsz() {
         // Python ignores SIGXFSZ and exits 120 after EFBIG (seen on isolate 2.6).
-        assert_eq!(verdict("status:RE\nexitcode:120\n", 4096), RunVerdict::Ole);
+        assert_eq!(verdict("status:RE\nexitcode:120\n", 4097), RunVerdict::Ole);
+        assert_eq!(verdict("exitcode:0\n", 4096), RunVerdict::Ok, "exactly the cap is allowed");
         assert_eq!(verdict("status:SG\nexitsig:25\n", 100), RunVerdict::Ole);
     }
 
     #[test]
     fn memory_and_time_win_over_output() {
-        assert_eq!(verdict("status:TO\n", 4096), RunVerdict::Tle);
-        assert_eq!(verdict("status:SG\nexitsig:9\ncg-oom-killed:1\n", 4096), RunVerdict::Mle);
+        assert_eq!(verdict("status:TO\n", 5000), RunVerdict::Tle);
+        assert_eq!(verdict("status:SG\nexitsig:9\ncg-oom-killed:1\n", 5000), RunVerdict::Mle);
     }
 
     #[test]
