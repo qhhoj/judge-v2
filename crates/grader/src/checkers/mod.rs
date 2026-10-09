@@ -3,6 +3,7 @@
 pub mod floats;
 pub mod identical;
 pub mod linecount;
+pub mod select;
 pub mod standard;
 pub mod tokens;
 
