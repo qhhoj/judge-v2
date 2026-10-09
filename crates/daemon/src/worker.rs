@@ -22,6 +22,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+/// A FetchSource that has not finished by then is DATA_UNAVAILABLE.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+const ABORT_POLL: Duration = Duration::from_millis(20);
+
 pub trait Runner: Send {
     fn run(
         &mut self,
@@ -62,6 +66,8 @@ pub struct WorkerDeps {
     pub gates: Gates,
     pub metrics: Arc<Metrics>,
     pub scratch: PathBuf,
+    /// The longest a FetchSource may take (`FETCH_TIMEOUT` in the daemon).
+    pub fetch_timeout: Duration,
 }
 
 /// Frees the job's pool slot; called right before `Final` is pushed, so the slot is free by the time
@@ -147,15 +153,28 @@ fn discard_source(deps: &WorkerDeps, r: &AssignmentRef) {
     let _ = std::fs::remove_file(source_path(deps, r));
 }
 
-/// Inline sources come with the Assign; file-only ones over FetchSource (a failure is DATA_UNAVAILABLE).
-async fn source(deps: &WorkerDeps, a: &Assignment) -> Result<SubmissionSource, Outcome> {
+/// Resolves once the job's abort flag is set.
+async fn aborted(abort: &AtomicBool) {
+    while !abort.load(Ordering::SeqCst) {
+        tokio::time::sleep(ABORT_POLL).await;
+    }
+}
+
+/// Inline sources come with the Assign; file-only ones over FetchSource. A failed or stalled fetch
+/// (`fetch_timeout`) is DATA_UNAVAILABLE; an abort stops the wait and the run ends ABORTED.
+async fn source(deps: &WorkerDeps, job: &Job) -> Result<SubmissionSource, Outcome> {
+    let a = &job.assignment;
     if !a.source_is_file {
         return Ok(SubmissionSource::Inline(a.source.clone()));
     }
     let path = source_path(deps, &a.r);
     // source_size 0 = not announced: only the 64 MiB cap applies.
     let announced = if a.source_size == 0 { MAX_FILE_SOURCE } else { a.source_size.min(MAX_FILE_SOURCE) };
-    let fetched = deps.fetch.fetch(&a.r, announced, &path).await;
+    let fetch = tokio::time::timeout(deps.fetch_timeout, deps.fetch.fetch(&a.r, announced, &path));
+    let fetched = tokio::select! {
+        fetched = fetch => fetched.unwrap_or_else(|_| Err("FetchSource timed out".into())),
+        _ = aborted(&job.abort) => return Err(Outcome::Aborted),
+    };
     if let Err(error) = fetched {
         tracing::warn!(judge = %deps.judge, submission_id = %a.r.submission_id, %error, "source fetch failed");
         return Err(Outcome::Retry(RetryReason::DataUnavailable));
@@ -184,7 +203,7 @@ struct Prepared {
 
 async fn prepare(deps: &WorkerDeps, job: &Job) -> Result<Prepared, Outcome> {
     let a = &job.assignment;
-    let source = source(deps, a).await?;
+    let source = source(deps, job).await?;
     if job.aborted() {
         return Err(Outcome::Aborted);
     }

@@ -96,7 +96,16 @@ pub async fn serve(listen: String, metrics: Arc<Metrics>, sample: Arc<dyn Fn(&Me
         Ok(listener) => listener,
         Err(error) => return tracing::error!(%error, listen, "metrics listener failed"),
     };
-    while let Ok((mut stream, _)) = listener.accept().await {
+    loop {
+        let mut stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(error) => {
+                // EMFILE and the like pass; the server keeps listening.
+                tracing::warn!(%error, "metrics accept failed");
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+        };
         sample(&metrics);
         let body = metrics.render();
         tokio::spawn(async move {

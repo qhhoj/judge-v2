@@ -5,7 +5,7 @@ use judge_daemon::outbox::{AssignmentRef, Body, OUTBOX_WATERMARK, Outboxes};
 use judge_daemon::pool::Pool;
 use judge_daemon::source::SourceFetch;
 use judge_daemon::wire::Assignment;
-use judge_daemon::worker::{Runner, WorkerDeps};
+use judge_daemon::worker::{Job, Runner, WorkerDeps, process};
 use judge_grader::judge::{Outcome, RetryReason, Submission, SubmissionSource};
 use judge_grader::report::{CaseReport, Reporter};
 use judge_problem::data_version::{FsStamps, WaitPolicy};
@@ -76,6 +76,7 @@ impl SourceFetch for FixedFetch {
 
 struct World {
     pool: Arc<Pool>,
+    deps: Arc<WorkerDeps>,
     outboxes: Arc<Outboxes>,
     seen: Arc<Mutex<Vec<String>>>,
     metrics: Arc<Metrics>,
@@ -83,40 +84,72 @@ struct World {
     _dirs: Vec<tempfile::TempDir>,
 }
 
+/// How a test world differs from the default one.
+struct Opts {
+    slots: usize,
+    cases: u32,
+    pause: Duration,
+    watermark: usize,
+    fetch: Arc<dyn SourceFetch>,
+    fetch_timeout: Duration,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Opts {
+            slots: 1,
+            cases: 1,
+            pause: Duration::ZERO,
+            watermark: OUTBOX_WATERMARK,
+            fetch: Arc::new(FixedFetch),
+            fetch_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
 fn world(slots: usize, cases: u32, pause: Duration) -> World {
-    world_with(slots, cases, pause, OUTBOX_WATERMARK)
+    world_from(Opts { slots, cases, pause, ..Opts::default() })
 }
 
 fn world_with(slots: usize, cases: u32, pause: Duration, watermark: usize) -> World {
-    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    world_from(Opts { slots, cases, pause, watermark, ..Opts::default() })
+}
+
+fn resolver(dirs: &[tempfile::TempDir]) -> Resolver {
     let problem = dirs[0].path().join("p");
     std::fs::create_dir_all(&problem).unwrap();
     std::fs::write(problem.join("init.yml"), "test_cases:\n- {in: 1.in, out: 1.out, points: 1}\n").unwrap();
     std::fs::write(problem.join(".data-version"), "5\n").unwrap();
-    let gates_dir = tempfile::tempdir().unwrap();
-    let outboxes = Arc::new(Outboxes::new(watermark));
-    let metrics = Arc::new(Metrics::new());
-    let resolver = Resolver {
+    Resolver {
         root: dirs[0].path().into(),
         cache: Arc::new(DirCache::new(dirs[1].path().into(), 1 << 20)),
         wait: WaitPolicy { timeout: Duration::from_millis(100), poll: Duration::from_millis(10) },
         zip: Default::default(),
         stamps: Arc::new(FsStamps),
-    };
-    let deps = WorkerDeps {
+    }
+}
+
+fn world_from(opts: Opts) -> World {
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let gates_dir = tempfile::tempdir().unwrap();
+    let (outboxes, metrics) = (Arc::new(Outboxes::new(opts.watermark)), Arc::new(Metrics::new()));
+    let deps = Arc::new(WorkerDeps {
         judge: "j1".into(),
         outboxes: outboxes.clone(),
-        resolver: Arc::new(resolver),
-        fetch: Arc::new(FixedFetch),
+        resolver: Arc::new(resolver(&dirs)),
+        fetch: opts.fetch,
         gates: Gates { dir: Some(gates_dir.path().into()) },
         metrics: metrics.clone(),
         scratch: dirs[2].path().into(),
-    };
+        fetch_timeout: opts.fetch_timeout,
+    });
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runners: Vec<Box<dyn Runner>> = (0..slots)
+    let (cases, pause) = (opts.cases, opts.pause);
+    let runners: Vec<Box<dyn Runner>> = (0..opts.slots)
         .map(|_| Box::new(Scripted { cases, pause, seen: seen.clone() }) as Box<dyn Runner>)
         .collect();
-    World { pool: Pool::start(Arc::new(deps), runners), outboxes, seen, metrics, gates_dir, _dirs: dirs }
+    let pool = Pool::start(deps.clone(), runners);
+    World { pool, deps, outboxes, seen, metrics, gates_dir, _dirs: dirs }
 }
 
 fn assignment(id: &str, code: &str, version: u64) -> Assignment {
@@ -363,4 +396,60 @@ async fn a_repeated_assign_for_a_held_ref_starts_no_second_run() {
     let accepted = bodies(&w, "twice").iter().filter(|b| matches!(b, Body::Accepted)).count();
     assert_eq!(accepted, 1);
     assert_eq!(w.seen.lock().unwrap().len(), 1);
+}
+
+/// Never answers: a bridge whose FetchSource stream stalls.
+struct StalledFetch;
+#[tonic::async_trait]
+impl SourceFetch for StalledFetch {
+    async fn fetch(&self, _r: &AssignmentRef, _max: u64, _dest: &Path) -> Result<(), String> {
+        std::future::pending().await
+    }
+}
+
+fn file_assignment(id: &str) -> Assignment {
+    let mut a = assignment(id, "p", 5);
+    (a.source, a.source_is_file, a.source_size) = (Vec::new(), true, 9);
+    a
+}
+
+#[tokio::test]
+async fn a_stalled_fetch_is_retry_once_it_times_out() {
+    let fetch_timeout = Duration::from_millis(200);
+    let w = world_from(Opts { fetch: Arc::new(StalledFetch), fetch_timeout, ..Opts::default() });
+    w.pool.assign(file_assignment("stall")).unwrap();
+    let retry = Outcome::Retry(RetryReason::DataUnavailable);
+    assert!(matches!(final_of(&w, "stall").await, Body::Final { outcome, .. } if outcome == retry));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(w.pool.busy(), 0, "the slot is free again");
+}
+
+#[tokio::test]
+async fn an_abort_during_a_stalled_fetch_ends_aborted() {
+    let fetch_timeout = Duration::from_secs(600);
+    let w = world_from(Opts { fetch: Arc::new(StalledFetch), fetch_timeout, ..Opts::default() });
+    w.pool.assign(file_assignment("stuck")).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    w.pool.abort(&AssignmentRef { submission_id: "stuck".into(), generation: 1 });
+    assert!(matches!(final_of(&w, "stuck").await, Body::Final { outcome: Outcome::Aborted, .. }));
+    assert!(w.seen.lock().unwrap().is_empty(), "the runner never started");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_slot_is_released_before_the_final_is_pushed() {
+    let w = world(1, 1, Duration::ZERO);
+    let r = AssignmentRef { submission_id: "order".into(), generation: 1 };
+    w.outboxes.open(&r);
+    let (outboxes, at_release) = (w.outboxes.clone(), Arc::new(Mutex::new(None)));
+    let (seen_at_release, check) = (at_release.clone(), r.clone());
+    let release = Arc::new(move || {
+        let final_visible =
+            outboxes.pending_after(&check, 0).iter().any(|e| matches!(e.body, Body::Final { .. }));
+        *seen_at_release.lock().unwrap() = Some(final_visible);
+    });
+    let job = Job { assignment: assignment("order", "p", 5), abort: Arc::default(), release };
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    process(&w.deps, Box::new(Scripted { cases: 1, pause: Duration::ZERO, seen }), job).await;
+    assert_eq!(*at_release.lock().unwrap(), Some(false), "released while no Final was visible");
+    assert!(matches!(final_of(&w, "order").await, Body::Final { outcome: Outcome::Graded, .. }));
 }

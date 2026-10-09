@@ -12,7 +12,7 @@ use crate::pool::Pool;
 use crate::runtimes::{available, detect_versions};
 use crate::source::GrpcFetch;
 use crate::wire::{FEATURES, HelloInfo};
-use crate::worker::{Runner, WorkerDeps};
+use crate::worker::{FETCH_TIMEOUT, Runner, WorkerDeps};
 use anyhow::Context;
 use judge_grader::artefacts::{ArtefactSetup, Artefacts};
 use judge_grader::judge::{GraderDefaults, JudgeEnv};
@@ -158,6 +158,7 @@ fn build(config: &Arc<Config>) -> anyhow::Result<Daemon> {
         gates: Gates { dir: config.control_dir.clone() },
         metrics: metrics.clone(),
         scratch: config.cache_dir.join("work"),
+        fetch_timeout: FETCH_TIMEOUT,
     };
     let pool = Pool::start(Arc::new(deps), runners);
     tokio::spawn(serve(

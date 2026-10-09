@@ -312,3 +312,60 @@ async fn stop_ends_a_live_session() {
     tokio::time::timeout(std::time::Duration::from_secs(2), h.link).await.expect("link stopped").unwrap();
     assert_eq!(h.bridge.session_count(), 1, "no reconnect after stop");
 }
+
+fn order_of(messages: &[v1::JudgeMessage]) -> Vec<&'static str> {
+    messages
+        .iter()
+        .filter_map(|m| match m.body {
+            Some(judge_message::Body::Draining(_)) => Some("draining"),
+            Some(judge_message::Body::Final(_)) => Some("final"),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn draining_goes_before_a_final_that_became_ready_with_it() {
+    // Several sessions: without `biased` the select picks a ready branch at random.
+    for _ in 0..8 {
+        let h = harness(false).await;
+        eventually(|| h.bridge.session_count() == 1).await;
+        h.bridge.send(0, welcome(vec![]));
+        h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Ping(v1::Ping { nonce: 1 })) });
+        eventually(|| {
+            h.bridge.messages(0).iter().any(|m| matches!(m.body, Some(judge_message::Body::Pong(_))))
+        })
+        .await;
+        // No await between the two: the link sees both ready at its next poll.
+        h.outboxes.open(&r("f"));
+        h.drain.send(true).unwrap();
+        h.outboxes.push(&r("f"), graded());
+        eventually(|| order_of(&h.bridge.messages(0)).len() == 2).await;
+        assert_eq!(order_of(&h.bridge.messages(0)), ["draining", "final"]);
+        h.stop.send(true).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_drain_begun_while_disconnected_is_announced_before_the_replay() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.outboxes.open(&r("f"));
+    h.outboxes.push(&r("f"), graded());
+    h.drain.send(true).unwrap();
+    h.bridge.send(0, welcome(vec![]));
+    eventually(|| order_of(&h.bridge.messages(0)).len() == 2).await;
+    assert_eq!(order_of(&h.bridge.messages(0)), ["draining", "final"]);
+}
+
+#[tokio::test]
+async fn an_unknown_bridge_message_is_ignored() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.bridge.send(0, welcome(vec![]));
+    h.bridge.send(0, BridgeMessage { body: None });
+    h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Ping(v1::Ping { nonce: 5 })) });
+    let pong = |m: &v1::JudgeMessage| matches!(&m.body, Some(judge_message::Body::Pong(p)) if p.nonce == 5);
+    eventually(|| h.bridge.messages(0).iter().any(pong)).await;
+    assert_eq!(h.bridge.session_count(), 1, "the session survived");
+}

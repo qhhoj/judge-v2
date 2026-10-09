@@ -53,6 +53,8 @@ pub enum BridgeEvent {
     Ack(AssignmentRef, u32),
     Disconnect,
     Error(String),
+    /// A oneof member this minor does not know (a newer bridge): ignored (spec §3.3).
+    Unknown,
 }
 
 /// What `Hello` announces besides slots and in-flight runs. `protocol_minor` is
@@ -104,7 +106,8 @@ fn resume(r: v1::Resume) -> Result<(AssignmentRef, ResumeDecision), WireError> {
 
 pub fn from_bridge(message: BridgeMessage) -> Result<BridgeEvent, WireError> {
     use bridge_message::Body as B;
-    Ok(match message.body.ok_or_else(|| WireError("empty message".into()))? {
+    let Some(body) = message.body else { return Ok(BridgeEvent::Unknown) };
+    Ok(match body {
         B::Welcome(w) => {
             let limits = w.limits.unwrap_or_default();
             BridgeEvent::Welcome {
@@ -336,6 +339,14 @@ mod tests {
                 ..Default::default()
             })),
         }
+    }
+
+    #[test]
+    fn an_unknown_oneof_member_is_ignored() {
+        use prost::Message;
+        // Field 99, length-delimited, empty: a member a later minor might add.
+        let message = BridgeMessage::decode(&[0x9a, 0x06, 0x00][..]).unwrap();
+        assert!(matches!(from_bridge(message), Ok(BridgeEvent::Unknown)));
     }
 
     #[test]

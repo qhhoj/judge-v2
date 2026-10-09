@@ -682,6 +682,7 @@ dependencies = [
  "judge-proto",
  "judge-sandbox",
  "prometheus",
+ "prost",
  "rand",
  "serde",
  "serde_json",

@@ -390,6 +390,7 @@ fn pool(
         gates: Gates { dir: Some(dirs[3].path().into()) },
         metrics: Arc::new(Metrics::new()),
         scratch: dirs[4].path().into(),
+        fetch_timeout: judge_daemon::worker::FETCH_TIMEOUT,
     };
     Pool::start(Arc::new(deps), runners)
 }

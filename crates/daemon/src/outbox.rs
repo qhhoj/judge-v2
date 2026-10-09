@@ -300,7 +300,7 @@ mod tests {
         o.push(Body::Accepted);
         o.ack(1);
         assert!(!o.ack(1), "duplicate ack");
-        assert!(!o.ack(99), "ack beyond sent is ignored");
+        assert!(!o.ack(99), "an ack beyond the last seq trims what is there and ends nothing");
         assert_eq!(o.push(Body::Accepted), 2);
     }
 
