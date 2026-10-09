@@ -173,7 +173,7 @@ fn suite() -> Suite {
         scratch: dirs[3].path().into(),
         defaults: GraderDefaults {
             default_output_limit: 64 << 10,
-            default_output_prefix: 64,
+            default_output_prefix: 512,
             jvm_reserve_kib: 131_072,
         },
     };
@@ -188,8 +188,8 @@ fn suite() -> Suite {
     Suite { env, resolver, registry, dirs }
 }
 
-/// The outcome and every case's status code.
-fn judge(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Vec<String>) {
+/// The outcome and every reported case.
+fn judge_cases(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Vec<CaseReport>) {
     let _watchdog = Watchdog::start(format!("{lang} on {code}"), SUBMISSION_LIMIT);
     let jvm = s.registry.get(lang).is_some_and(|l| l.jvm);
     let submission = Submission {
@@ -203,7 +203,13 @@ fn judge(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Ve
     let problem = s.resolver.resolve(code, 0).unwrap();
     let mut cases = Cases::default();
     let outcome = judge_submission(&mut s.env, &problem, &submission, &mut cases);
-    (outcome, cases.0.iter().map(|c| c.status.code().to_string()).collect())
+    (outcome, cases.0)
+}
+
+/// The outcome and every case's status code.
+fn judge(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Vec<String>) {
+    let (outcome, cases) = judge_cases(s, code, lang, source);
+    (outcome, cases.iter().map(|c| c.status.code().to_string()).collect())
 }
 
 /// "CE" for a compile error, the first case's status code when graded, else the outcome's debug text.
@@ -269,15 +275,61 @@ fn a_fork_bomb_does_not_hurt_the_next_submission() {
     assert_eq!(verdict(&mut s, "aplusb", "CPP17", "CPP17/ac.cpp"), "AC");
 }
 
+/// Host paths that exist now and would be readable if the sandbox leaked: the problem data and the
+/// directories of both judge boxes (the solution runs in one, the helper lives in the other).
+fn leak_targets(s: &Suite) -> Vec<PathBuf> {
+    let box_dir = |offset| PathBuf::from(format!("/var/local/lib/isolate/{}/box", box_id(offset)));
+    let targets = vec![
+        s.data_root().join("aplusb/0.out"),
+        s.data_root().join("aplusb"),
+        box_dir(SOLUTION_BOX),
+        box_dir(SOLUTION_BOX + 1),
+    ];
+    for path in &targets {
+        assert!(path.exists(), "the control needs {} to exist on the host", path.display());
+    }
+    targets
+}
+
+fn probe_input(mode: &str, targets: &[PathBuf]) -> String {
+    let paths: Vec<_> = targets.iter().map(|p| p.display().to_string()).collect();
+    format!("{mode} {}\n{}\n", std::process::id(), paths.join("\n"))
+}
+
+/// Runs the probe outside any sandbox: the attacks it makes must reach their targets there.
+fn run_probe_on_host(input: &str) -> String {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("probe");
+    let source = PathBuf::from(ROOT).join("tests/programs/CPP17/sec_probe.cpp");
+    let built =
+        std::process::Command::new("g++").args(["-O1", "-pthread", "-o"]).arg(&binary).arg(source).status();
+    assert!(built.unwrap().success(), "the probe must compile");
+    let mut child = std::process::Command::new(&binary)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let _watchdog = Watchdog::start("host probe".into(), Duration::from_secs(60));
+    let out = child.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 #[test]
-fn data_and_other_boxes_are_unreadable() {
+fn the_sandbox_blocks_host_access_and_privilege_that_work_outside_it() {
     let mut s = suite();
-    let other_box = format!("/var/local/lib/isolate/{}/box", box_id(SOLUTION_BOX + 1));
-    let own_box = format!("/var/local/lib/isolate/{}/box", box_id(SOLUTION_BOX));
-    let paths =
-        format!("{}/aplusb/0.out\n{other_box}/main.cpp\n{own_box}/main.cpp\n", s.data_root().display());
-    write_problem(s.data_root(), "files", &[(&paths, "ok\n")]);
-    assert_eq!(verdict(&mut s, "files", "CPP17", "CPP17/sec_files.cpp"), "AC");
+    let targets = leak_targets(&s);
+    assert_eq!(
+        run_probe_on_host(&probe_input("host", &targets)),
+        "ok",
+        "control: the attacks reach their targets outside the sandbox"
+    );
+    write_problem(s.data_root(), "probe", &[(&probe_input("box", &targets), "ok\n")]);
+    let (outcome, cases) = judge_cases(&mut s, "probe", "CPP17", program("CPP17/sec_probe.cpp"));
+    assert_eq!(outcome, Outcome::Graded);
+    let seen = cases.first().map(|c| format!("{} {}", c.status.code(), c.output_prefix));
+    assert_eq!(seen.as_deref(), Some("AC ok\n"), "attacks that got through are listed after the status");
 }
 
 /// A host TCP listener and an abstract AF_UNIX listener; non-blocking so "accepted nothing" is checkable.
