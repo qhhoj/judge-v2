@@ -1,0 +1,738 @@
+{
+  "messages": {
+    ".qhhoj.judge.v1.Abort": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Accepted": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "seq",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Assign": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "problem_code",
+          "kind": "String",
+          "repeated": false
+        },
+        "3": {
+          "name": "data_version",
+          "kind": "Uint64",
+          "repeated": false
+        },
+        "4": {
+          "name": "language_key",
+          "kind": "String",
+          "repeated": false
+        },
+        "5": {
+          "name": "source",
+          "kind": "Bytes",
+          "repeated": false
+        },
+        "6": {
+          "name": "source_is_file",
+          "kind": "Bool",
+          "repeated": false
+        },
+        "7": {
+          "name": "source_size",
+          "kind": "Uint64",
+          "repeated": false
+        },
+        "8": {
+          "name": "time_limit_s",
+          "kind": "Double",
+          "repeated": false
+        },
+        "9": {
+          "name": "memory_limit_kib",
+          "kind": "Uint64",
+          "repeated": false
+        },
+        "10": {
+          "name": "short_circuit",
+          "kind": "Bool",
+          "repeated": false
+        },
+        "11": {
+          "name": "pretests_only",
+          "kind": "Bool",
+          "repeated": false
+        },
+        "12": {
+          "name": "meta",
+          "kind": ".qhhoj.judge.v1.Meta",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.AssignmentRef": {
+      "fields": {
+        "1": {
+          "name": "submission_id",
+          "kind": "String",
+          "repeated": false
+        },
+        "2": {
+          "name": "generation",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.BridgeError": {
+      "fields": {
+        "1": {
+          "name": "code",
+          "kind": ".qhhoj.judge.v1.ErrorCode",
+          "repeated": false
+        },
+        "2": {
+          "name": "message",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.BridgeMessage": {
+      "fields": {
+        "1": {
+          "name": "welcome",
+          "kind": ".qhhoj.judge.v1.Welcome",
+          "repeated": false
+        },
+        "2": {
+          "name": "ping",
+          "kind": ".qhhoj.judge.v1.Ping",
+          "repeated": false
+        },
+        "3": {
+          "name": "assign",
+          "kind": ".qhhoj.judge.v1.Assign",
+          "repeated": false
+        },
+        "4": {
+          "name": "abort",
+          "kind": ".qhhoj.judge.v1.Abort",
+          "repeated": false
+        },
+        "5": {
+          "name": "ack",
+          "kind": ".qhhoj.judge.v1.ResultAck",
+          "repeated": false
+        },
+        "6": {
+          "name": "disconnect",
+          "kind": ".qhhoj.judge.v1.Disconnect",
+          "repeated": false
+        },
+        "7": {
+          "name": "error",
+          "kind": ".qhhoj.judge.v1.BridgeError",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Case": {
+      "fields": {
+        "1": {
+          "name": "position",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "2": {
+          "name": "status",
+          "kind": ".qhhoj.judge.v1.Status",
+          "repeated": false
+        },
+        "3": {
+          "name": "time_s",
+          "kind": "Double",
+          "repeated": false
+        },
+        "4": {
+          "name": "memory_kib",
+          "kind": "Uint64",
+          "repeated": false
+        },
+        "5": {
+          "name": "points",
+          "kind": "Double",
+          "repeated": false
+        },
+        "6": {
+          "name": "total",
+          "kind": "Double",
+          "repeated": false
+        },
+        "7": {
+          "name": "batch",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "8": {
+          "name": "feedback",
+          "kind": "String",
+          "repeated": false
+        },
+        "9": {
+          "name": "extended_feedback",
+          "kind": "String",
+          "repeated": false
+        },
+        "10": {
+          "name": "output_prefix",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.CaseResults": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "seq",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "cases",
+          "kind": ".qhhoj.judge.v1.Case",
+          "repeated": true
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Chunk": {
+      "fields": {
+        "1": {
+          "name": "data",
+          "kind": "Bytes",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Compiled": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "seq",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "log",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Disconnect": {
+      "fields": {
+        "1": {
+          "name": "forced",
+          "kind": "Bool",
+          "repeated": false
+        },
+        "2": {
+          "name": "reason",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Draining": {
+      "fields": {},
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.FetchSourceRequest": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "session_id",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Final": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "seq",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "outcome",
+          "kind": ".qhhoj.judge.v1.Outcome",
+          "repeated": false
+        },
+        "4": {
+          "name": "log",
+          "kind": "String",
+          "repeated": false
+        },
+        "5": {
+          "name": "reason",
+          "kind": ".qhhoj.judge.v1.RetryReason",
+          "repeated": false
+        },
+        "6": {
+          "name": "data_version_used",
+          "kind": "Uint64",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GradingStarted": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "seq",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "pretested",
+          "kind": "Bool",
+          "repeated": false
+        },
+        "4": {
+          "name": "case_count",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Hello": {
+      "fields": {
+        "1": {
+          "name": "protocol_minor",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "2": {
+          "name": "build",
+          "kind": "String",
+          "repeated": false
+        },
+        "3": {
+          "name": "slots",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "4": {
+          "name": "runtimes",
+          "kind": ".qhhoj.judge.v1.Runtime",
+          "repeated": true
+        },
+        "5": {
+          "name": "features",
+          "kind": "String",
+          "repeated": true
+        },
+        "6": {
+          "name": "in_flight",
+          "kind": ".qhhoj.judge.v1.InFlight",
+          "repeated": true
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.InFlight": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "last_seq_sent",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.JudgeError": {
+      "fields": {
+        "1": {
+          "name": "code",
+          "kind": ".qhhoj.judge.v1.ErrorCode",
+          "repeated": false
+        },
+        "2": {
+          "name": "message",
+          "kind": "String",
+          "repeated": false
+        },
+        "3": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.JudgeMessage": {
+      "fields": {
+        "1": {
+          "name": "hello",
+          "kind": ".qhhoj.judge.v1.Hello",
+          "repeated": false
+        },
+        "2": {
+          "name": "pong",
+          "kind": ".qhhoj.judge.v1.Pong",
+          "repeated": false
+        },
+        "3": {
+          "name": "accepted",
+          "kind": ".qhhoj.judge.v1.Accepted",
+          "repeated": false
+        },
+        "4": {
+          "name": "compiled",
+          "kind": ".qhhoj.judge.v1.Compiled",
+          "repeated": false
+        },
+        "5": {
+          "name": "started",
+          "kind": ".qhhoj.judge.v1.GradingStarted",
+          "repeated": false
+        },
+        "6": {
+          "name": "cases",
+          "kind": ".qhhoj.judge.v1.CaseResults",
+          "repeated": false
+        },
+        "7": {
+          "name": "final",
+          "kind": ".qhhoj.judge.v1.Final",
+          "repeated": false
+        },
+        "8": {
+          "name": "error",
+          "kind": ".qhhoj.judge.v1.JudgeError",
+          "repeated": false
+        },
+        "9": {
+          "name": "draining",
+          "kind": ".qhhoj.judge.v1.Draining",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Limits": {
+      "fields": {
+        "1": {
+          "name": "max_message_bytes",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "2": {
+          "name": "max_cases_per_message",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "max_cases_per_submission",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "4": {
+          "name": "max_log_bytes",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "5": {
+          "name": "max_feedback_bytes",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "6": {
+          "name": "max_text_bytes",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "7": {
+          "name": "max_messages_per_second",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "8": {
+          "name": "accept_timeout_ms",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "9": {
+          "name": "resume_grace_ms",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Meta": {
+      "fields": {
+        "1": {
+          "name": "in_contest",
+          "kind": "Sint32",
+          "repeated": false
+        },
+        "2": {
+          "name": "attempt_no",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "user_id",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Ping": {
+      "fields": {
+        "1": {
+          "name": "nonce",
+          "kind": "Uint64",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Pong": {
+      "fields": {
+        "1": {
+          "name": "nonce",
+          "kind": "Uint64",
+          "repeated": false
+        },
+        "2": {
+          "name": "busy",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "load",
+          "kind": "Double",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.ResultAck": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "seq",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Resume": {
+      "fields": {
+        "1": {
+          "name": "ref",
+          "kind": ".qhhoj.judge.v1.AssignmentRef",
+          "repeated": false
+        },
+        "2": {
+          "name": "action",
+          "kind": ".qhhoj.judge.v1.Resume.Action",
+          "repeated": false
+        },
+        "3": {
+          "name": "from_seq",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Runtime": {
+      "fields": {
+        "1": {
+          "name": "language_key",
+          "kind": "String",
+          "repeated": false
+        },
+        "2": {
+          "name": "name",
+          "kind": "String",
+          "repeated": false
+        },
+        "3": {
+          "name": "version",
+          "kind": "String",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.Welcome": {
+      "fields": {
+        "1": {
+          "name": "session_id",
+          "kind": "String",
+          "repeated": false
+        },
+        "2": {
+          "name": "protocol_minor",
+          "kind": "Uint32",
+          "repeated": false
+        },
+        "3": {
+          "name": "resume",
+          "kind": ".qhhoj.judge.v1.Resume",
+          "repeated": true
+        },
+        "4": {
+          "name": "limits",
+          "kind": ".qhhoj.judge.v1.Limits",
+          "repeated": false
+        },
+        "5": {
+          "name": "ping_interval_ms",
+          "kind": "Uint32",
+          "repeated": false
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    }
+  },
+  "enums": {
+    ".qhhoj.judge.v1.ErrorCode": {
+      "0": "ERROR_CODE_UNSPECIFIED",
+      "1": "ERROR_CODE_PROTOCOL",
+      "2": "ERROR_CODE_SLOTS_FULL",
+      "3": "ERROR_CODE_FLOOD",
+      "4": "ERROR_CODE_TOO_LARGE",
+      "5": "ERROR_CODE_SEQ_GAP",
+      "6": "ERROR_CODE_UNKNOWN_REF",
+      "7": "ERROR_CODE_INTERNAL"
+    },
+    ".qhhoj.judge.v1.Outcome": {
+      "0": "OUTCOME_UNSPECIFIED",
+      "1": "OUTCOME_GRADED",
+      "2": "OUTCOME_COMPILE_ERROR",
+      "3": "OUTCOME_INTERNAL_ERROR",
+      "4": "OUTCOME_ABORTED",
+      "5": "OUTCOME_RETRY"
+    },
+    ".qhhoj.judge.v1.Resume.Action": {
+      "0": "ACTION_UNSPECIFIED",
+      "1": "ACTION_CONTINUE",
+      "2": "ACTION_DROP"
+    },
+    ".qhhoj.judge.v1.RetryReason": {
+      "0": "RETRY_REASON_UNSPECIFIED",
+      "1": "RETRY_REASON_DATA_UNAVAILABLE",
+      "2": "RETRY_REASON_UNSUPPORTED",
+      "3": "RETRY_REASON_RUNTIME_MISSING",
+      "4": "RETRY_REASON_SANDBOX_FAILURE"
+    },
+    ".qhhoj.judge.v1.Status": {
+      "0": "STATUS_UNSPECIFIED",
+      "1": "STATUS_AC",
+      "2": "STATUS_WA",
+      "3": "STATUS_TLE",
+      "4": "STATUS_MLE",
+      "5": "STATUS_OLE",
+      "6": "STATUS_IR",
+      "7": "STATUS_RTE",
+      "8": "STATUS_SC"
+    }
+  }
+}
