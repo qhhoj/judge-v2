@@ -102,6 +102,7 @@ compile = ["/usr/bin/python3", "-m", "py_compile", "main.py"]
 run = ["/usr/bin/python3", "-B", "main.py"]
 version = ["/usr/bin/python3", "--version"]
 exception_marker = "Traceback (most recent call last)"
+exception_style = "last_line"
 
 [[language]]
 key = "PYPY3"
@@ -110,6 +111,7 @@ source = "main.py"
 run = ["/usr/bin/pypy3", "main.py"]
 version = ["/usr/bin/pypy3", "--version"]
 exception_marker = "Traceback (most recent call last)"
+exception_style = "last_line"
 
 [[language]]
 key = "PAS"
@@ -125,7 +127,8 @@ testlib_flag = "-Fu/testlib"
 key = "JAVA"
 name = "Java"
 source = "{class}.java"
-compile = ["/usr/lib/jvm/default-java/bin/javac", "-encoding", "UTF-8", "{class}.java"]
+compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-encoding", "UTF-8", "{class}.java"]
+compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
@@ -137,7 +140,8 @@ exception_marker = "Exception in thread"
 key = "JAVA8"
 name = "Java 8 (alias of the installed JDK)"
 source = "{class}.java"
-compile = ["/usr/lib/jvm/default-java/bin/javac", "-encoding", "UTF-8", "{class}.java"]
+compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-encoding", "UTF-8", "{class}.java"]
+compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
@@ -163,7 +167,11 @@ key = "RUBY"
 name = "Ruby"
 source = "main.rb"
 run = ["/usr/bin/ruby", "main.rb"]
+# Ruby starts a timer thread: with processes = 1 it hangs at exit until the wall limit.
+processes = 4
 version = ["/usr/bin/ruby", "--version"]
+exception_marker = "main.rb:"
+exception_style = "parenthesized"
 
 [[language]]
 key = "D"
@@ -180,6 +188,7 @@ source = "main.lua"
 run = ["/usr/bin/lua5.4", "main.lua"]
 version = ["/usr/bin/lua5.4", "-v"]
 exception_marker = "stack traceback:"
+exception_style = "line_above"
 
 [[language]]
 key = "ADA"

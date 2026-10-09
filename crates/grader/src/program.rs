@@ -1,3 +1,4 @@
+use crate::languages::ExceptionStyle;
 use judge_problem::dir_cache::CacheLease;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +20,7 @@ pub struct Program {
     pub env: Vec<(String, String)>,
     /// From the language: stderr text of an uncaught exception (Task 14).
     pub exception_marker: Option<String>,
+    pub exception_style: ExceptionStyle,
     /// Holds a cached artefact (checker, interactor) alive while in use.
     pub lease: Option<Arc<CacheLease>>,
 }

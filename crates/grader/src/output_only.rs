@@ -2,16 +2,21 @@
 
 use crate::error::GradeError;
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// An OUTPUT zip with more entries than this is refused (IE), preflight M10.
 pub const MAX_OUTPUT_ENTRIES: usize = 10_000;
 
-/// The zip's directory, read once per submission: last path segment → entry index.
+/// The zip, opened once per submission, with its file entries indexed: by full path (`sub/1.out`) and by
+/// last segment (`1.out`, the first entry of that name). Entries with an absolute or `..` path are not
+/// indexed. Nothing is extracted, so names are only map keys.
 pub struct ZipIndex {
-    pub path: PathBuf,
-    pub by_name: HashMap<String, usize>,
+    archive: Mutex<zip::ZipArchive<File>>,
+    pub by_path: HashMap<String, usize>,
+    by_last: HashMap<String, usize>,
 }
 
 pub enum OutputSource {
@@ -23,48 +28,70 @@ fn zip_error(error: impl std::fmt::Display) -> GradeError {
     GradeError::Io(error.to_string())
 }
 
+/// `./a//b` → `a/b`; None for an empty, absolute or `..` path.
+fn clean_path(name: &str) -> Option<String> {
+    let parts: Vec<&str> = name.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    let escapes = name.starts_with('/') || parts.contains(&"..") || name.contains('\\');
+    (!parts.is_empty() && !escapes).then(|| parts.join("/"))
+}
+
+fn last_segment(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
 impl OutputSource {
-    /// Indexes the zip's file entries by their last path segment; the first entry of a name wins.
     pub fn zip(path: PathBuf) -> Result<OutputSource, GradeError> {
-        let mut archive = zip::ZipArchive::new(std::fs::File::open(&path)?).map_err(zip_error)?;
+        let mut archive = zip::ZipArchive::new(File::open(&path)?).map_err(zip_error)?;
         if archive.len() > MAX_OUTPUT_ENTRIES {
             return Err(GradeError::Io(format!("output zip has more than {MAX_OUTPUT_ENTRIES} entries")));
         }
-        let mut by_name = HashMap::new();
+        let (mut by_path, mut by_last) = (HashMap::new(), HashMap::new());
         for index in 0..archive.len() {
             let entry = archive.by_index_raw(index).map_err(zip_error)?;
-            if entry.is_file() {
-                let last = entry.name().rsplit('/').next().unwrap_or("").to_string();
-                by_name.entry(last).or_insert(index);
-            }
+            let Some(clean) = clean_path(entry.name()).filter(|_| entry.is_file()) else { continue };
+            by_last.entry(last_segment(&clean).to_string()).or_insert(index);
+            by_path.entry(clean).or_insert(index);
         }
-        Ok(OutputSource::Zip(ZipIndex { path, by_name }))
+        Ok(OutputSource::Zip(ZipIndex { archive: Mutex::new(archive), by_path, by_last }))
     }
 }
 
-/// At most `cap` decompressed bytes of the entry; no entry of that name is an empty output.
-fn zip_entry(zip: &ZipIndex, wanted: &str, cap: u64) -> Result<Vec<u8>, GradeError> {
-    let Some(&index) = zip.by_name.get(wanted) else { return Ok(Vec::new()) };
-    let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip.path)?).map_err(zip_error)?;
+impl ZipIndex {
+    /// The entry for a case's `out` name: the same relative path, or for a flat name (`1.out`) the first
+    /// entry of that name anywhere in the zip. A nested name never falls back to another directory's file.
+    fn find(&self, wanted: &str) -> Option<usize> {
+        let clean = clean_path(wanted)?;
+        // `by_last` is keyed by bare names, so a nested `clean` can only match through `by_path`.
+        self.by_path.get(&clean).or_else(|| self.by_last.get(&clean)).copied()
+    }
+}
+
+/// At most `limit` decompressed bytes of the entry; no entry for the name is an empty output.
+fn zip_entry(zip: &ZipIndex, wanted: &str, limit: u64) -> Result<Vec<u8>, GradeError> {
+    let Some(index) = zip.find(wanted) else { return Ok(Vec::new()) };
+    let mut archive = zip.archive.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = archive.by_index(index).map_err(zip_error)?;
     let mut bytes = Vec::new();
-    entry.take(cap).read_to_end(&mut bytes)?;
+    entry.take(limit).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
-/// Writes the submission's answer for one case to `dest` (at most `cap` bytes) and returns its length.
-/// `case_output_name` is the case's `out` file name (`1.out`); TEXT answers every case with its source.
+/// Writes the submission's answer for one case to `dest` and returns its length. At most `cap + 1` bytes are
+/// written, so a length above `cap` means the answer is too long (OLE) while exactly `cap` is allowed.
+/// `case_output_name` is the case's `out` file name (`1.out`, maybe `sub/1.out`); TEXT answers every case
+/// with its source.
 pub fn output_for_case(
     source: &OutputSource,
     case_output_name: &str,
     dest: &Path,
     cap: u64,
 ) -> Result<u64, GradeError> {
+    let limit = cap.saturating_add(1);
     let bytes = match source {
         OutputSource::Text(text) => {
-            text[..text.len().min(usize::try_from(cap).unwrap_or(usize::MAX))].to_vec()
+            text[..text.len().min(usize::try_from(limit).unwrap_or(usize::MAX))].to_vec()
         }
-        OutputSource::Zip(zip) => zip_entry(zip, case_output_name, cap)?,
+        OutputSource::Zip(zip) => zip_entry(zip, case_output_name, limit)?,
     };
     std::fs::write(dest, &bytes)?;
     Ok(bytes.len() as u64)
@@ -93,7 +120,8 @@ mod tests {
         let text = OutputSource::Text(b"42\n".to_vec());
         assert_eq!(output_for_case(&text, "9.out", &dest, 100).unwrap(), 3);
         assert_eq!(std::fs::read(&dest).unwrap(), b"42\n");
-        assert_eq!(output_for_case(&text, "1.out", &dest, 2).unwrap(), 2, "capped");
+        assert_eq!(output_for_case(&text, "1.out", &dest, 2).unwrap(), 3, "cap + 1 bytes: over the cap");
+        assert_eq!(output_for_case(&text, "1.out", &dest, 3).unwrap(), 3, "exactly the cap is fine");
     }
 
     #[test]
@@ -121,11 +149,31 @@ mod tests {
     }
 
     #[test]
+    fn nested_case_names_match_their_own_path_only() {
+        let zip = zip_of(&[("a/1.out", b"A"), ("b/1.out", b"B"), ("flat.out", b"F"), ("../evil.out", b"E")]);
+        let source = OutputSource::zip(zip.path().into()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("o");
+        let read = |name: &str| {
+            output_for_case(&source, name, &dest, 100).unwrap();
+            std::fs::read(&dest).unwrap()
+        };
+        assert_eq!(read("a/1.out"), b"A");
+        assert_eq!(read("b/1.out"), b"B");
+        assert_eq!(read("c/1.out"), b"", "no fallback into another directory");
+        assert_eq!(read("./flat.out"), b"F");
+        assert_eq!(read("1.out"), b"A", "a flat name takes the first entry of that name");
+        assert_eq!(read("evil.out"), b"", "a traversal entry is never indexed");
+        assert_eq!(read("../evil.out"), b"");
+    }
+
+    #[test]
     fn output_is_capped() {
         let zip = zip_of(&[("1.out", &[b'x'; 1000])]);
         let dir = tempfile::tempdir().unwrap();
         let source = OutputSource::zip(zip.path().into()).unwrap();
-        assert_eq!(output_for_case(&source, "1.out", &dir.path().join("o"), 10).unwrap(), 10);
+        let len = output_for_case(&source, "1.out", &dir.path().join("o"), 10).unwrap();
+        assert_eq!(len, 11, "one byte past the cap, so the caller can see OLE");
     }
 
     #[test]
@@ -143,7 +191,7 @@ mod tests {
         let ok = zip_of(&entries[..MAX_OUTPUT_ENTRIES]);
         let source = OutputSource::zip(ok.path().into()).unwrap();
         let OutputSource::Zip(index) = &source else { panic!("zip expected") };
-        assert_eq!(index.by_name.len(), MAX_OUTPUT_ENTRIES);
+        assert_eq!(index.by_path.len(), MAX_OUTPUT_ENTRIES);
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(output_for_case(&source, "9999.out", &dir.path().join("o"), 10).unwrap(), 1);
     }

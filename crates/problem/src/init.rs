@@ -164,7 +164,7 @@ const RESERVED_BOX_NAMES: [&str; 4] = ["input", "output", "main", ".stderr"];
 
 /// A `file_io` name is a plain file name inside the box: not empty, no leading `.`, no `/` or `\`,
 /// not a reserved box name. `Path::join` with an absolute or `../` name would leave the box (preflight C4).
-fn is_plain_box_name(name: &str) -> bool {
+pub fn is_plain_box_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
         && !name.contains(['/', '\\'])

@@ -165,7 +165,6 @@ fn java_language() -> Option<Language> {
     let mut language = registry().get("JAVA").unwrap().clone();
     let javac = [java, "-m", "jdk.compiler/com.sun.tools.javac.Main", "-encoding", "UTF-8", "{class}.java"];
     language.compile = Some(javac.map(String::from).to_vec());
-    language.compile_processes = 128;
     Some(language)
 }
 
@@ -194,4 +193,39 @@ fn the_input_comes_from_the_opened_handle_not_from_its_path() {
     let (run, out) = go(&mut f, &plain(&file, 1 << 20), "out");
     assert_eq!(run.verdict, RunVerdict::Ok);
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "original\n");
+}
+
+#[test]
+fn a_chatty_stderr_does_not_change_a_correct_verdict() {
+    let src = "import sys\nfor i in range(20000): print('debug line ' * 10, file=sys.stderr)\nprint(1)\n";
+    let Some(mut f) = fixture(14, "PY3", src) else { return };
+    let file = input(&f, "");
+    let (run, out) = go(&mut f, &plain(&file, 8192), "out");
+    assert_eq!(run.verdict, RunVerdict::Ok, "stderr is bigger than the output cap");
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "1\n");
+}
+
+#[test]
+fn stderr_text_and_volume_before_the_traceback_do_not_rename_the_exception() {
+    let src = "import sys\nprint('dbg', file=sys.stderr)\nfor i in range(3000): print('x' * 100, file=sys.stderr)\nprint(1 // 0)\n";
+    let Some(mut f) = fixture(15, "PY3", src) else { return };
+    let file = input(&f, "");
+    let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
+    assert_eq!(run.verdict, RunVerdict::Rte { reason: "ZeroDivisionError".into() });
+}
+
+#[test]
+fn a_python_stdout_flood_is_still_ole_with_stderr_kept() {
+    let Some(mut f) = fixture(16, "PY3", "while True: print('x' * 1000)\n") else { return };
+    let file = input(&f, "");
+    let (run, _) = go(&mut f, &plain(&file, 8192), "out");
+    assert_eq!(run.verdict, RunVerdict::Ole);
+}
+
+#[test]
+fn an_uncaught_ruby_exception_is_rte() {
+    let Some(mut f) = fixture(17, "RUBY", "puts 1 / 0\n") else { return };
+    let file = input(&f, "");
+    let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
+    assert_eq!(run.verdict, RunVerdict::Rte { reason: "ZeroDivisionError".into() });
 }

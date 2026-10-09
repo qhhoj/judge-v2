@@ -72,6 +72,7 @@ pub fn program_for(language: &Language, dir: &Path, source: &[u8]) -> Program {
         dirs: language.dirs.clone(),
         env: language.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         exception_marker: language.exception_marker.clone(),
+        exception_style: language.exception_style,
         lease: None,
     }
 }
@@ -144,34 +145,54 @@ fn snapshot(box_dir: &Path, into: &Path, keep: Option<&[String]>) -> Result<bool
         if name == LOG || name == ERR || !wanted {
             continue;
         }
-        if !copy_entry(&entry, &into.join(&name), &mut budget)? {
+        if !copy_entry(&entry, &into.join(&name), &mut budget, 0)? {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn copy_entry(entry: &std::fs::DirEntry, to: &Path, budget: &mut u64) -> Result<bool, GradeError> {
+/// Charged to the budget per directory and per file, so a flood of empty entries is bounded too.
+const ENTRY_COST: u64 = 4096;
+/// A compiler output nested deeper than this is a compile error.
+const MAX_DEPTH: u32 = 16;
+
+fn copy_entry(
+    entry: &std::fs::DirEntry,
+    to: &Path,
+    budget: &mut u64,
+    depth: u32,
+) -> Result<bool, GradeError> {
     let kind = entry.file_type()?;
-    if kind.is_dir() {
-        std::fs::create_dir_all(to)?;
-        for child in std::fs::read_dir(entry.path())? {
-            let child = child?;
-            if !copy_entry(&child, &to.join(child.file_name()), budget)? {
-                return Ok(false);
-            }
-        }
-        return Ok(true);
+    if !(kind.is_dir() || kind.is_file()) {
+        return Ok(true); // symlinks, sockets and fifos are dropped
     }
+    if depth > MAX_DEPTH || *budget < ENTRY_COST {
+        return Ok(false);
+    }
+    *budget -= ENTRY_COST;
     if kind.is_file() {
         return copy_file(&entry.path(), to, budget);
     }
-    Ok(true) // symlinks, sockets and fifos are dropped
+    std::fs::create_dir_all(to)?;
+    for child in std::fs::read_dir(entry.path())? {
+        let child = child?;
+        if !copy_entry(&child, &to.join(child.file_name()), budget, depth + 1)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn copy_file(from: &Path, to: &Path, budget: &mut u64) -> Result<bool, GradeError> {
-    let source = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(from)?;
-    let mode = source.metadata()?.permissions().mode() & 0o777;
+    // O_NOFOLLOW refuses a symlink swapped in after the directory listing, O_NONBLOCK keeps a fifo from hanging.
+    let flags = libc::O_NOFOLLOW | libc::O_NONBLOCK;
+    let source = OpenOptions::new().read(true).custom_flags(flags).open(from)?;
+    let meta = source.metadata()?;
+    if !meta.is_file() {
+        return Ok(true);
+    }
+    let mode = meta.permissions().mode() & 0o777;
     let mut target = File::create(to)?;
     let copied = std::io::copy(&mut source.take(*budget + 1), &mut target)?;
     target.set_permissions(std::fs::Permissions::from_mode(mode | 0o400))?;
@@ -243,6 +264,28 @@ mod tests {
         assert_eq!(walk(only.path()), ["main"]);
     }
 
+    #[test]
+    fn deeply_nested_output_is_refused_instead_of_failing_the_grader() {
+        let (from, into) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let deep = (0..40).fold(from.path().to_path_buf(), |p, i| p.join(format!("d{i}")));
+        std::fs::create_dir_all(&deep).unwrap();
+        assert!(!snapshot(from.path(), into.path(), None).unwrap());
+    }
+
+    #[test]
+    fn a_flood_of_empty_files_is_charged_to_the_budget() {
+        let (from, into) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for i in 0..20 {
+            std::fs::write(from.path().join(format!("f{i}")), b"").unwrap();
+        }
+        let mut budget = ENTRY_COST * 5;
+        let all = std::fs::read_dir(from.path()).unwrap().all(|e| {
+            let e = e.unwrap();
+            copy_entry(&e, &into.path().join(e.file_name()), &mut budget, 0).unwrap()
+        });
+        assert!(!all);
+    }
+
     fn walk(root: &Path) -> Vec<String> {
         fn go(dir: &Path, prefix: &str, out: &mut Vec<String>) {
             for e in std::fs::read_dir(dir).unwrap() {
@@ -265,10 +308,10 @@ mod tests {
         let (from, into) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         std::fs::write(from.path().join("big"), vec![0u8; 1000]).unwrap();
         let entry = std::fs::read_dir(from.path()).unwrap().next().unwrap().unwrap();
-        let mut budget = 999;
-        assert!(!copy_entry(&entry, &into.path().join("big"), &mut budget).unwrap());
-        let mut enough = 1000;
-        assert!(copy_entry(&entry, &into.path().join("big"), &mut enough).unwrap());
+        let mut budget = ENTRY_COST + 999;
+        assert!(!copy_entry(&entry, &into.path().join("big"), &mut budget, 0).unwrap());
+        let mut enough = ENTRY_COST + 1000;
+        assert!(copy_entry(&entry, &into.path().join("big"), &mut enough, 0).unwrap());
         assert_eq!(enough, 0);
     }
 }

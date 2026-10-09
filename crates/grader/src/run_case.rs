@@ -1,22 +1,24 @@
 //! One case of the solution in a fresh box (Review Focus 1).
 
 use crate::error::GradeError;
-use crate::languages::{Placeholders, expand};
+use crate::languages::{ExceptionStyle, Placeholders, expand};
 use crate::program::Program;
-use judge_problem::init::FileIo;
+use judge_problem::init::{FileIo, is_plain_box_name};
 use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
 use std::fs::File;
 use std::io::Read;
 use std::os::fd::AsRawFd;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 pub const MAX_PREFIX_BYTES: u64 = 512;
 /// A reason (signal or exception name) is feedback, so it is clipped like the 50-byte feedback.
 const MAX_REASON_BYTES: usize = 50;
-/// How much of an interpreter's or JVM's stderr is looked at for exceptions.
-const MAX_STDERR_BYTES: u64 = 64 << 10;
+/// Extra file size a run with a kept stderr may write beyond the output cap, and how much of the end of
+/// that stderr is searched for the exception.
+const STDERR_ALLOWANCE: u64 = 16 << 20;
+const MAX_STDERR_TAIL: usize = 64 << 10;
 const STDERR_FILE: &str = ".stderr";
 
 #[derive(Debug, Clone)]
@@ -84,8 +86,49 @@ fn layout(program: &Program, file_io: Option<&FileIo>) -> Layout {
     }
 }
 
-fn is_plain(name: &str) -> bool {
-    matches!(Path::new(name).components().next(), Some(Component::Normal(part)) if part == name)
+/// A `file_io` name is data from init.yml: it must be a plain, unreserved box file name (defence in depth;
+/// `parse_init` refuses the same names).
+fn check_file_io(file_io: &FileIo) -> Result<(), GradeError> {
+    match [&file_io.input, &file_io.output].into_iter().find(|name| !is_plain_box_name(name)) {
+        Some(bad) => Err(GradeError::Io(format!("file_io name {bad:?} is not a plain box file name"))),
+        None => Ok(()),
+    }
+}
+
+/// stderr is kept (in a file next to the output) for JVM programs and languages with an exception marker.
+fn keeps_stderr(program: &Program) -> bool {
+    program.jvm || program.exception_marker.is_some()
+}
+
+fn solution_limits(runnable: &Runnable, output_cap: u64) -> Limits {
+    let (program, limits) = (runnable.program, runnable.limits);
+    // isolate has one --fsize for every file the run writes. A kept stderr gets its own allowance on top of
+    // the output cap, so a chatty correct program is not killed or failed; stdout is still held to the cap
+    // by the `written > cap` check, and stderr never decides the verdict.
+    let fsize = output_cap + if keeps_stderr(program) { STDERR_ALLOWANCE } else { 0 };
+    Limits::for_solution(limits.time_limit_s, cgroup_memory(limits, program.jvm), program.processes, fsize)
+}
+
+fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
+    let program = runnable.program;
+    let memory = Placeholders { memory_kib: runnable.limits.memory_kib, class: None };
+    RunSpec {
+        argv: expand(&program.run, &memory),
+        limits: solution_limits(runnable, output_cap),
+        stdio: layout.stdio,
+        env: program.env.clone(),
+        dirs: program.dirs.clone(),
+    }
+}
+
+/// Resets the box and puts the program and the case input in it.
+fn stage(sandbox: &mut IsolateBox, program: &Program, input: (&File, &str)) -> Result<(), GradeError> {
+    sandbox.reset()?;
+    sandbox.put_tree(&program.dir)?;
+    // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.
+    let handle = format!("/proc/self/fd/{}", input.0.as_raw_fd());
+    sandbox.put(input.1, Path::new(&handle), false)?;
+    Ok(())
 }
 
 pub fn run_case(
@@ -94,38 +137,19 @@ pub fn run_case(
     io: &CaseIo,
     output: &Path,
 ) -> Result<CaseRun, GradeError> {
-    let (program, limits) = (runnable.program, runnable.limits);
-    let layout = layout(program, io.file_io);
-    if !is_plain(&layout.input) || !is_plain(&layout.output) {
-        return Err(GradeError::Io(format!(
-            "file_io name {:?}/{:?} is not a plain file name",
-            layout.input, layout.output
-        )));
+    let layout = layout(runnable.program, io.file_io);
+    if let Some(file_io) = io.file_io {
+        check_file_io(file_io)?;
     }
-    sandbox.reset()?;
-    sandbox.put_tree(&program.dir)?;
-    // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.
-    sandbox.put(&layout.input, Path::new(&format!("/proc/self/fd/{}", io.input.as_raw_fd())), false)?;
-    let memory = Placeholders { memory_kib: limits.memory_kib, class: None };
-    let spec = RunSpec {
-        argv: expand(&program.run, &memory),
-        limits: Limits::for_solution(
-            limits.time_limit_s,
-            cgroup_memory(limits, program.jvm),
-            program.processes,
-            io.output_cap,
-        ),
-        stdio: layout.stdio,
-        env: program.env.clone(),
-        dirs: program.dirs.clone(),
-    };
-    let meta = sandbox.run(&spec)?;
+    stage(sandbox, runnable.program, (io.input, &layout.input))?;
+    let output_name = layout.output.clone();
+    let meta = sandbox.run(&run_spec(runnable, layout, io.output_cap))?;
     // One byte past the cap tells "exactly the cap" (fine) from "over it" (OLE).
-    let written = sandbox.read_output(&layout.output, io.output_cap + 1).unwrap_or_default();
+    let written = sandbox.read_output(&output_name, io.output_cap + 1).unwrap_or_default();
     std::fs::write(output, &written)?;
     let output_len = written.len() as u64;
     let verdict = classify(&meta, OutputUse { written: output_len, cap: io.output_cap });
-    let verdict = refine(verdict, program, sandbox);
+    let verdict = refine(verdict, runnable.program, sandbox);
     Ok(CaseRun {
         verdict,
         time_s: meta.time_s,
@@ -135,18 +159,25 @@ pub fn run_case(
     })
 }
 
+/// The last 64 KiB of the kept stderr (where the final exception is), lossy UTF-8.
+fn stderr_tail(sandbox: &IsolateBox) -> String {
+    let bytes = sandbox.read_output(STDERR_FILE, STDERR_ALLOWANCE).unwrap_or_default();
+    let tail = &bytes[bytes.len().saturating_sub(MAX_STDERR_TAIL)..];
+    String::from_utf8_lossy(tail).into_owned()
+}
+
 /// JVM OutOfMemoryError → MLE; an uncaught exception (the language's marker on stderr) → RTE named by
 /// the exception (DMOJ reports these as RTE, not IR; spec §11).
 fn refine(verdict: RunVerdict, program: &Program, sandbox: &IsolateBox) -> RunVerdict {
-    if !matches!(verdict, RunVerdict::Rte { .. } | RunVerdict::Ir { .. }) {
+    if !matches!(verdict, RunVerdict::Rte { .. } | RunVerdict::Ir { .. }) || !keeps_stderr(program) {
         return verdict;
     }
-    let bytes = sandbox.read_output(STDERR_FILE, MAX_STDERR_BYTES).unwrap_or_default();
-    let stderr = String::from_utf8_lossy(&bytes);
+    let stderr = stderr_tail(sandbox);
     if program.jvm && stderr.contains("java.lang.OutOfMemoryError") {
         return RunVerdict::Mle;
     }
-    let reason = program.exception_marker.as_deref().and_then(|marker| exception_reason(&stderr, marker));
+    let marker = program.exception_marker.as_deref();
+    let reason = marker.and_then(|marker| exception_reason(&stderr, marker, program.exception_style));
     match (verdict, reason) {
         (RunVerdict::Ir { .. }, Some(reason)) => RunVerdict::Rte { reason },
         (verdict, _) => verdict,
@@ -161,21 +192,45 @@ fn clip(text: &str) -> String {
     text[..end].to_string()
 }
 
-/// Names the uncaught exception when stderr carries the language's marker, else None.
-/// - text after the marker names it (`Exception in thread "main" java.lang.ArithmeticException: x`,
-///   `raised CONSTRAINT_ERROR : x`): its first word, last `.` segment;
-/// - a bare header (`Traceback (most recent call last):`): the last line when the header opens stderr
-///   (Python's `ZeroDivisionError: division by zero`), else the line above it (Lua's message).
-pub fn exception_reason(stderr: &str, marker: &str) -> Option<String> {
+/// Names the uncaught exception when stderr carries the language's marker, else None. `style` says where
+/// the name is (`ExceptionStyle`); only the traceback nearest the end counts for the header styles, so
+/// text printed before it (warnings, debug output) is ignored.
+pub fn exception_reason(stderr: &str, marker: &str, style: ExceptionStyle) -> Option<String> {
     let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    let at = lines.iter().position(|l| l.contains(marker))?;
-    let after = lines[at].split_once(marker).map_or("", |(_, rest)| rest);
-    let after = after.trim_start_matches([':', ' ']);
-    if !after.is_empty() {
-        return Some(clip(&named_by(after)));
+    let reason = match style {
+        ExceptionStyle::After => {
+            let line = lines.iter().find(|l| l.contains(marker))?;
+            let after = line.split_once(marker)?.1.trim_start_matches([':', ' ']);
+            (!after.is_empty()).then(|| named_by(after))
+        }
+        ExceptionStyle::LastLine => {
+            let header = lines.iter().rposition(|l| l.contains(marker))?;
+            let last = lines.last()?;
+            (header + 1 < lines.len()).then(|| last.split(':').next().unwrap_or(last).to_string())
+        }
+        ExceptionStyle::LineAbove => {
+            let header = lines.iter().position(|l| l.contains(marker))?;
+            header.checked_sub(1).map(|above| strip_location(lines[above]).to_string())
+        }
+        ExceptionStyle::Parenthesized => {
+            let line = lines.iter().find(|l| l.contains(marker))?;
+            let inner = line.strip_suffix(')')?;
+            Some(inner[inner.rfind('(')? + 1..].to_string())
+        }
+    };
+    reason.filter(|r| !r.is_empty()).map(|r| clip(&r))
+}
+
+/// `lua5.4: main.lua:1: attempt to ...` → `attempt to ...`.
+fn strip_location(line: &str) -> &str {
+    let mut rest = line;
+    for _ in 0..2 {
+        match rest.split_once(": ") {
+            Some((head, tail)) if !head.contains(' ') => rest = tail,
+            _ => break,
+        }
     }
-    let line = if at == 0 { lines.last()? } else { &lines[at - 1] };
-    Some(clip(line.split(':').next().unwrap_or(line)))
+    rest
 }
 
 /// First word of `text` after an optional quoted thread name, without a trailing `:` and package path.
@@ -209,31 +264,43 @@ mod tests {
     #[test]
     fn a_python_traceback_is_named_by_its_last_line() {
         let python = "Traceback (most recent call last):\n  File \"main.py\", line 1\nZeroDivisionError: division by zero\n";
-        assert_eq!(exception_reason(python, PYTHON).as_deref(), Some("ZeroDivisionError"));
-        assert_eq!(exception_reason("plain exit\n", PYTHON), None);
+        assert_eq!(
+            exception_reason(python, PYTHON, ExceptionStyle::LastLine).as_deref(),
+            Some("ZeroDivisionError")
+        );
+        assert_eq!(exception_reason("plain exit\n", PYTHON, ExceptionStyle::LastLine), None);
     }
 
     #[test]
     fn a_java_exception_is_named_by_its_class_not_its_stack() {
         let java = "Exception in thread \"main\" java.lang.ArithmeticException: / by zero\n\tat Main.main(Main.java:3)\n";
-        assert_eq!(exception_reason(java, "Exception in thread").as_deref(), Some("ArithmeticException"));
+        assert_eq!(
+            exception_reason(java, "Exception in thread", ExceptionStyle::After).as_deref(),
+            Some("ArithmeticException")
+        );
         let custom = "Exception in thread \"Thread-0\" MyError\n";
-        assert_eq!(exception_reason(custom, "Exception in thread").as_deref(), Some("MyError"));
+        assert_eq!(
+            exception_reason(custom, "Exception in thread", ExceptionStyle::After).as_deref(),
+            Some("MyError")
+        );
     }
 
     #[test]
     fn ada_and_lua_exceptions_are_named() {
         let ada = "\nraised CONSTRAINT_ERROR : main.adb:3 range check failed\n";
-        assert_eq!(exception_reason(ada, "raised ").as_deref(), Some("CONSTRAINT_ERROR"));
+        assert_eq!(
+            exception_reason(ada, "raised ", ExceptionStyle::After).as_deref(),
+            Some("CONSTRAINT_ERROR")
+        );
         let lua = "lua5.4: main.lua:1: attempt to index a nil value\nstack traceback:\n\t[C]: in ?\n";
-        let reason = exception_reason(lua, "stack traceback:").unwrap();
-        assert_eq!(reason, "lua5.4");
+        let reason = exception_reason(lua, "stack traceback:", ExceptionStyle::LineAbove).unwrap();
+        assert_eq!(reason, "attempt to index a nil value");
     }
 
     #[test]
     fn a_reason_is_clipped_on_a_char_boundary() {
         let stderr = format!("Traceback (most recent call last):\n{}\n", "é".repeat(100));
-        let reason = exception_reason(&stderr, PYTHON).unwrap();
+        let reason = exception_reason(&stderr, PYTHON, ExceptionStyle::LastLine).unwrap();
         assert!(reason.len() <= MAX_REASON_BYTES && reason.chars().all(|c| c == 'é'));
     }
 
@@ -245,10 +312,35 @@ mod tests {
     }
 
     #[test]
-    fn only_plain_names_are_box_files() {
-        assert!(is_plain("sum.inp"));
-        for bad in ["", "a/b", "../x", "/etc/passwd", "."] {
-            assert!(!is_plain(bad), "{bad:?}");
+    fn text_before_the_traceback_does_not_rename_a_python_exception() {
+        let stderr = "main.py:3: SyntaxWarning: invalid escape sequence '\\d'\n  re.compile('\\d')\ndbg\n\
+                      Traceback (most recent call last):\n  File \"main.py\", line 5\nValueError: bad\n";
+        let reason = exception_reason(stderr, PYTHON, ExceptionStyle::LastLine);
+        assert_eq!(reason.as_deref(), Some("ValueError"));
+        let chained = "Traceback (most recent call last):\nKeyError: 1\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\nOSError: x\n";
+        assert_eq!(exception_reason(chained, PYTHON, ExceptionStyle::LastLine).as_deref(), Some("OSError"));
+        assert_eq!(
+            exception_reason("Traceback (most recent call last):\n", PYTHON, ExceptionStyle::LastLine),
+            None
+        );
+    }
+
+    #[test]
+    fn a_ruby_exception_is_named_in_parentheses() {
+        let ruby =
+            "main.rb:1:in 'Integer#/': divided by 0 (ZeroDivisionError)\n\tfrom main.rb:1:in '<main>'\n";
+        assert_eq!(
+            exception_reason(ruby, "main.rb:", ExceptionStyle::Parenthesized).as_deref(),
+            Some("ZeroDivisionError")
+        );
+        assert_eq!(exception_reason("main.rb:1: note\n", "main.rb:", ExceptionStyle::Parenthesized), None);
+    }
+
+    #[test]
+    fn box_file_names_must_be_plain_and_not_reserved() {
+        assert!(is_plain_box_name("sum.inp"));
+        for bad in ["", "a/b", "../x", "/etc/passwd", ".", ".stderr", "output", "input", "main"] {
+            assert!(!is_plain_box_name(bad), "{bad:?}");
         }
     }
 }

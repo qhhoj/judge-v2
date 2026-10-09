@@ -1,9 +1,11 @@
 //! Languages are data (`languages.toml`); this module only loads and expands them.
 
 use crate::error::GradeError;
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -12,6 +14,21 @@ pub enum LanguageKind {
     Program,
     Text,
     OutputZip,
+}
+
+/// Where in stderr the name of an uncaught exception is found (see `run_case::exception_reason`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExceptionStyle {
+    /// Text after the marker names it: `Exception in thread "main" java.lang.X: msg`.
+    #[default]
+    After,
+    /// The marker opens a traceback and the last stderr line names it (Python).
+    LastLine,
+    /// The marker opens a traceback and the line above holds the message (Lua).
+    LineAbove,
+    /// The marker line ends with the name in parentheses: `main.rb:1:in '<main>': msg (ZeroDivisionError)`.
+    Parenthesized,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -66,6 +83,8 @@ pub struct Language {
     /// stderr text of an uncaught exception: a non-zero exit carrying it is RTE, not IR (spec §11).
     #[serde(default)]
     pub exception_marker: Option<String>,
+    #[serde(default)]
+    pub exception_style: ExceptionStyle,
 }
 
 #[derive(Deserialize)]
@@ -133,16 +152,22 @@ pub fn expand(argv: &[String], values: &Placeholders) -> Vec<String> {
         .collect()
 }
 
-fn first_capture(text: &str, pattern: &str) -> Option<String> {
-    let re = regex::Regex::new(pattern).expect("static pattern");
-    re.captures(text).map(|c| c[1].to_string())
-}
+static PUBLIC_CLASS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"public\s+(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)").expect("static pattern")
+});
+static MAIN_CLASS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{[^{}]*static\s+void\s+main")
+        .expect("static pattern")
+});
+static COMMENTS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)/\*.*?\*/|//[^\n]*").expect("static pattern"));
 
+/// The class a Java source declares: the first `public class`, else the first `class` with `main`.
+/// Comments are removed first, so a commented-out declaration is not picked.
 pub fn java_main_class(source: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(source);
-    first_capture(&text, r"public\s+(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)").or_else(|| {
-        first_capture(&text, r"(?s)class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{[^{}]*static\s+void\s+main")
-    })
+    let code = COMMENTS.replace_all(&text, " ");
+    [&PUBLIC_CLASS, &MAIN_CLASS].into_iter().find_map(|re| re.captures(&code).map(|c| c[1].to_string()))
 }
 
 impl Language {
@@ -221,6 +246,7 @@ mod tests {
         for key in ["PY3", "PYPY3", "JAVA", "JAVA8", "KOTLIN"] {
             assert!(registry.get(key).unwrap().exception_marker.is_some(), "{key} has no exception marker");
         }
+        assert!(registry.get("RUBY").unwrap().exception_marker.is_some());
         assert!(registry.get("CPP17").unwrap().exception_marker.is_none());
     }
 
@@ -263,6 +289,8 @@ mod tests {
         let package_private = b"class A {}\nclass B { public static void main(String[] a){} }";
         assert_eq!(java_main_class(package_private).as_deref(), Some("B"));
         assert_eq!(java_main_class(b"int x;"), None);
+        let commented = b"// public class Old {}\n/* public class Older {} */\npublic class Real {}";
+        assert_eq!(java_main_class(commented).as_deref(), Some("Real"));
         let r = shipped();
         assert_eq!(r.get("JAVA").unwrap().source_name(b"public class Q { }"), "Q.java");
         assert_eq!(r.get("JAVA").unwrap().source_name(b"nothing"), "Main.java");
