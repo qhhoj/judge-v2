@@ -1,5 +1,8 @@
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "2"
 jobs:
   change-file:
     if: github.event_name == 'pull_request'
@@ -43,3 +46,65 @@ jobs:
           test -n "$tag" || { echo "no proto-v1.* tag yet"; exit 0; }
           git show "$tag:proto/compat/v1.shape.json" > "$RUNNER_TEMP/released.shape.json"
           cargo run --locked -q -p judge-proto --example check_shape -- "$RUNNER_TEMP/released.shape.json"
+      - name: the systemd unit keeps its directives
+        run: bash packaging/check-unit.sh
+  isolate-suite:
+    runs-on: ubuntu-24.04
+    needs: rust
+    timeout-minutes: 60
+    env:
+      JUDGE_SUITE_REQUIRE: C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,BF,GAS64,TEXT
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: compilers and runtimes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcap-dev libsystemd-dev pkg-config asciidoc-base unzip \
+            gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat bf binutils
+      - name: Kotlin (upstream release, pinned by sha256)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlinc.zip" https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip
+          echo "1ba08a8b45da99339a0601134cc037b54cf85e9bc0edbe76dcbd27c2d684a977  $RUNNER_TEMP/kotlinc.zip" | sha256sum -c
+          sudo unzip -q "$RUNNER_TEMP/kotlinc.zip" -d /usr/local/lib
+          JAVA_HOME=/usr/lib/jvm/default-java /usr/local/lib/kotlinc/bin/kotlinc -version
+      - name: build and start isolate 2.6 (cgroups v2)
+        run: |
+          git clone --depth 1 --branch v2.6 https://github.com/ioi/isolate "$RUNNER_TEMP/isolate"
+          cd "$RUNNER_TEMP/isolate"
+          make isolate isolate-cg-keeper
+          sudo make install
+          sudo cp systemd/isolate.service systemd/isolate.slice /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl start isolate.service
+          isolate --version
+          isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
+      - name: isolate tests (one test thread, the tests share isolate boxes)
+        run: cargo test --locked -p judge-sandbox -p judge-grader -p judge-daemon -p judge-cli --features isolate -- --test-threads=1
+      - name: selftest (host copy of languages.toml, every CI language required)
+        run: |
+          cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
+            --host-languages "$RUNNER_TEMP/languages.host.toml" \
+            --require "$JUDGE_SUITE_REQUIRE"
+  release:
+    runs-on: ubuntu-24.04
+    needs: isolate-suite
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: bash packaging/build-release.sh "0.1.0-${GITHUB_SHA::12}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qhhoj-judge
+          path: target/release-pkg/*.tar.gz
