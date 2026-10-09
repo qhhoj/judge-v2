@@ -49,6 +49,8 @@ const JUDGE_SCENARIOS: [&str; 11] = [
     "33-draining",
 ];
 const HOLD_LIMIT: Duration = Duration::from_secs(5);
+/// The longest the replay waits for a resume or an abort the transcript promises; then the scenario fails.
+const WAIT_LIMIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(5);
 
 /// One thing the grading reports, in transcript order. `Resume`: wait until the link has reconnected and
@@ -176,14 +178,21 @@ struct Replay {
     reconnects: Arc<Metrics>,
     connection: Arc<RwLock<Option<Connection>>>,
     drain: Arc<watch::Sender<bool>>,
+    /// Waits that ran out (a daemon that never resumed or never aborted).
+    failures: Arc<Mutex<Vec<String>>>,
 }
 
-/// Waits in `before_case` until the abort arrives; `limit` bounds the wait.
-fn wait_for_abort(reporter: &mut dyn Reporter, limit: Option<Duration>) {
+/// Waits in `before_case` until the abort arrives.
+/// True when the abort came before `limit`.
+fn wait_for_abort(reporter: &mut dyn Reporter, limit: Duration) -> bool {
     let started = std::time::Instant::now();
-    while reporter.before_case() && limit.is_none_or(|l| started.elapsed() < l) {
+    while started.elapsed() < limit {
+        if !reporter.before_case() {
+            return true;
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
+    false
 }
 
 fn report_case(reporter: &mut dyn Reporter, c: &v1::Case) {
@@ -202,11 +211,24 @@ fn report_case(reporter: &mut dyn Reporter, c: &v1::Case) {
 }
 
 impl Replay {
-    fn wait_for_resume(&self, reconnects_before: u64) {
+    /// True once the link has reconnected and been welcomed again, within `WAIT_LIMIT`.
+    fn wait_for_resume(&self, reconnects_before: u64) -> bool {
         let welcomed = || self.connection.try_read().map(|c| c.is_some()).unwrap_or(false);
+        let started = std::time::Instant::now();
         while self.reconnects.reconnects.get() <= reconnects_before || !welcomed() {
+            if started.elapsed() >= WAIT_LIMIT {
+                return false;
+            }
             std::thread::sleep(Duration::from_millis(10));
         }
+        true
+    }
+
+    /// Records a wait the transcript promised but the daemon never ended, and ends the run.
+    fn gave_up(&self, what: &str) -> Option<Outcome> {
+        let message = format!("replay waited {} s for {what}", WAIT_LIMIT.as_secs());
+        self.failures.lock().unwrap().push(message.clone());
+        Some(Outcome::InternalError(message))
     }
 
     /// Plays one act; Some ends the run with that outcome.
@@ -222,14 +244,17 @@ impl Replay {
                     report_case(reporter, c);
                 }
             }
-            Act::Resume => self.wait_for_resume(reconnects_before),
+            Act::Resume if !self.wait_for_resume(reconnects_before) => return self.gave_up("the resume"),
+            Act::Resume => {}
             Act::Drain => drop(self.drain.send(true)),
             Act::Hold => {
-                wait_for_abort(reporter, Some(HOLD_LIMIT));
+                wait_for_abort(reporter, HOLD_LIMIT);
                 return Some(Outcome::Aborted);
             }
             Act::Final(code, _, _) if code == v1::Outcome::Aborted as i32 => {
-                wait_for_abort(reporter, None);
+                if !wait_for_abort(reporter, WAIT_LIMIT) {
+                    return self.gave_up("an abort");
+                }
                 return Some(Outcome::Aborted);
             }
             Act::Final(code, log, reason) => return Some(outcome(code, &log, reason)),
@@ -329,6 +354,7 @@ struct Judge {
     link: tokio::task::JoinHandle<()>,
     stop: watch::Sender<bool>,
     probe_errors: mpsc::Receiver<String>,
+    replay_failures: Arc<Mutex<Vec<String>>>,
     _dirs: Vec<tempfile::TempDir>,
 }
 
@@ -414,7 +440,9 @@ fn start_judge(scenario: &Scenario, url: &str) -> Result<Judge, String> {
     let (drain, draining) = watch::channel(false);
     let (queue, runs, drain) =
         (Arc::new(Mutex::new(scripts.queue())), Arc::new(AtomicUsize::new(0)), Arc::new(drain));
+    let replay_failures = Arc::new(Mutex::new(Vec::new()));
     let replay = || Replay {
+        failures: replay_failures.clone(),
         queue: queue.clone(),
         runs: runs.clone(),
         reconnects: w.metrics.clone(),
@@ -438,7 +466,8 @@ fn start_judge(scenario: &Scenario, url: &str) -> Result<Judge, String> {
         metrics: w.metrics,
         draining,
     };
-    Ok(Judge { link: tokio::spawn(run_link(ctx, stop_rx)), stop, probe_errors, _dirs: dirs })
+    let link = tokio::spawn(run_link(ctx, stop_rx));
+    Ok(Judge { link, stop, probe_errors, replay_failures, _dirs: dirs })
 }
 
 /// Plan A's fake bridge on a loopback port: its URL, what it hears, and the server task.
@@ -462,7 +491,11 @@ async fn play(scenario: &Scenario) -> Result<(), String> {
     let _ = judge.stop.send(true);
     let _ = judge.link.await;
     server.abort();
-    played?;
+    let replay_failures = judge.replay_failures.lock().unwrap().join("; ");
+    played.map_err(|error| format!("{error} {replay_failures}"))?;
+    if !replay_failures.is_empty() {
+        return Err(replay_failures);
+    }
     match judge.probe_errors.try_recv() {
         Ok(error) => Err(error),
         Err(_) => Ok(()),
