@@ -19,7 +19,7 @@ const MAX_REASON_BYTES: usize = 50;
 /// that stderr is searched for the exception.
 const STDERR_ALLOWANCE: u64 = 16 << 20;
 const MAX_STDERR_TAIL: usize = 64 << 10;
-const STDERR_FILE: &str = ".stderr";
+pub(crate) const STDERR_FILE: &str = ".stderr";
 
 #[derive(Debug, Clone)]
 pub struct CaseLimits {
@@ -96,11 +96,11 @@ fn check_file_io(file_io: &FileIo) -> Result<(), GradeError> {
 }
 
 /// stderr is kept (in a file next to the output) for JVM programs and languages with an exception marker.
-fn keeps_stderr(program: &Program) -> bool {
+pub(crate) fn keeps_stderr(program: &Program) -> bool {
     program.jvm || program.exception_marker.is_some()
 }
 
-fn solution_limits(runnable: &Runnable, output_cap: u64) -> Limits {
+pub(crate) fn solution_limits(runnable: &Runnable, output_cap: u64) -> Limits {
     let (program, limits) = (runnable.program, runnable.limits);
     // isolate has one --fsize for every file the run writes. A kept stderr gets its own allowance on top of
     // the output cap, so a chatty correct program is not killed or failed; stdout is still held to the cap
@@ -168,7 +168,7 @@ fn stderr_tail(sandbox: &IsolateBox) -> String {
 
 /// JVM OutOfMemoryError → MLE; an uncaught exception (the language's marker on stderr) → RTE named by
 /// the exception (DMOJ reports these as RTE, not IR; spec §11).
-fn refine(verdict: RunVerdict, program: &Program, sandbox: &IsolateBox) -> RunVerdict {
+pub(crate) fn refine(verdict: RunVerdict, program: &Program, sandbox: &IsolateBox) -> RunVerdict {
     if !matches!(verdict, RunVerdict::Rte { .. } | RunVerdict::Ir { .. }) || !keeps_stderr(program) {
         return verdict;
     }
