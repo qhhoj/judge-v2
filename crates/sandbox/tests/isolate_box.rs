@@ -68,7 +68,7 @@ fn drop_cleans_the_box() {
 fn pinned_runs_go_through_taskset() {
     let meta = tempfile::tempdir().unwrap();
     let b = IsolateBox::open(&config(meta.path()), box_id(4), Some(0)).unwrap();
-    let command = b.command(&spec(&["/bin/true"], 65_536));
+    let command = b.command(&spec(&["/bin/true"], 65_536)).unwrap();
     assert_eq!(command.get_program(), "/usr/bin/taskset");
     let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
     assert_eq!(&args[..3], ["-c", "0", "/usr/local/bin/isolate"]);
@@ -127,4 +127,34 @@ fn a_second_run_without_reset_is_refused() {
     assert!(matches!(b.run(&spec(&["/bin/true"], 65_536)), Err(SandboxError::Dirty)));
     b.reset().unwrap();
     b.run(&spec(&["/bin/true"], 65_536)).unwrap();
+}
+
+#[test]
+fn put_tree_does_not_write_through_a_directory_symlink_in_the_box() {
+    let meta = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    std::fs::create_dir(src.path().join("sub")).unwrap();
+    std::fs::write(src.path().join("sub/f"), "x").unwrap();
+    let b = IsolateBox::open(&config(meta.path()), box_id(0), None).unwrap();
+    std::os::unix::fs::symlink(outside.path(), b.dir().join("sub")).unwrap();
+    assert!(b.put_tree(src.path()).is_err());
+    assert!(!outside.path().join("f").exists());
+}
+
+#[test]
+fn read_output_refuses_a_fifo_without_hanging() {
+    let meta = tempfile::tempdir().unwrap();
+    let b = IsolateBox::open(&config(meta.path()), box_id(1), None).unwrap();
+    let fifo = std::ffi::CString::new(b.dir().join("output").to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) }, 0);
+    assert!(matches!(b.read_output("output", 10), Err(SandboxError::BadName(_))));
+}
+
+#[test]
+fn the_command_line_of_a_used_box_is_refused() {
+    let meta = tempfile::tempdir().unwrap();
+    let mut b = IsolateBox::open(&config(meta.path()), box_id(2), None).unwrap();
+    b.run(&spec(&["/bin/true"], 65_536)).unwrap();
+    assert!(matches!(b.command(&spec(&["/bin/true"], 65_536)), Err(SandboxError::Dirty)));
 }

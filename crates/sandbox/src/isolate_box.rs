@@ -103,11 +103,17 @@ impl IsolateBox {
     /// Reads at most `cap` bytes of a regular file the program left in the box. A symlink is refused.
     pub fn read_output(&self, name: &str, cap: u64) -> Result<Vec<u8>, SandboxError> {
         let path = self.box_path(name)?;
-        if !std::fs::symlink_metadata(&path)?.file_type().is_file() {
+        // O_NOFOLLOW refuses a symlink, O_NONBLOCK keeps a FIFO from hanging the open.
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|_| SandboxError::BadName(name.to_string()))?;
+        if !file.metadata()?.is_file() {
             return Err(SandboxError::BadName(name.to_string()));
         }
         let mut bytes = Vec::new();
-        File::open(path)?.take(cap).read_to_end(&mut bytes)?;
+        file.take(cap).read_to_end(&mut bytes)?;
         Ok(bytes)
     }
 
@@ -115,7 +121,10 @@ impl IsolateBox {
         copy_tree(src_dir, &self.dir)
     }
 
-    pub fn command(&self, spec: &RunSpec) -> Command {
+    pub fn command(&self, spec: &RunSpec) -> Result<Command, SandboxError> {
+        if self.dirty {
+            return Err(SandboxError::Dirty);
+        }
         let args = isolate_args(self.id, spec, &self.meta_path());
         let mut command = match self.core {
             Some(core) => {
@@ -126,7 +135,7 @@ impl IsolateBox {
             None => Command::new(&self.config.isolate_bin),
         };
         command.args(args);
-        command
+        Ok(command)
     }
 
     pub fn read_meta(&self) -> Result<Meta, SandboxError> {
@@ -134,13 +143,10 @@ impl IsolateBox {
     }
 
     pub fn run(&mut self, spec: &RunSpec) -> Result<Meta, SandboxError> {
-        if self.dirty {
-            return Err(SandboxError::Dirty);
-        }
+        let mut command = self.command(spec)?;
         self.dirty = true;
         let _ = std::fs::remove_file(self.meta_path());
-        let status =
-            self.command(spec).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+        let status = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
         // isolate exits 1 for a program that failed and 2 for its own errors; the meta file decides.
         if status.code() == Some(2) || !self.meta_path().exists() {
             return Err(SandboxError::Isolate(format!("isolate exited with {status}")));
@@ -176,7 +182,7 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), SandboxError> {
         let target = dst.join(entry.file_name());
         let kind = entry.file_type()?;
         if kind.is_dir() {
-            std::fs::create_dir_all(&target)?;
+            make_dir(&target)?;
             copy_tree(&entry.path(), &target)?;
         } else if kind.is_file() {
             let mode = entry.metadata()?.permissions().mode() & 0o777;
@@ -186,4 +192,13 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), SandboxError> {
         }
     }
     Ok(())
+}
+
+/// Creates a directory, or accepts an existing real one; a symlink there is refused, never followed.
+fn make_dir(target: &Path) -> Result<(), SandboxError> {
+    match std::fs::symlink_metadata(target) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(SandboxError::BadName(target.display().to_string())),
+        Err(_) => Ok(std::fs::create_dir(target)?),
+    }
 }
