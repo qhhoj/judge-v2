@@ -25,7 +25,8 @@ impl ShortCircuit {
         if case.batch.is_some() {
             self.failed_batch = case.batch;
         }
-        self.stopped |= self.whole_submission;
+        // DMOJ: a case or batch worth 0 points is a pretest; failing it ends judging, short-circuit or not.
+        self.stopped |= self.whole_submission || case.total == 0.0;
     }
 }
 
@@ -60,6 +61,20 @@ mod tests {
             sc.record(case, *ok);
         }
         skipped
+    }
+
+    fn worth(mut planned: PlannedCase, total: f64) -> PlannedCase {
+        planned.total = total;
+        planned
+    }
+
+    #[test]
+    fn failing_a_zero_point_case_or_batch_skips_everything_after_it() {
+        let cases = [worth(case(1, None), 0.0), case(2, None), case(3, Some(1))];
+        assert_eq!(skipped(false, &cases, &[false, true, true]), [2, 3]);
+        let batch = [worth(case(1, Some(1)), 0.0), worth(case(2, Some(1)), 0.0), case(3, None)];
+        assert_eq!(skipped(false, &batch, &[false, true, true]), [2, 3]);
+        assert!(skipped(false, &cases, &[true, false, true]).is_empty(), "a passed pretest skips nothing");
     }
 
     #[test]

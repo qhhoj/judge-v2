@@ -1,7 +1,7 @@
 //! Walks the case plan: short-circuit, points, clipping (spec §2, §3.8).
 //!
 //! DMOJ semantics: a case that is not AC skips the rest of its batch (SC); with the submission's
-//! `short_circuit` it skips every later case. The plan already holds only the pretests or only the tests.
+//! `short_circuit` it skips every later case. A failed case worth 0 points (a pretest) skips every later case. The plan already holds the run's cases.
 
 use crate::checkers::custom::{MAX_EXTENDED, MAX_FEEDBACK, clip_text};
 use crate::error::GradeError;

@@ -53,17 +53,29 @@ fn invalid(message: impl Into<String>) -> InitError {
 
 pub fn plan_cases(init: &InitYaml, options: &PlanOptions) -> Result<CasePlan, InitError> {
     let pretested = options.pretests_only && !init.pretest_test_cases.is_empty();
-    let entries = if pretested { &init.pretest_test_cases } else { &init.test_cases };
     let problem = Inherited {
         checker: init.checker.clone().unwrap_or_else(|| CheckerSpec::Name("standard".into())),
         output_limit: init.output_limit_length.unwrap_or(options.default_output_limit),
         output_prefix: init.output_prefix_length.unwrap_or(options.default_output_prefix),
     };
     let mut builder = Builder { cases: Vec::new(), batches: 0 };
-    for entry in entries {
-        builder.add_entry(entry, &problem)?;
+    if pretested {
+        builder.add_entries(&init.pretest_test_cases, &problem, Pass::AsWritten)?;
+    } else {
+        // DMOJ's full run (pinned by the backend parity run): the pretests first, then the tests.
+        builder.add_entries(&init.pretest_test_cases, &problem, Pass::FullRunPretest)?;
+        builder.add_entries(&init.test_cases, &problem, Pass::AsWritten)?;
     }
     Ok(CasePlan { pretested, cases: builder.cases })
+}
+
+/// How an entry's points count in this run.
+#[derive(Clone, Copy, PartialEq)]
+enum Pass {
+    AsWritten,
+    /// A pretest in a full run: a plain pretest case is worth 0, so its failure ends the run (`ShortCircuit`);
+    /// a pretest batch keeps its points (DMOJ's observed behaviour).
+    FullRunPretest,
 }
 
 /// What a case is worth and which batch it belongs to.
@@ -79,10 +91,20 @@ struct Builder {
 }
 
 impl Builder {
-    fn add_entry(&mut self, entry: &CaseEntry, problem: &Inherited) -> Result<(), InitError> {
+    fn add_entries(
+        &mut self,
+        entries: &[CaseEntry],
+        problem: &Inherited,
+        pass: Pass,
+    ) -> Result<(), InitError> {
+        entries.iter().try_for_each(|entry| self.add_entry(entry, problem, pass))
+    }
+
+    fn add_entry(&mut self, entry: &CaseEntry, problem: &Inherited, pass: Pass) -> Result<(), InitError> {
         let points = entry.points.ok_or_else(|| invalid("a top-level case or batch has no points"))?;
         let Some(batched) = &entry.batched else {
-            return self.push(entry, &problem.apply(entry), Scoring { total: points, batch: None });
+            let total = if pass == Pass::FullRunPretest { 0.0 } else { points };
+            return self.push(entry, &problem.apply(entry), Scoring { total, batch: None });
         };
         if batched.is_empty() {
             return Err(invalid("empty batch"));
@@ -155,14 +177,32 @@ mod tests {
     }
 
     #[test]
-    fn pretest_run_uses_only_pretests_and_full_run_only_tests() {
+    fn pretest_run_uses_only_pretests_with_their_points() {
         let yaml = "pretest_test_cases:\n- {in: p, out: q, points: 1}\ntest_cases:\n- {in: a, out: b, points: 2}\n- {in: c, out: d, points: 3}\n";
         let pre = plan(yaml, true).unwrap();
         assert!(pre.pretested);
-        assert_eq!(pre.cases.iter().map(|c| c.input.as_str()).collect::<Vec<_>>(), ["p"]);
+        let shape: Vec<_> = pre.cases.iter().map(|c| (c.input.as_str(), c.total)).collect();
+        assert_eq!(shape, [("p", 1.0)]);
+    }
+
+    #[test]
+    fn full_run_takes_the_pretests_first_plain_ones_worth_nothing_then_the_tests() {
+        let yaml = "pretest_test_cases:\n- {in: p, out: q, points: 10}\n- points: 30\n  batched:\n  - {in: r, out: s}\n  - {in: t, out: u}\n\
+                    test_cases:\n- {in: a, out: b, points: 30}\n- points: 5\n  batched:\n  - {in: c, out: d}\n";
         let full = plan(yaml, false).unwrap();
         assert!(!full.pretested);
-        assert_eq!(full.cases.len(), 2);
+        let shape: Vec<_> =
+            full.cases.iter().map(|c| (c.position, c.input.as_str(), c.total, c.batch)).collect();
+        assert_eq!(
+            shape,
+            [
+                (1, "p", 0.0, None),
+                (2, "r", 30.0, Some(1)),
+                (3, "t", 30.0, Some(1)),
+                (4, "a", 30.0, None),
+                (5, "c", 5.0, Some(2))
+            ]
+        );
     }
 
     #[test]
