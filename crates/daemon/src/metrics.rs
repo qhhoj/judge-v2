@@ -26,6 +26,17 @@ fn register<T: prometheus::core::Collector + Clone + 'static>(registry: &Registr
     metric
 }
 
+/// The `outcome` label of metrics and log lines.
+pub fn outcome_label(outcome: &Outcome) -> &'static str {
+    match outcome {
+        Outcome::Graded => "graded",
+        Outcome::CompileError(_) => "compile_error",
+        Outcome::InternalError(_) => "internal_error",
+        Outcome::Aborted => "aborted",
+        Outcome::Retry(_) => "retry",
+    }
+}
+
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
@@ -66,14 +77,7 @@ impl Metrics {
     }
 
     pub fn assignment_finished(&self, outcome: &Outcome) {
-        let label = match outcome {
-            Outcome::Graded => "graded",
-            Outcome::CompileError(_) => "compile_error",
-            Outcome::InternalError(_) => "internal_error",
-            Outcome::Aborted => "aborted",
-            Outcome::Retry(_) => "retry",
-        };
-        self.assignments.with_label_values(&[label]).inc();
+        self.assignments.with_label_values(&[outcome_label(outcome)]).inc();
         if matches!(outcome, Outcome::Retry(RetryReason::SandboxFailure)) {
             self.sandbox_failures.with_label_values(&["isolate"]).inc();
         }
