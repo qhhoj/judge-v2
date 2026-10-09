@@ -17,3 +17,20 @@ contestant's file with the header, links it with the entry under an unguessable 
 `assets/testlib/testlib.h` is vendored unmodified from MikeMirzayanov/testlib tag 0.9.41 (MIT, see
 `assets/testlib/LICENSE`, `VERSION`, `SHA256SUMS`). Only the C++ header is vendored: bridged checkers written in
 Pascal or Java that include testlib do not compile (the submission is an internal error).
+
+## Grading outcomes (`judge_submission`)
+
+- Refused before any box is used: an init.yml feature not graded here (generator, `nobigmath`, a non-testlib
+  custom checker or interactor, per-case checker overrides) is `RETRY UNSUPPORTED`; a language with no runtime on
+  this judge (SCRATCH, or a key removed at start) is `RETRY RUNTIME_MISSING`.
+- Batches and pretests follow DMOJ: a case that is not AC skips the rest of its batch (SC), `short_circuit` skips
+  every later case; a pretest run grades only `pretest_test_cases`. Each case reports `fraction x total`, where a
+  batched case carries the batch total; the bridge scores a batch by its weakest case.
+- A loose-file problem (no archive) reads its case files from the data root while grading, so its `.data-version`
+  is read again at the end: a moved stamp or an upload in progress turns the result into `RETRY DATA_UNAVAILABLE`.
+- An OUTPUT submission whose zip cannot be opened (not a zip, corrupt directory; checked in memory) is WA on
+  every case with feedback "the submitted zip cannot be read": the contestant's mistake, not IE. An entry whose
+  data fails to inflate, and a zip with more than 10,000 entries, stay IE (the first cannot be told from a host
+  write error).
+- Compile errors instead of misgrading: a program submitted to an output-only problem, and a TEXT or OUTPUT
+  submission to a signature or interactive problem.
