@@ -1,0 +1,32 @@
+# /etc/qhhoj-judge/config.toml (mode 0644, owned by root). The key is NOT here: systemd LoadCredential= passes it.
+name = "judge-1"                                   # the judge's name in the admin UI
+bridge_url = "https://bridge.qhhoj.internal:9999"  # http:// is accepted only on loopback
+key_file = "judge-key"                             # relative: read from $CREDENTIALS_DIRECTORY
+problem_data_root = "/srv/qhhoj/problem-data"      # read-only NFS mount
+cache_dir = "/var/cache/qhhoj-judge"
+cache_max_bytes = 21474836480                      # 20 GiB for extracted archives and compiled checkers
+languages_file = "/opt/qhhoj-judge/current/languages.toml"
+testlib_dir = "/opt/qhhoj-judge/current/assets/testlib"
+metrics_listen = "127.0.0.1:9464"
+# slots = 7            # default: physical cores - 1
+# cores = [1, 2, 3]    # default: one logical CPU per physical core, core 0 left to the daemon
+box_base = 0
+drain_timeout_s = 120
+data_wait_ms = 10000
+
+[tls]
+ca_file = "/etc/qhhoj-judge/bridge-ca.pem"
+server_name = "bridge.qhhoj.internal"
+
+[limits]
+default_output_limit = 25165824
+default_output_prefix = 64
+jvm_reserve_kib = 131072
+
+[reconnect]
+initial_ms = 500
+max_ms = 30000
+
+[isolate]
+bin = "/usr/local/bin/isolate"
+taskset = "/usr/bin/taskset"
