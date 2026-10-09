@@ -1,0 +1,20 @@
+[
+  {"why": "listed fields match, extra observed fields are ignored", "expected": {"ack": {"seq": 2}}, "actual": {"ack": {"ref": {"submissionId": "a", "generation": 1}, "seq": 2}}, "matches": true},
+  {"why": "a different value fails", "expected": {"ack": {"seq": 3}}, "actual": {"ack": {"seq": 2}}, "matches": false},
+  {"why": "a missing field holds its default: 0", "expected": {"welcome": {"protocolMinor": 0}}, "actual": {"welcome": {"sessionId": "s"}}, "matches": true},
+  {"why": "a missing field holds its default: false", "expected": {"assign": {"pretestsOnly": false}}, "actual": {"assign": {}}, "matches": true},
+  {"why": "a missing field holds its default: unspecified enum", "expected": {"final": {"reason": "RETRY_REASON_UNSPECIFIED"}}, "actual": {"final": {}}, "matches": true},
+  {"why": "a missing field is not a non-default value", "expected": {"assign": {"shortCircuit": true}}, "actual": {"assign": {}}, "matches": false},
+  {"why": "a missing message matches only an all-default expectation", "expected": {"welcome": {"limits": {"maxLogBytes": 65536}}}, "actual": {"welcome": {}}, "matches": false},
+  {"why": "64-bit integers: string and number forms are equal", "expected": {"assign": {"dataVersion": "3"}}, "actual": {"assign": {"dataVersion": 3}}, "matches": true},
+  {"why": "64-bit integers compare exactly beyond 2^53", "expected": {"pong": {"nonce": "18446744073709551615"}}, "actual": {"pong": {"nonce": "18446744073709551614"}}, "matches": false},
+  {"why": "a star matches any present value", "expected": {"welcome": {"sessionId": "*"}}, "actual": {"welcome": {"sessionId": "0192"}}, "matches": true},
+  {"why": "a star matches an absent value too", "expected": {"welcome": {"sessionId": "*"}}, "actual": {"welcome": {}}, "matches": true},
+  {"why": "arrays must have the same length", "expected": {"welcome": {"resume": [{"action": "ACTION_DROP"}]}}, "actual": {"welcome": {"resume": []}}, "matches": false},
+  {"why": "arrays match element by element", "expected": {"welcome": {"resume": [{"action": "ACTION_DROP"}, {"fromSeq": 3}]}}, "actual": {"welcome": {"resume": [{"action": "ACTION_DROP", "ref": {}}, {"action": "ACTION_CONTINUE", "fromSeq": 3}]}}, "matches": true},
+  {"why": "another oneof member fails", "expected": {"ack": {}}, "actual": {"abort": {"ref": {"submissionId": "a"}}}, "matches": false},
+  {"why": "an empty expected member needs that member present", "expected": {"draining": {}}, "actual": {"draining": {}}, "matches": true},
+  {"why": "floats compare by value", "expected": {"pong": {"load": 0.5}}, "actual": {"pong": {"load": 0.5}}, "matches": true},
+  {"why": "an integer equals the same float", "expected": {"case": {"points": 1}}, "actual": {"case": {"points": 1.0}}, "matches": true},
+  {"why": "an expected empty member needs the member", "expected": {"ack": {}}, "actual": {}, "matches": false}
+]
