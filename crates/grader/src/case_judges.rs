@@ -166,7 +166,10 @@ pub struct OutputCases<'a> {
 impl CaseJudge for OutputCases<'_> {
     fn judge_case(&mut self, case: &PlannedCase) -> Result<CaseVerdict, GradeError> {
         let output = self.context.output_path();
-        let written = output_for_case(&self.source, &case.output, &output, case.output_limit)?;
+        let written = match output_for_case(&self.source, &case.output, &output, case.output_limit) {
+            Err(GradeError::UnreadableSubmission(_)) => return Ok(unreadable_output()),
+            other => other?,
+        };
         if written > case.output_limit {
             return Ok(CaseVerdict::failed(Status::Ole, 0.0, 0, String::new()));
         }
@@ -176,15 +179,19 @@ impl CaseJudge for OutputCases<'_> {
     }
 }
 
-/// An OUTPUT submission that is not a zip at all, or whose directory is corrupt: every case is WA with
-/// `UNREADABLE_ZIP` (the contestant's mistake, so not IE; spec §2 keeps IE for judge faults). An entry whose
-/// data fails to inflate is found only while reading it, where a failed scratch write looks the same, so
-/// that stays an error (IE) rather than risk blaming the contestant for a host fault.
+/// WA with `UNREADABLE_ZIP`: the contestant's mistake, so not IE (spec §2 keeps IE for judge faults).
+fn unreadable_output() -> CaseVerdict {
+    CaseVerdict::failed(Status::Wa, 0.0, 0, UNREADABLE_ZIP.into())
+}
+
+/// An OUTPUT submission that is not a zip at all, or whose directory is corrupt: every case is
+/// `unreadable_output`. A single entry that cannot be inflated (unsupported method, encryption, bad
+/// checksum) makes only its case `unreadable_output`; a failed scratch write stays an error (IE).
 pub struct UnreadableOutputs;
 
 impl CaseJudge for UnreadableOutputs {
     fn judge_case(&mut self, _case: &PlannedCase) -> Result<CaseVerdict, GradeError> {
-        Ok(CaseVerdict::failed(Status::Wa, 0.0, 0, UNREADABLE_ZIP.into()))
+        Ok(unreadable_output())
     }
 }
 

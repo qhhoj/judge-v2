@@ -113,15 +113,31 @@ pub fn judge_submission(
 /// an upload began) meanwhile, the result may mix two versions: it becomes `RETRY DATA_UNAVAILABLE`.
 /// An archive problem grades from its immutable cache entry and keeps its result.
 fn settle(outcome: Outcome, stamps: &dyn StampSource, problem: &ResolvedProblem) -> Outcome {
-    if matches!(outcome, Outcome::Aborted | Outcome::Retry(_)) || problem.lease.is_some() {
+    if !used_loose_data(&outcome, problem) {
         return outcome;
     }
     let dir = &problem.data_dir;
+    // The marker first: the uploader writes the stamp and then removes the marker, so an upload that ends
+    // between these two reads still shows its new stamp. Read the other way, it could show neither.
+    if stamps.upload_in_progress(dir) {
+        return Outcome::Retry(RetryReason::DataUnavailable);
+    }
     let stamp = stamps.read(dir).map(|found| found.unwrap_or(0));
-    if stamps.upload_in_progress(dir) || stamp != Ok(problem.data_version_used) {
+    if stamp != Ok(problem.data_version_used) {
         return Outcome::Retry(RetryReason::DataUnavailable);
     }
     outcome
+}
+
+/// Whether the outcome came from files read off the data root after resolve. A compile error does only for a
+/// signature problem (its entry and header); Aborted and Retry are kept as they are.
+fn used_loose_data(outcome: &Outcome, problem: &ResolvedProblem) -> bool {
+    let from_data = match outcome {
+        Outcome::Aborted | Outcome::Retry(_) => false,
+        Outcome::CompileError(_) => problem.init.signature_grader.is_some(),
+        Outcome::Graded | Outcome::InternalError(_) => true,
+    };
+    from_data && problem.lease.is_none()
 }
 
 /// The submission being graded: its plan and where results go.
@@ -432,8 +448,12 @@ mod tests {
     }
 
     fn loose_problem(used: u64) -> ResolvedProblem {
+        loose_problem_with("test_cases: []\n", used)
+    }
+
+    fn loose_problem_with(init: &str, used: u64) -> ResolvedProblem {
         ResolvedProblem {
-            init: parse_init("test_cases: []\n").unwrap(),
+            init: parse_init(init).unwrap(),
             data_dir: "/nonexistent".into(),
             files_dir: "/nonexistent".into(),
             data_version_used: used,
@@ -451,6 +471,50 @@ mod tests {
     }
 
     #[test]
+    fn a_signature_compile_error_is_retried_when_the_stamp_moved() {
+        let signature =
+            loose_problem_with("test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h}\n", 3);
+        let moved = Stamps { read: Ok(Some(4)), uploading: false };
+        let outcome = settle(Outcome::CompileError("log".into()), &moved, &signature);
+        assert_eq!(
+            outcome,
+            Outcome::Retry(RetryReason::DataUnavailable),
+            "the entry or header may have changed"
+        );
+    }
+
+    /// An upload that is running when `settle` starts and ends (stamp 4 written, then the marker removed)
+    /// right after the first question `settle` asks, whichever question that is.
+    struct UploadEndingNow {
+        state: std::sync::Mutex<(Option<u64>, bool)>,
+    }
+
+    impl UploadEndingNow {
+        fn answer<T>(&self, ask: impl FnOnce(&(Option<u64>, bool)) -> T) -> T {
+            let mut state = self.state.lock().unwrap();
+            let answer = ask(&state);
+            *state = (Some(4), false);
+            answer
+        }
+    }
+
+    impl StampSource for UploadEndingNow {
+        fn read(&self, _dir: &std::path::Path) -> Result<Option<u64>, DataError> {
+            Ok(self.answer(|state| state.0))
+        }
+        fn upload_in_progress(&self, _dir: &std::path::Path) -> bool {
+            self.answer(|state| state.1)
+        }
+    }
+
+    #[test]
+    fn an_upload_ending_during_the_recheck_is_still_seen() {
+        let stamps = UploadEndingNow { state: std::sync::Mutex::new((Some(3), true)) };
+        let outcome = settle(Outcome::Graded, &stamps, &loose_problem(3));
+        assert_eq!(outcome, Outcome::Retry(RetryReason::DataUnavailable));
+    }
+
+    #[test]
     fn a_loose_problem_whose_stamp_moved_is_retried() {
         let retry = Outcome::Retry(RetryReason::DataUnavailable);
         let gone = || Err(DataError::Io("gone".into()));
@@ -465,8 +529,8 @@ mod tests {
             (Outcome::Graded, Ok(Some(1)), false, 0, retry.clone()), // a stamp appeared
             (Outcome::Graded, Ok(Some(3)), true, 3, retry.clone()),  // an upload began
             (Outcome::Graded, gone(), false, 3, retry.clone()),
-            (compile_error, Ok(Some(4)), false, 3, retry.clone()), // a grader file may have changed
-            (ie, Ok(Some(4)), false, 3, retry.clone()),            // a half-written upload is not IE
+            (compile_error.clone(), Ok(Some(4)), false, 3, compile_error), // no data in a plain compile
+            (ie, Ok(Some(4)), false, 3, retry.clone()),                    // a half-written upload is not IE
             (Outcome::Aborted, Ok(Some(4)), false, 3, Outcome::Aborted),
             (unsupported.clone(), Ok(Some(4)), false, 3, unsupported),
         ];

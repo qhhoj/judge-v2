@@ -66,20 +66,26 @@ impl ZipIndex {
     }
 }
 
-/// At most `limit` decompressed bytes of the entry; no entry for the name is an empty output.
+fn unreadable(error: impl std::fmt::Display) -> GradeError {
+    GradeError::UnreadableSubmission(error.to_string())
+}
+
+/// At most `limit` decompressed bytes of the entry; no entry for the name is an empty output. Any failure to
+/// open or inflate the entry (unsupported method, encryption, bad data or checksum) is `UnreadableSubmission`:
+/// the zip was written to scratch whole before grading, so these come from its bytes, not from the host.
 fn zip_entry(zip: &ZipIndex, wanted: &str, limit: u64) -> Result<Vec<u8>, GradeError> {
     let Some(index) = zip.find(wanted) else { return Ok(Vec::new()) };
     let mut archive = zip.archive.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = archive.by_index(index).map_err(zip_error)?;
+    let entry = archive.by_index(index).map_err(unreadable)?;
     let mut bytes = Vec::new();
-    entry.take(limit).read_to_end(&mut bytes)?;
+    entry.take(limit).read_to_end(&mut bytes).map_err(unreadable)?;
     Ok(bytes)
 }
 
 /// Writes the submission's answer for one case to `dest` and returns its length. At most `cap + 1` bytes are
 /// written, so a length above `cap` means the answer is too long (OLE) while exactly `cap` is allowed.
 /// `case_output_name` is the case's `out` file name (`1.out`, maybe `sub/1.out`); TEXT answers every case
-/// with its source.
+/// with its source. A failed write to `dest` (the host's scratch) is `GradeError::Io`.
 pub fn output_for_case(
     source: &OutputSource,
     case_output_name: &str,
@@ -174,6 +180,62 @@ mod tests {
         let source = OutputSource::zip(zip.path().into()).unwrap();
         let len = output_for_case(&source, "1.out", &dir.path().join("o"), 10).unwrap();
         assert_eq!(len, 11, "one byte past the cap, so the caller can see OLE");
+    }
+
+    /// One stored (uncompressed) entry `1.out`, so its bytes can be patched in place.
+    fn stored_zip(data: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        w.start_file("1.out", options).unwrap();
+        w.write_all(data).unwrap();
+        w.finish().unwrap();
+        bytes
+    }
+
+    fn answer_of(bytes: &[u8], dest: &Path) -> Result<u64, GradeError> {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), bytes).unwrap();
+        output_for_case(&OutputSource::zip(file.path().into()).unwrap(), "1.out", dest, 100)
+    }
+
+    fn position(haystack: &[u8], needle: &[u8]) -> usize {
+        haystack.windows(needle.len()).position(|w| w == needle).unwrap()
+    }
+
+    #[test]
+    fn entries_the_zip_cannot_inflate_are_the_submission_s_fault() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("o");
+        let good = stored_zip(b"hello world\n");
+        assert_eq!(answer_of(&good, &dest).unwrap(), 12);
+        let mut bad_checksum = good.clone();
+        let at = position(&bad_checksum, b"hello");
+        bad_checksum[at] = b'j';
+        assert!(matches!(answer_of(&bad_checksum, &dest), Err(GradeError::UnreadableSubmission(_))));
+        let mut bzip2 = good.clone();
+        let central = position(&bzip2, b"PK\x01\x02");
+        for at in [8, central + 10] {
+            bzip2[at..at + 2].copy_from_slice(&12u16.to_le_bytes()); // compression method 12: bzip2, not built in
+        }
+        assert!(matches!(answer_of(&bzip2, &dest), Err(GradeError::UnreadableSubmission(_))));
+        let mut encrypted = good;
+        let central = position(&encrypted, b"PK\x01\x02");
+        for at in [6, central + 8] {
+            encrypted[at] |= 1; // general purpose flag bit 0: encrypted
+        }
+        assert!(matches!(answer_of(&encrypted, &dest), Err(GradeError::UnreadableSubmission(_))));
+    }
+
+    #[test]
+    fn a_failed_scratch_write_is_a_host_error() {
+        let zip = zip_of(&[("1.out", b"a")]);
+        let source = OutputSource::zip(zip.path().into()).unwrap();
+        let dest = Path::new("/nonexistent-dir/o");
+        assert!(matches!(output_for_case(&source, "1.out", dest, 100), Err(GradeError::Io(_))));
+        let text = OutputSource::Text(b"x".to_vec());
+        assert!(matches!(output_for_case(&text, "1.out", dest, 100), Err(GradeError::Io(_))));
     }
 
     #[test]

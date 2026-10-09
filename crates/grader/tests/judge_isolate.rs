@@ -384,11 +384,7 @@ fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
 #[test]
 fn output_only_zips_are_graded_per_entry_and_a_broken_zip_is_wa() {
     let mut b = bench(22);
-    let mut files = APLUSB.to_vec();
-    let init = format!("output_only: true\n{APLUSB_INIT}");
-    files[0] = ("init.yml", init.as_bytes());
-    b.write("outputs", &files);
-    let problem = b.resolve("outputs", 0);
+    let problem = output_only_problem(&b);
     let zip = b.root.join("submission.zip");
     std::fs::write(&zip, zip_of(&[("1.out", b"3\n")])).unwrap();
     let mut from_file = submission("OUTPUT", b"");
@@ -400,9 +396,47 @@ fn output_only_zips_are_graded_per_entry_and_a_broken_zip_is_wa() {
     assert_eq!(b.judge(&problem, &submission("OUTPUT", b"PK\x05\x06 broken"), &mut rec), Outcome::Graded);
     assert_eq!(rec.shape(), [(Status::Wa, 0.0), (Status::Wa, 0.0)]);
     assert!(rec.cases.iter().all(|c| c.feedback == UNREADABLE_ZIP));
+}
+
+fn output_only_problem(b: &Bench) -> ResolvedProblem {
+    let mut files = APLUSB.to_vec();
+    let init = format!("output_only: true\n{APLUSB_INIT}");
+    files[0] = ("init.yml", init.as_bytes());
+    b.write("outputs", &files);
+    b.resolve("outputs", 0)
+}
+
+#[test]
+fn a_bad_zip_entry_is_wa_and_a_program_is_refused_on_output_only_problems() {
+    let mut b = bench(28);
+    let problem = output_only_problem(&b);
+    let mut bad_entry = stored_zip(&[("1.out", b"3\n"), ("2.out", b"30\n")]);
+    let name = position(&bad_entry, b"2.out", 0);
+    let data = position(&bad_entry, b"30\n", name);
+    bad_entry[data] = b'4'; // the entry's checksum no longer matches
+    let mut rec = Recorder::default();
+    assert_eq!(b.judge(&problem, &submission("OUTPUT", &bad_entry), &mut rec), Outcome::Graded);
+    assert_eq!(rec.shape(), [(Status::Ac, 50.0), (Status::Wa, 0.0)]);
+    assert_eq!(rec.cases[1].feedback, UNREADABLE_ZIP, "a bad entry is the submission's fault, not IE");
     let (outcome, rec) = b.run("outputs", "CPP17", CPP_SUM);
     assert_eq!(outcome, Outcome::CompileError(OUTPUT_REQUIRED.into()), "a program is not graded as text");
     assert!(rec.cases.is_empty());
+}
+
+fn stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
+    let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, data) in entries {
+        writer.start_file(*name, stored).unwrap();
+        writer.write_all(data).unwrap();
+    }
+    writer.finish().unwrap();
+    bytes
+}
+
+fn position(haystack: &[u8], needle: &[u8], from: usize) -> usize {
+    from + haystack[from..].windows(needle.len()).position(|w| w == needle).unwrap()
 }
 
 fn restamp(dir: &Path, version: u64) {
