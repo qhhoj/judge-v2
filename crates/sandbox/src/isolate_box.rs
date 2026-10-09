@@ -1,0 +1,145 @@
+//! One isolate box. Every run starts from a fresh `--init` (Review Focus 1).
+
+use crate::error::SandboxError;
+use crate::meta::{Meta, parse_meta};
+use crate::spec::{RunSpec, isolate_args};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+#[derive(Debug, Clone)]
+pub struct SandboxConfig {
+    pub isolate_bin: PathBuf,
+    pub taskset_bin: PathBuf,
+    pub meta_dir: PathBuf,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        SandboxConfig {
+            isolate_bin: "/usr/local/bin/isolate".into(),
+            taskset_bin: "/usr/bin/taskset".into(),
+            meta_dir: "/var/cache/qhhoj-judge/meta".into(),
+        }
+    }
+}
+
+pub struct IsolateBox {
+    config: SandboxConfig,
+    id: u32,
+    core: Option<u32>,
+    dir: PathBuf,
+}
+
+fn isolate(config: &SandboxConfig, id: u32, action: &str) -> Result<String, SandboxError> {
+    let out = Command::new(&config.isolate_bin).args(["--cg", &format!("-b{id}"), action]).output()?;
+    if !out.status.success() {
+        return Err(SandboxError::Isolate(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Cleans a box this process may have left behind (daemon start, after a crash).
+pub fn cleanup_box(config: &SandboxConfig, id: u32) -> Result<(), SandboxError> {
+    isolate(config, id, "--cleanup").map(|_| ())
+}
+
+impl IsolateBox {
+    pub fn open(config: &SandboxConfig, id: u32, core: Option<u32>) -> Result<Self, SandboxError> {
+        std::fs::create_dir_all(&config.meta_dir)?;
+        cleanup_box(config, id)?;
+        let root = isolate(config, id, "--init")?;
+        Ok(IsolateBox { config: config.clone(), id, core, dir: Path::new(&root).join("box") })
+    }
+
+    pub fn reset(&mut self) -> Result<(), SandboxError> {
+        cleanup_box(&self.config, self.id)?;
+        let root = isolate(&self.config, self.id, "--init")?;
+        self.dir = Path::new(&root).join("box");
+        Ok(())
+    }
+
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    fn meta_path(&self) -> PathBuf {
+        self.config.meta_dir.join(format!("{}.meta", self.id))
+    }
+
+    pub fn put(&self, name: &str, src: &Path, executable: bool) -> Result<(), SandboxError> {
+        let target = self.dir.join(name);
+        std::fs::copy(src, &target)?;
+        set_mode(&target, if executable { 0o755 } else { 0o644 })
+    }
+
+    pub fn put_bytes(&self, name: &str, bytes: &[u8]) -> Result<(), SandboxError> {
+        let target = self.dir.join(name);
+        std::fs::write(&target, bytes)?;
+        set_mode(&target, 0o644)
+    }
+
+    pub fn put_tree(&self, src_dir: &Path) -> Result<(), SandboxError> {
+        copy_tree(src_dir, &self.dir)
+    }
+
+    pub fn command(&self, spec: &RunSpec) -> Command {
+        let args = isolate_args(self.id, spec, &self.meta_path());
+        let mut command = match self.core {
+            Some(core) => {
+                let mut c = Command::new(&self.config.taskset_bin);
+                c.args(["-c", &core.to_string()]).arg(&self.config.isolate_bin);
+                c
+            }
+            None => Command::new(&self.config.isolate_bin),
+        };
+        command.args(args);
+        command
+    }
+
+    pub fn read_meta(&self) -> Result<Meta, SandboxError> {
+        parse_meta(&std::fs::read_to_string(self.meta_path())?)
+    }
+
+    pub fn run(&mut self, spec: &RunSpec) -> Result<Meta, SandboxError> {
+        let _ = std::fs::remove_file(self.meta_path());
+        let status =
+            self.command(spec).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+        // isolate exits 1 for a program that failed and 2 for its own errors; the meta file decides.
+        if status.code() == Some(2) || !self.meta_path().exists() {
+            return Err(SandboxError::Isolate(format!("isolate exited with {status}")));
+        }
+        self.read_meta()
+    }
+}
+
+impl Drop for IsolateBox {
+    fn drop(&mut self) {
+        if let Err(error) = cleanup_box(&self.config, self.id) {
+            eprintln!("isolate cleanup of box {} failed: {error}", self.id);
+        }
+    }
+}
+
+fn set_mode(path: &Path, mode: u32) -> Result<(), SandboxError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+fn copy_tree(src: &Path, dst: &Path) -> Result<(), SandboxError> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?; // std::fs::copy keeps the permission bits
+        }
+    }
+    Ok(())
+}
