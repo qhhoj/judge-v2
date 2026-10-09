@@ -12,6 +12,7 @@ workspace = true
 isolate = []
 
 [dependencies]
+libc.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
