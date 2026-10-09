@@ -1,0 +1,25 @@
+name: 22-abort-running
+summary: Aborting a running submission sends Abort; the judge's Final ABORTED ends it as AB.
+applies_to: [bridge, judge]
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, caseCount: 3}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+  - api: {abort: s1}
+  - bridge: {to: j1, message: {abort: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3, outcome: OUTCOME_ABORTED}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3}}}
+end_state:
+  submissions:
+    s1: {status: AB, result: AB}
+  gradedJobs: 1

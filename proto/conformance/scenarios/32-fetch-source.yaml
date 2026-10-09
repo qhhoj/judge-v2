@@ -1,0 +1,18 @@
+name: 32-fetch-source
+summary: FetchSource streams a file-only source only for a ref the session holds (the judge role fetches its own Assign's source).
+applies_to: [bridge, judge]
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1, language: OUTPUT, fileBytes: 2500000}, {id: s2, problem: p1, language: OUTPUT, fileBytes: 10}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: OUTPUT, name: output, version: "1"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}, languageKey: OUTPUT, sourceIsFile: true, sourceSize: "2500000"}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - fetch: {judge: j1, ref: {submissionId: "{{s1}}", generation: 1}, expect: OK, bytes: 2500000}
+  - fetch: {judge: j1, ref: {submissionId: "{{s2}}", generation: 1}, expect: PERMISSION_DENIED}
+  - fetch: {judge: j1, ref: {submissionId: "{{s1}}", generation: 9}, expect: PERMISSION_DENIED}

@@ -1,0 +1,29 @@
+name: 26-second-loss-is-ie
+summary: The second judge loss on one submission ends it as IE.
+applies_to: [bridge]
+timings: {resumeGraceMs: 300}
+setup:
+  judges: [{name: j1}, {name: j2}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - drop: {judge: j1}
+  - open: {judge: j2}
+  - judge: {from: j2, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j2, message: {welcome: {sessionId: "*"}}}
+  - bridge: {to: j2, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
+  - judge: {from: j2, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - bridge: {to: j2, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - drop: {judge: j2}
+  - wait: {ms: 800}
+end_state:
+  submissions:
+    s1: {status: IE, result: IE, requeueCount: 1, error: "The judge disconnected twice while grading this submission"}
+  gradedJobs: 1

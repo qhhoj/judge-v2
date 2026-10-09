@@ -1,0 +1,27 @@
+name: 28-accept-timeout
+summary: An Assign not accepted in time is aborted and released alone; the judge's other slot keeps its work, and the released slot is reused after the judge's Final ABORTED.
+applies_to: [bridge]
+timings: {acceptMs: 300}
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}, {id: s2, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1, s2]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s2}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s2}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s2}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {abort: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - quiet: {to: j1, ms: 300}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1, outcome: OUTCOME_ABORTED}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+end_state:
+  submissions:
+    s1: {status: P, judgeGeneration: 2, requeueCount: 0}
+    s2: {status: P, judgeGeneration: 1}

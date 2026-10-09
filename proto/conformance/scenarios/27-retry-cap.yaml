@@ -1,0 +1,33 @@
+name: 27-retry-cap
+summary: Final RETRY requeues without spending the requeue; the third RETRY ends the row as IE.
+applies_to: [bridge]
+timings: {resyncMs: 300}
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_DATA_UNAVAILABLE}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_SANDBOX_FAILURE}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 3}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 1}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_DATA_UNAVAILABLE}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2}}}
+  - quiet: {to: j1, ms: 700}
+end_state:
+  submissions:
+    s1: {status: IE, result: IE, requeueCount: 0, retryCount: 3, judgeGeneration: 3}
+  gradedJobs: 1

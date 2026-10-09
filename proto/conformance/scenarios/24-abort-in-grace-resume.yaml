@@ -1,0 +1,27 @@
+name: 24-abort-in-grace-resume
+summary: An abort recorded during the grace is sent right after the resuming Welcome.
+applies_to: [bridge, judge]
+timings: {resumeGraceMs: 3000}
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - drop: {judge: j1}
+  - api: {abort: s1}
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}], inFlight: [{ref: {submissionId: "{{s1}}", generation: 1}, lastSeqSent: 1}]}}}
+  - bridge: {to: j1, message: {welcome: {resume: [{ref: {submissionId: "{{s1}}", generation: 1}, action: ACTION_CONTINUE, fromSeq: 2}]}}}
+  - bridge: {to: j1, message: {abort: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, outcome: OUTCOME_ABORTED}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+end_state:
+  submissions:
+    s1: {status: AB, requeueCount: 0}

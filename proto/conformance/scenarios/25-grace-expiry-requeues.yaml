@@ -1,0 +1,28 @@
+name: 25-grace-expiry-requeues
+summary: A judge that stays away past the grace loses its run; the row is requeued once and another judge grades a new generation.
+applies_to: [bridge]
+timings: {resumeGraceMs: 300}
+setup:
+  judges: [{name: j1}, {name: j2}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - drop: {judge: j1}
+  - open: {judge: j2}
+  - judge: {from: j2, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j2, message: {welcome: {sessionId: "*"}}}
+  - bridge: {to: j2, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
+  - judge: {from: j2, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - bridge: {to: j2, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - judge: {from: j2, message: {final: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2, outcome: OUTCOME_COMPILE_ERROR, log: x}}}
+  - bridge: {to: j2, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2}}}
+end_state:
+  submissions:
+    s1: {status: CE, requeueCount: 1, judgeGeneration: 2}

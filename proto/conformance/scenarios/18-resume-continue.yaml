@@ -1,0 +1,29 @@
+name: 18-resume-continue
+summary: A judge that reconnects within the grace resumes its run from the next unstored seq; no requeue is spent.
+applies_to: [bridge, judge]
+timings: {resumeGraceMs: 3000}
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, caseCount: 2}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+  - drop: {judge: j1}
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}], inFlight: [{ref: {submissionId: "{{s1}}", generation: 1}, lastSeqSent: 2}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*", resume: [{ref: {submissionId: "{{s1}}", generation: 1}, action: ACTION_CONTINUE, fromSeq: 3}]}}}
+  - judge: {from: j1, message: {cases: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3, cases: [{position: 1, status: STATUS_AC, points: 1, total: 1}, {position: 2, status: STATUS_AC, points: 1, total: 1}]}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 4, outcome: OUTCOME_GRADED}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 4}}}
+end_state:
+  submissions:
+    s1: {status: D, result: AC, requeueCount: 0, judgeGeneration: 1, caseCount: 2}

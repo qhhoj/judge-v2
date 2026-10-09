@@ -1,0 +1,34 @@
+name: 21b-rejudge-mid-run-one-slot
+summary: On a one-slot judge, a rejudge mid-run aborts the old run and the new generation is assigned only after the judge's Final ABORTED frees the slot; the session survives.
+applies_to: [bridge, judge]
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 1, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, caseCount: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+  - api: {rejudge: s1}
+  - bridge: {to: j1, message: {abort: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - quiet: {to: j1, ms: 300}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 3, outcome: OUTCOME_ABORTED}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2, caseCount: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2}}}
+  - judge: {from: j1, message: {cases: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 3, cases: [{position: 1, status: STATUS_AC, points: 1, total: 1}]}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 3}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 4, outcome: OUTCOME_GRADED}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 4}}}
+end_state:
+  submissions:
+    s1: {status: D, result: AC, judgeGeneration: 2, caseCount: 1, requeueCount: 0}
+  gradedJobs: 1
