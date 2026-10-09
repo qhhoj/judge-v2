@@ -2,7 +2,6 @@
 [package]
 versioned_files = ["Cargo.toml"] # [workspace.package] version; crates inherit it
 changelog = "CHANGELOG.md"
-ignore_conventional_commits = true # bumps come from change files only
 
 [[workflows]]
 name = "document-change"
@@ -32,3 +31,6 @@ name = "tag"
 type = "Command"
 command = "git tag v$version" # local only, never pushed
 variables = { "$version" = "Version" }
+
+[changes]
+ignore_conventional_commits = true # bumps come from change files only
