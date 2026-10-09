@@ -13,7 +13,8 @@ const CPP_AC: &str = include_str!("../../../tests/programs/CPP17/ac.cpp");
 const PY_AC: &str = include_str!("../../../tests/programs/PY3/ac.py");
 const JAVA_AC: &str = include_str!("../../../tests/programs/JAVA/ac.java");
 
-/// The accepted programs of the isolate suite, one per language key (OUTPUT needs a zip: not self-tested).
+/// The accepted programs of the isolate suite, one per language key. Not self-tested: OUTPUT (needs a zip)
+/// and GAS32 (isolate's seccomp filter kills 32-bit system calls, see the isolate suite).
 pub const PROGRAMS: &[(&str, &str)] = &[
     ("C", C_AC),
     ("C11", C_AC),
@@ -36,7 +37,6 @@ pub const PROGRAMS: &[(&str, &str)] = &[
     ("LUA", include_str!("../../../tests/programs/LUA/ac.lua")),
     ("ADA", include_str!("../../../tests/programs/ADA/ac.adb")),
     ("BF", include_str!("../../../tests/programs/BF/ac.bf")),
-    ("GAS32", include_str!("../../../tests/programs/GAS32/ac.s")),
     ("GAS64", include_str!("../../../tests/programs/GAS64/ac.s")),
     ("TEXT", include_str!("../../../tests/programs/TEXT/three.txt")),
 ];
