@@ -1,0 +1,231 @@
+# No SCRATCH entry: Scratch is dropped (user ruling); SCRATCH problems are refused with RETRY RUNTIME_MISSING.
+# languages.toml — one [[language]] per key. Commands run inside the isolate box with cwd /box.
+# Placeholders: {memory_kib} {memory_mib} (the run memory limit), {class} (JVM public class).
+# compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
+
+[[language]]
+key = "C"
+name = "C (gcc, gnu99)"
+source = "main.c"
+compile = ["/usr/bin/gcc", "-std=gnu99", "-O2", "-pipe", "-o", "main", "main.c", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/gcc", "-dumpfullversion"]
+signature = ["/usr/bin/gcc", "-std=gnu99", "-O2", "-pipe"]
+
+[[language]]
+key = "C11"
+name = "C11 (gcc)"
+source = "main.c"
+compile = ["/usr/bin/gcc", "-std=gnu11", "-O2", "-pipe", "-o", "main", "main.c", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/gcc", "-dumpfullversion"]
+signature = ["/usr/bin/gcc", "-std=gnu11", "-O2", "-pipe"]
+
+[[language]]
+key = "CLANG"
+name = "C (clang)"
+source = "main.c"
+compile = ["/usr/bin/clang", "-std=gnu11", "-O2", "-pipe", "-o", "main", "main.c", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/clang", "-dumpversion"]
+signature = ["/usr/bin/clang", "-std=gnu11", "-O2", "-pipe"]
+
+[[language]]
+key = "CPP03"
+name = "C++03 (g++)"
+source = "main.cpp"
+compile = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/g++", "-dumpfullversion"]
+signature = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe"]
+
+[[language]]
+key = "CPP11"
+name = "C++11 (g++)"
+source = "main.cpp"
+compile = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/g++", "-dumpfullversion"]
+signature = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe"]
+
+[[language]]
+key = "CPP14"
+name = "C++14 (g++)"
+source = "main.cpp"
+compile = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/g++", "-dumpfullversion"]
+signature = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe"]
+
+[[language]]
+key = "CPP17"
+name = "C++17 (g++)"
+source = "main.cpp"
+compile = ["/usr/bin/g++", "-std=gnu++17", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/g++", "-dumpfullversion"]
+signature = ["/usr/bin/g++", "-std=gnu++17", "-O2", "-pipe"]
+testlib_flag = "-I/testlib"
+
+[[language]]
+key = "CPP20"
+name = "C++20 (g++)"
+source = "main.cpp"
+compile = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/g++", "-dumpfullversion"]
+signature = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe"]
+
+[[language]]
+key = "CPP23"
+name = "C++23 (g++)"
+source = "main.cpp"
+compile = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/g++", "-dumpfullversion"]
+signature = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe"]
+
+[[language]]
+key = "CLANGX"
+name = "C++17 (clang++)"
+source = "main.cpp"
+compile = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+run = ["./main"]
+version = ["/usr/bin/clang++", "-dumpversion"]
+signature = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe"]
+
+[[language]]
+key = "PY3"
+name = "Python 3"
+source = "main.py"
+compile = ["/usr/bin/python3", "-m", "py_compile", "main.py"]
+run = ["/usr/bin/python3", "-B", "main.py"]
+version = ["/usr/bin/python3", "--version"]
+exception_marker = "Traceback (most recent call last)"
+
+[[language]]
+key = "PYPY3"
+name = "PyPy 3"
+source = "main.py"
+run = ["/usr/bin/pypy3", "main.py"]
+version = ["/usr/bin/pypy3", "--version"]
+exception_marker = "Traceback (most recent call last)"
+
+[[language]]
+key = "PAS"
+name = "Pascal (fpc)"
+source = "main.pas"
+# -n: skip the system fpc config (isolate does not mount etc); the unit paths fpc.cfg would add are given here.
+compile = ["/usr/bin/fpc", "-n", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/*", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/rtl", "-O2", "-XS", "-Sg", "-omain", "main.pas"]
+run = ["./main"]
+version = ["/usr/bin/fpc", "-iV"]
+testlib_flag = "-Fu/testlib"
+
+[[language]]
+key = "JAVA"
+name = "Java"
+source = "{class}.java"
+compile = ["/usr/lib/jvm/default-java/bin/javac", "-encoding", "UTF-8", "{class}.java"]
+run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
+processes = 64
+jvm = true
+version = ["/usr/lib/jvm/default-java/bin/javac", "-version"]
+exception_marker = "Exception in thread"
+
+# JAVA8: 0 submissions in 2 years (legacy-judge-usage.md) but allowed on every problem: an alias of JAVA's JDK.
+[[language]]
+key = "JAVA8"
+name = "Java 8 (alias of the installed JDK)"
+source = "{class}.java"
+compile = ["/usr/lib/jvm/default-java/bin/javac", "-encoding", "UTF-8", "{class}.java"]
+run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
+processes = 64
+jvm = true
+version = ["/usr/lib/jvm/default-java/bin/javac", "-version"]
+exception_marker = "Exception in thread"
+
+[[language]]
+key = "KOTLIN"
+name = "Kotlin"
+source = "main.kt"
+# kotlinc is a shell script that finds java through JAVA_HOME; /usr/bin/java would go through /etc/alternatives.
+compile = ["/usr/bin/env", "JAVA_HOME=/usr/lib/jvm/default-java", "/usr/local/lib/kotlinc/bin/kotlinc", "main.kt", "-include-runtime", "-d", "main.jar"]
+compile_limits = { time_s = 30.0, wall_s = 60.0, memory_kib = 2097152 }
+compile_processes = 128
+run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "-jar", "main.jar"]
+processes = 64
+jvm = true
+version = ["/usr/bin/env", "JAVA_HOME=/usr/lib/jvm/default-java", "/usr/local/lib/kotlinc/bin/kotlinc", "-version"]
+exception_marker = "Exception in thread"
+
+[[language]]
+key = "RUBY"
+name = "Ruby"
+source = "main.rb"
+run = ["/usr/bin/ruby", "main.rb"]
+version = ["/usr/bin/ruby", "--version"]
+
+[[language]]
+key = "D"
+name = "D (gdc)"
+source = "main.d"
+compile = ["/usr/bin/gdc", "-O2", "-o", "main", "main.d"]
+run = ["./main"]
+version = ["/usr/bin/gdc", "-dumpfullversion"]
+
+[[language]]
+key = "LUA"
+name = "Lua 5.4"
+source = "main.lua"
+run = ["/usr/bin/lua5.4", "main.lua"]
+version = ["/usr/bin/lua5.4", "-v"]
+exception_marker = "stack traceback:"
+
+[[language]]
+key = "ADA"
+name = "Ada (gnat)"
+source = "main.adb"
+compile = ["/usr/bin/gnatmake", "-O2", "-o", "main", "main.adb"]
+run = ["./main"]
+version = ["/usr/bin/gnat", "--version"]
+exception_marker = "raised "
+
+[[language]]
+key = "BF"
+name = "Brainfuck"
+source = "main.bf"
+run = ["/usr/bin/bf", "main.bf"]
+version = ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "bf"]
+
+[[language]]
+key = "GAS32"
+name = "Assembly x86 (gas)"
+source = "main.s"
+compile = ["/bin/sh", "-c", "/usr/bin/as --32 -o main.o main.s && /usr/bin/ld -m elf_i386 -o main main.o"]
+run = ["./main"]
+version = ["/usr/bin/as", "--version"]
+
+[[language]]
+key = "GAS64"
+name = "Assembly x86-64 (gas)"
+source = "main.s"
+compile = ["/bin/sh", "-c", "/usr/bin/as --64 -o main.o main.s && /usr/bin/ld -o main main.o"]
+run = ["./main"]
+version = ["/usr/bin/as", "--version"]
+
+[[language]]
+key = "TEXT"
+name = "Text (the source is the answer)"
+source = "main.txt"
+kind = "text"
+run = []
+version = []
+
+[[language]]
+key = "OUTPUT"
+name = "Output-only (zip of outputs)"
+source = "main.zip"
+kind = "output_zip"
+file_only = true
+run = []
+version = []
