@@ -672,6 +672,7 @@ dependencies = [
  "hex",
  "judge-problem",
  "judge-sandbox",
+ "libc",
  "regex",
  "serde",
  "serde_norway",
