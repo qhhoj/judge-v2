@@ -291,6 +291,27 @@ curl -s 127.0.0.1:9464/metrics | grep judge_slots_busy
 Tell the site admin; they check that the judge shows online with its slots and submit an accepted, a
 wrong-answer and a compile-error solution to see the verdicts arrive.
 
+## Container image (optional, rootful)
+
+Bare metal (Phase A and B above) is the primary path. For a throwaway or external judge, every push to `main` also
+publishes `ghcr.io/qhhoj/judge-v2` (`:main`, `:sha-<12>`, `:vX.Y.Z` on release tags): the release binary, isolate 2.6,
+the day-one language runtimes and the release files under `/opt/qhhoj-judge/current`. It does not tune the kernel:
+SMT, swap, governor and THP (step 1), the firewall and the tunnel stay on the host. Run it **rootful**; rootless podman
+cannot give isolate a usable `/dev`.
+
+```sh
+podman run --rm --cgroupns=private --systemd=always --cap-add=SYS_ADMIN --cap-add=NET_ADMIN \
+  -v /etc/qhhoj-judge:/etc/qhhoj-judge:ro \
+  -v /srv/qhhoj/problem-data:/srv/qhhoj/problem-data:ro \
+  -v qhhoj-isolate:/var/local/lib/isolate \
+  ghcr.io/qhhoj/judge-v2:main qhhoj-judge selftest --require "$DAY_ONE_LANGUAGES"
+```
+
+The entrypoint (`cg-setup.sh`) prepares the cgroup, then runs the command you give; with no command
+the judge starts with `/etc/qhhoj-judge/config.toml` (config, `bridge-ca.pem` and the key, see steps 7 and 8; the key file is
+read from the config's `key_file`, so mount it and set an absolute path). Add `--security-opt apparmor=unconfined` if the
+host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local disk, never NFS.
+
 ## Operating the judge
 
 - **Logs:** `journalctl -u qhhoj-judge -f`.

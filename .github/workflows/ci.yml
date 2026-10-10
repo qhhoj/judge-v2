@@ -1,4 +1,4 @@
-# Pushes run change-file (PRs), rust and release; a v* tag push also publishes the GitHub Release. The isolate suite needs a tuned judge host (SMT off, no swap,
+# Pushes run change-file (PRs), rust, release and image; a v* tag push also publishes the GitHub Release. The isolate suite needs a tuned judge host (SMT off, no swap,
 # pinned governor); on a stock GitHub runner Pascal/Java/Kotlin compiles and a few limit verdicts differ, so it runs
 # only by hand (Actions -> ci -> Run workflow) and, authoritatively, as `selftest --require` on each judge host.
 name: ci
@@ -104,6 +104,61 @@ jobs:
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
             --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
+  # The container image (packaging/Containerfile). Pull requests only build it (so this can be a required check); pushes to main and v* tags also
+  # push it to ghcr.io/qhhoj/judge-v2 (:sha-<12>, :main, and :vX.Y.Z on tags). The isolate selftest needs cgroup delegation, SYS_ADMIN and a tuned
+  # host, so it is not run here: the smoke test checks the binary and isolate only.
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/qhhoj/judge-v2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: build into the local image store
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packaging/Containerfile
+          load: true
+          tags: judge-image:smoke
+          build-args: REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: smoke test (entrypoint skipped, it needs a writable cgroup)
+        run: |
+          docker run --rm --entrypoint qhhoj-judge judge-image:smoke --version
+          docker run --rm --entrypoint isolate judge-image:smoke --version
+          docker run --rm --entrypoint /usr/local/lib/kotlinc/bin/kotlinc -e JAVA_HOME=/usr/lib/jvm/default-java judge-image:smoke -version
+          docker image inspect judge-image:smoke --format '{{ index .Config.Labels "org.opencontainers.image.revision" }} {{ .Size }} bytes'
+      - name: tags
+        if: github.event_name != 'pull_request'
+        id: tags
+        run: |
+          tags="$IMAGE:sha-${GITHUB_SHA::12}"
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then tags="$tags,$IMAGE:main"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tags="$tags,$IMAGE:${GITHUB_REF_NAME}"; fi
+          echo "list=$tags" >> "$GITHUB_OUTPUT"
+      - name: log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push (layers come from the cache)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packaging/Containerfile
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          build-args: REVISION=${{ github.sha }}
+          cache-from: type=gha
   # The release tarball (static musl binary + packaging + DEPLOY.md) as a workflow artifact; on a v* tag it is also
   # published as a GitHub Release (tarball + .sha256).
   release:
