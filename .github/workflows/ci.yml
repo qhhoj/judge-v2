@@ -72,7 +72,7 @@ jobs:
       - name: compilers and runtimes
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcap-dev libsystemd-dev pkg-config asciidoc-base unzip \
+          sudo apt-get install -y libcap-dev libseccomp-dev libsystemd-dev pkg-config asciidoc-base unzip \
             gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat binutils
       - name: Kotlin (upstream release, pinned by sha256)
         run: |

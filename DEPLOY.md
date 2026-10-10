@@ -97,7 +97,7 @@ nothing.
 ### 2. isolate 2.6
 
 ```sh
-apt install -y build-essential libcap-dev libsystemd-dev pkg-config git
+apt install -y build-essential libcap-dev libseccomp-dev libsystemd-dev pkg-config git
 git clone https://github.com/ioi/isolate /usr/local/src/isolate
 cd /usr/local/src/isolate
 git checkout --detach 19ec4bd3fac386ae4cb95a7d43d8188710154661   # tag v2.6, pinned
