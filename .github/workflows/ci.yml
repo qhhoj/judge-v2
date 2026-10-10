@@ -90,8 +90,11 @@ jobs:
           make isolate isolate-cg-keeper
           sudo make install
           sudo cp systemd/isolate.service systemd/isolate.slice /etc/systemd/system/
+          # the shipped config takes its box uid/gid range from this user (DEPLOY.md step 2)
+          sudo useradd --system isolate
+          sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 isolate
           sudo systemctl daemon-reload
-          sudo systemctl start isolate.service
+          sudo systemctl start isolate.service || { sudo journalctl -u isolate.service --no-pager -n 50; exit 1; }
           isolate --version
           isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
       - name: isolate tests (one test thread, the tests share isolate boxes)
