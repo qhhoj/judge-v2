@@ -1,0 +1,66 @@
+# Judge image: the static qhhoj-judge binary, isolate 2.6 and the day-one language runtimes (DEPLOY.md steps 2 and 3).
+# Build from the repository root: podman build -f packaging/Containerfile -t qhhoj-judge .
+# Running it needs cgroup v2 and extra capabilities: see "Container image" in DEPLOY.md.
+
+# ---- the static musl binary
+FROM ubuntu:24.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip gcc libc6-dev musl-tools \
+    && rm -rf /var/lib/apt/lists/*
+# same protoc as CI
+RUN curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip \
+    && unzip -q /tmp/protoc.zip -d /usr/local && rm /tmp/protoc.zip
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+WORKDIR /src
+COPY rust-toolchain.toml ./
+RUN rustup toolchain install && rustup target add x86_64-unknown-linux-musl
+COPY . .
+RUN cargo build -j2 --release --locked --target x86_64-unknown-linux-musl -p judge-cli
+
+# ---- isolate 2.6, pinned to the commit of tag v2.6
+FROM ubuntu:24.04 AS isolate
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libcap-dev libseccomp-dev libsystemd-dev \
+        pkg-config git ca-certificates asciidoc-base \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/ioi/isolate /usr/local/src/isolate \
+    && cd /usr/local/src/isolate \
+    && git checkout --detach 19ec4bd3fac386ae4cb95a7d43d8188710154661 \
+    && test "$(git rev-parse HEAD)" = 19ec4bd3fac386ae4cb95a7d43d8188710154661 \
+    && make isolate isolate-cg-keeper && make DESTDIR=/out install
+
+# ---- Kotlin 2.1.21, pinned by checksum
+FROM ubuntu:24.04 AS kotlin
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL --retry 3 -o /tmp/kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip \
+    && echo "1ba08a8b45da99339a0601134cc037b54cf85e9bc0edbe76dcbd27c2d684a977  /tmp/kotlinc.zip" | sha256sum -c \
+    && unzip -q /tmp/kotlinc.zip -d /usr/local/lib
+
+# ---- runtime: no build tools beyond the language compilers themselves
+FROM ubuntu:24.04
+ARG REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/qhhoj/judge-v2" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.title="qhhoj-judge" \
+      org.opencontainers.image.revision="$REVISION"
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libcap2 libseccomp2 libsystemd0 \
+        gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat binutils \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=isolate /out/usr/local/ /usr/local/
+COPY --from=kotlin /usr/local/lib/kotlinc /usr/local/lib/kotlinc
+# isolate takes its box uid/gid range from this user; the range must lie inside the container's id map
+RUN useradd --system isolate \
+    && usermod --add-subuids 20000-64999 --add-subgids 20000-64999 isolate \
+    && chmod 4755 /usr/local/bin/isolate \
+    && install -d /var/local/lib/isolate /etc/qhhoj-judge /srv/qhhoj/problem-data /var/cache/qhhoj-judge
+COPY --from=build /src/target/x86_64-unknown-linux-musl/release/qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge
+COPY languages.toml LICENSE DEPLOY.md /opt/qhhoj-judge/current/
+COPY assets/testlib /opt/qhhoj-judge/current/assets/testlib
+COPY packaging /opt/qhhoj-judge/current/packaging
+RUN ln -s /opt/qhhoj-judge/current/qhhoj-judge /usr/local/bin/qhhoj-judge \
+    && ln -s /opt/qhhoj-judge/current/packaging/cg-setup.sh /usr/local/bin/cg-setup.sh \
+    && cp /opt/qhhoj-judge/current/packaging/config.example.toml /etc/qhhoj-judge/config.toml
+ENTRYPOINT ["/usr/local/bin/cg-setup.sh"]
+CMD ["qhhoj-judge", "--config", "/etc/qhhoj-judge/config.toml"]
