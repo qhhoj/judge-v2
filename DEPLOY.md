@@ -5,7 +5,7 @@ This guide sets up one judge machine for QHHOJ. The judge (`qhhoj-judge`) runs s
 the judge except your SSH.
 
 - **You** (the judge deployer) own the judge machine: everything in Phase A and Phase B below.
-- **The site admin** owns the site host (`160.22.123.77`, qhhoj.com): the tunnel endpoint, the problem-data
+- **The site admin** owns the site host (qhhoj.com; the site admin gives you its public IP): the tunnel endpoint, the problem-data
   export, the bridge, and the judge's name and key. Their side is listed in the appendix so you know what to
   expect from them.
 
@@ -158,7 +158,7 @@ PrivateKey = <contents of /etc/wireguard/privatekey>
 
 [Peer]
 PublicKey = <site public key from the site admin>
-Endpoint = 160.22.123.77:51820
+Endpoint = <SITE_PUBLIC_IP>:51820
 AllowedIPs = 10.77.0.1/32
 PersistentKeepalive = 25
 ```
@@ -237,7 +237,7 @@ Edit the `define` lines at the top of `/etc/nftables.conf`:
 
 | define | value |
 | --- | --- |
-| `SITE_PUBLIC` | `160.22.123.77` |
+| `SITE_PUBLIC` | the site public IP (from the site admin) |
 | `WG_PORT` | `51820` |
 | `BRIDGE` | `10.77.0.1` |
 | `BRIDGE_PORT` | `9990` |
