@@ -23,10 +23,11 @@ for setting in NoNewPrivileges=yes NoNewPrivileges=true SystemCallFilter SystemC
                CapabilityBoundingSet PrivateUsers DynamicUser; do refuse "$setting"; done
 if command -v systemd-analyze >/dev/null; then
   # Only messages about this unit count: the host's other units may print warnings of their own.
-  # The binary does not exist on a build host, so its "not executable" warning is tolerated.
+  # The binary and the dependency units (isolate.service) do not exist on a build host, so "not executable"
+  # and "Unit ... not found" are tolerated.
   verify_output="$(systemd-analyze verify "$unit" 2>&1 || true)"
   unexpected="$(grep -F "qhhoj-judge.service" <<<"$verify_output" \
-    | grep -v "Command .* is not executable\|is not an absolute path" || true)"
+    | grep -v "Command .* is not executable\|is not an absolute path\|Failed to create qhhoj-judge.service/start: Unit .* not found" || true)"
   if [[ -n "$unexpected" ]]; then
     echo "$unexpected" >&2
     exit 1
