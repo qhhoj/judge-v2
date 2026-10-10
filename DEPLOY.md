@@ -41,7 +41,7 @@ Never send private keys (WireGuard `privatekey`, the judge key) back anywhere.
 | This judge inside the tunnel | `10.77.0.2` (a second judge gets `10.77.0.3`, and so on: ask the site admin) |
 | Bridge | `bridge.qhhoj.internal:9990` (gRPC over TLS) |
 | Problem data | NFS `10.77.0.1:/srv/qhhoj/problem-data`, mounted read-only at `/srv/qhhoj/problem-data` |
-| Day-one languages | `C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,BF,GAS64,TEXT` |
+| Day-one languages | `C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT` |
 
 ## Phase A: prepare the machine (on your own)
 
@@ -124,7 +124,7 @@ isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
 ### 3. Compilers and runtimes
 
 ```sh
-apt install -y gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat bf binutils unzip
+apt install -y gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat binutils unzip
 
 # Kotlin 2.1.21 (pinned by checksum)
 curl -fsSL -o /tmp/kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip
@@ -256,7 +256,7 @@ From the second session, open a **new** SSH connection to prove you can still ge
 ### 10. Verify
 
 ```sh
-DAY_ONE_LANGUAGES=C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,BF,GAS64,TEXT
+DAY_ONE_LANGUAGES=C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT
 sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
   --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # every line ok
 bash /opt/qhhoj-judge/current/packaging/check-host.sh --bridge bridge.qhhoj.internal:9990
