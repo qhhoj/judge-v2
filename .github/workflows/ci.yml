@@ -1,8 +1,8 @@
-# Pushes run change-file (PRs), rust and release. The isolate suite needs a tuned judge host (SMT off, no swap,
+# Pushes run change-file (PRs), rust and release; a v* tag push also publishes the GitHub Release. The isolate suite needs a tuned judge host (SMT off, no swap,
 # pinned governor); on a stock GitHub runner Pascal/Java/Kotlin compiles and a few limit verdicts differ, so it runs
 # only by hand (Actions -> ci -> Run workflow) and, authoritatively, as `selftest --require` on each judge host.
 name: ci
-on: { push: { branches: [main] }, pull_request: {}, workflow_dispatch: {} }
+on: { push: { branches: [main], tags: ['v*'] }, pull_request: {}, workflow_dispatch: {} }
 # Third-party actions are pinned by commit SHA (the comment names the tag); bump them deliberately.
 permissions:
   contents: read
@@ -104,12 +104,15 @@ jobs:
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
             --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
-  # The release tarball (static musl binary + packaging + DEPLOY.md) as a workflow artifact.
+  # The release tarball (static musl binary + packaging + DEPLOY.md) as a workflow artifact; on a v* tag it is also
+  # published as a GitHub Release (tarball + .sha256).
   release:
     runs-on: ubuntu-24.04
     needs: rust
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 30
+    permissions:
+      contents: write # gh release create
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -118,9 +121,27 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # version = the Cargo workspace version (knope bumps it) + build metadata
-      - run: RELEASE_SUFFIX="+${GITHUB_SHA::12}" bash packaging/build-release.sh
+      # version = the Cargo workspace version (knope bumps it); main builds add +<sha> build metadata, tags do not
+      - name: build the tarball
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+            test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != Cargo version $version"; exit 1; }
+            bash packaging/build-release.sh
+          else
+            RELEASE_SUFFIX="+${GITHUB_SHA::12}" bash packaging/build-release.sh
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qhhoj-judge
           path: target/release-pkg/*.tar.gz
+      - name: publish the GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd target/release-pkg
+          sha256sum ./*.tar.gz | sed 's# \./# #' > "qhhoj-judge-${GITHUB_REF_NAME#v}.tar.gz.sha256"
+          gh release create "$GITHUB_REF_NAME" ./*.tar.gz ./*.sha256 --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --verify-tag \
+            --notes "Judge $GITHUB_REF_NAME. Install: DEPLOY.md step 8 inside the tarball; changes: CHANGELOG.md."

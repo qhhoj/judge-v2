@@ -202,11 +202,13 @@ site admin will tell you, and you repeat this in Phase B).
 
 ### 8. Install the release
 
-Download `qhhoj-judge-<version>.tar.gz` from the judge-v2 GitHub release (or take the file the site admin
-sent), then:
+Download the release from the private judge-v2 repository (needs `gh auth login` with read access to
+`qhhoj/judge-v2`; or take the files the site admin sent), verify and unpack it:
 
 ```sh
-VER=<version>                                     # e.g. 2.0.0
+VER=<version>                                     # e.g. 2.0.1
+cd /tmp && gh release download v$VER -R qhhoj/judge-v2
+sha256sum -c qhhoj-judge-$VER.tar.gz.sha256       # OK
 tar -xzf qhhoj-judge-$VER.tar.gz -C /opt/qhhoj-judge/releases/
 mv /opt/qhhoj-judge/releases/qhhoj-judge-$VER /opt/qhhoj-judge/releases/$VER
 (cd /opt/qhhoj-judge/releases/$VER && sha256sum -c SHA256SUMS)     # every line OK

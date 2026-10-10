@@ -213,6 +213,35 @@ mod tests {
     }
 
     #[test]
+    fn etc_symlinked_runtimes_bind_only_the_etc_dirs_they_need() {
+        use judge_sandbox::spec::isolate_args;
+        let r = registry();
+        let flags = |dirs: Vec<String>| {
+            let spec = RunSpec {
+                argv: vec!["x".into()],
+                limits: Limits::compile(),
+                stdio: Stdio::default(),
+                env: vec![],
+                dirs,
+            };
+            isolate_args(0, &spec, Path::new("/m"))
+                .into_iter()
+                .filter(|a| a.starts_with("--dir="))
+                .collect::<Vec<_>>()
+        };
+        let pas = CompileJob::for_language(r.get("PAS").unwrap(), b"begin end.");
+        assert_eq!(flags(pas.dirs), ["--dir=/etc/alternatives"]);
+        for key in ["JAVA", "JAVA8", "KOTLIN"] {
+            let language = r.get(key).unwrap();
+            let compile = CompileJob::for_language(language, b"class A {}");
+            let run = program_for(language, Path::new("/p"), b"class A {}");
+            assert_eq!(flags(compile.dirs), ["--dir=/etc/java-21-openjdk"], "{key} compile");
+            assert_eq!(flags(run.dirs), ["--dir=/etc/java-21-openjdk"], "{key} run");
+        }
+        assert!(CompileJob::for_language(r.get("CPP17").unwrap(), b"").dirs.is_empty());
+    }
+
+    #[test]
     fn job_names_the_source_and_uses_language_limits() {
         let r = registry();
         let job = CompileJob::for_language(r.get("JAVA").unwrap(), b"public class Sol {}");

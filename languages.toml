@@ -126,6 +126,8 @@ source = "main.pas"
 # -n: skip the system fpc config (isolate does not mount etc); the unit paths fpc.cfg would add are given here.
 compile = ["/usr/bin/fpc", "-n", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/*", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/rtl", "-O2", "-XS", "-Sg", "-omain", "main.pas"]
 run = ["./main"]
+# /usr/bin/ppcx64 and fpc's own config resolve through the /etc/alternatives symlinks; the box has no /etc.
+compile_dirs = ["/etc/alternatives"]
 version = ["/usr/bin/fpc", "-iV"]
 testlib_flag = "-Fu/testlib"
 
@@ -138,6 +140,10 @@ compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
+# The JDK's conf/ and lib/security/ are symlinks into /etc/java-21-openjdk (Ubuntu 24.04 default-jdk): bound read-only,
+# or the JVM dies with "Error loading java.security file". Update the path when the distro's JDK major changes.
+dirs = ["/etc/java-21-openjdk"]
+compile_dirs = ["/etc/java-21-openjdk"]
 version = ["/usr/lib/jvm/default-java/bin/javac", "-version"]
 exception_marker = "Exception in thread"
 
@@ -151,6 +157,10 @@ compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
+# The JDK's conf/ and lib/security/ are symlinks into /etc/java-21-openjdk (Ubuntu 24.04 default-jdk): bound read-only,
+# or the JVM dies with "Error loading java.security file". Update the path when the distro's JDK major changes.
+dirs = ["/etc/java-21-openjdk"]
+compile_dirs = ["/etc/java-21-openjdk"]
 version = ["/usr/lib/jvm/default-java/bin/javac", "-version"]
 exception_marker = "Exception in thread"
 
@@ -165,6 +175,10 @@ compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "-jar", "main.jar"]
 processes = 64
 jvm = true
+# The JDK's conf/ and lib/security/ are symlinks into /etc/java-21-openjdk (Ubuntu 24.04 default-jdk): bound read-only,
+# or the JVM dies with "Error loading java.security file". Update the path when the distro's JDK major changes.
+dirs = ["/etc/java-21-openjdk"]
+compile_dirs = ["/etc/java-21-openjdk"]
 version = ["/usr/bin/env", "JAVA_HOME=/usr/lib/jvm/default-java", "/usr/local/lib/kotlinc/bin/kotlinc", "-version"]
 exception_marker = "Exception in thread"
 
