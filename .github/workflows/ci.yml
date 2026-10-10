@@ -1,7 +1,8 @@
-# No job of this workflow has run on GitHub yet (judge-v2 has no remote). change-file and rust were replayed
-# locally command by command; isolate-suite and release have never run anywhere (see the notes on each).
+# Pushes run change-file (PRs), rust and release. The isolate suite needs a tuned judge host (SMT off, no swap,
+# pinned governor); on a stock GitHub runner Pascal/Java/Kotlin compiles and a few limit verdicts differ, so it runs
+# only by hand (Actions -> ci -> Run workflow) and, authoritatively, as `selftest --require` on each judge host.
 name: ci
-on: { push: { branches: [main] }, pull_request: {} }
+on: { push: { branches: [main] }, pull_request: {}, workflow_dispatch: {} }
 # Third-party actions are pinned by commit SHA (the comment names the tag); bump them deliberately.
 permissions:
   contents: read
@@ -53,10 +54,9 @@ jobs:
           cargo run --locked -q -p judge-proto --example check_shape -- "$RUNNER_TEMP/released.shape.json"
       - name: the systemd unit keeps its directives
         run: bash packaging/check-unit.sh
-  # NEVER RUN: this job has not run on a GitHub-hosted runner (judge-v2 has no remote yet). It needs sudo, systemd
-  # and cgroup v2 delegation. When it first fails, look at `systemctl status isolate.service`, the isolate smoke
-  # step (`isolate --cg -b 0 --init`), /sys/fs/cgroup/isolate.slice, then at individual language installs.
+  # By hand only (see the header): needs sudo, systemd and cgroup v2 delegation.
   isolate-suite:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     needs: rust
     timeout-minutes: 60
@@ -104,10 +104,10 @@ jobs:
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
             --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
-  # NEVER RUN: needs isolate-suite to pass first, and packaging/build-release.sh has not run in CI (musl target).
+  # The release tarball (static musl binary + packaging + DEPLOY.md) as a workflow artifact.
   release:
     runs-on: ubuntu-24.04
-    needs: isolate-suite
+    needs: rust
     if: github.ref == 'refs/heads/main'
     timeout-minutes: 30
     steps:
