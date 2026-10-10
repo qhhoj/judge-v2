@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.1 (2026-10-10)
+
+### Fixes
+
+- PAS, JAVA, JAVA8 and KOTLIN work on Ubuntu 24.04: their runtimes reach `/etc/alternatives` and `/etc/java-21-openjdk` through symlinks, so languages.toml binds exactly those directories read-only into the box.
+- Release tarball ships `DEPLOY.md` (judge host guide), `packaging/check-host.sh` and `packaging/nftables-judge.conf` (WireGuard-ready judge firewall).
+- BF is no longer in the day-one language set: Ubuntu 24.04 ships no `bf` interpreter (4 legacy submissions used it). Judges report BF as absent; the site disables it at cutover.
+- Pushing a `v*` tag publishes a GitHub Release with the tarball and its sha256; DEPLOY.md downloads it with `gh release download`.
+
 ## 2.0.0
 
 - Rewrite of the judge as a Rust workspace: `problem` (init.yml, case plan, data version, caches), `sandbox` (ioi/isolate, cgroups v2), `grader` (languages, compile, run, checkers), `daemon` (link, workers, metrics), `cli` (the `qhhoj-judge` binary).
