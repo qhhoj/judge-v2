@@ -1,11 +1,16 @@
 //! Checkers: built-in ones run here over capped files; custom ones run in isolate (Task 19).
 
 pub mod custom;
+pub mod easy;
 pub mod floats;
 pub mod identical;
 pub mod linecount;
+pub mod linematches;
+pub mod rstripped;
 pub mod select;
+pub mod sorted;
 pub mod standard;
+pub mod text;
 pub mod themis;
 pub mod tokens;
 
