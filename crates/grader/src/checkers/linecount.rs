@@ -94,39 +94,21 @@ mod tests {
     use crate::checkers::testing::run;
 
     #[test]
-    fn partial_points_per_matching_line() {
-        let r = run(&LineCount, b"a\n b \nx\n", b"a\nb\nc\nd\n");
-        assert!(!r.passed);
-        assert!((r.fraction - 0.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn all_lines_pass_and_trailing_blank_lines_are_ignored() {
-        let r = run(&LineCount, b"a\nb\n\n\n", b"a\nb\n");
-        assert!(r.passed);
-        assert_eq!(r.fraction, 1.0);
-    }
-
-    #[test]
-    fn extra_lines_fail_and_earn_no_points() {
-        let r = run(&LineCount, b"a\nb\nzzz\n", b"a\nb\n");
-        assert!(!r.passed);
-        assert_eq!(r.fraction, 0.0);
-    }
-
-    #[test]
-    fn blank_lines_in_the_middle_are_dropped() {
-        assert!(run(&LineCount, b"a\n\nb\n", b"a\nb\n").passed);
-    }
-
-    #[test]
-    fn carriage_return_also_ends_a_line() {
-        assert!(run(&LineCount, b"a\rb\r", b"a\nb\n").passed);
-    }
-
-    #[test]
-    fn empty_answer_passes_only_on_empty_output() {
-        assert!(run(&LineCount, b"\n\n", b"").passed);
-        assert_eq!(run(&LineCount, b"x", b"").fraction, 0.0);
+    fn partial_points_per_trimmed_line_and_extra_lines_earn_nothing() {
+        // (output, answer, passed, fraction)
+        let table: [(&[u8], &[u8], bool, f64); 7] = [
+            (b"a\n b \nx\n", b"a\nb\nc\nd\n", false, 0.5),
+            (b"a\nb\n\n\n", b"a\nb\n", true, 1.0), // trailing blank lines are ignored
+            (b"a\nb\nzzz\n", b"a\nb\n", false, 0.0), // an extra line earns nothing
+            (b"a\n\nb\n", b"a\nb\n", true, 1.0),   // blank lines in the middle are dropped
+            (b"a\rb\r", b"a\nb\n", true, 1.0),     // carriage return also ends a line
+            (b"\n\n", b"", true, 1.0),
+            (b"x", b"", false, 0.0),
+        ];
+        for (output, answer, passed, fraction) in table {
+            let r = run(&LineCount, output, answer);
+            assert_eq!(r.passed, passed, "{output:?} vs {answer:?}");
+            assert!((r.fraction - fraction).abs() < 1e-9, "{output:?} vs {answer:?}: {}", r.fraction);
+        }
     }
 }

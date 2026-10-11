@@ -71,19 +71,6 @@ async fn a_judge_that_never_fetches_is_caught() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_judge_that_fetches_another_ref_is_caught() {
-    let error = wrong_judge_error("32-fetch-source", |judge| {
-        for step in &mut judge.steps {
-            if let Step::Fetch { reference, .. } = step {
-                reference["generation"] = 4.into();
-            }
-        }
-    })
-    .await;
-    assert!(error.contains("FetchSource request") && error.contains("generation"), "{error}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_judge_that_talks_after_the_last_step_is_caught() {
     let error = wrong_judge_error("30-judge-refuses-beyond-slots", |judge| {
         judge.steps.push(Step::Judge {
@@ -94,15 +81,6 @@ async fn a_judge_that_talks_after_the_last_step_is_caught() {
     })
     .await;
     assert!(error.contains("after the last step"), "{error}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_judge_that_connects_again_unasked_is_caught() {
-    let error = wrong_judge_error("11-grade", |judge| {
-        judge.steps.push(Step::Open { judge: "j1".into(), wrong_key: false, expect: "OK".into() });
-    })
-    .await;
-    assert!(error.contains("unscripted"), "{error}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

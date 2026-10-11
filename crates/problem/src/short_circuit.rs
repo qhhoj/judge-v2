@@ -68,36 +68,29 @@ mod tests {
         planned
     }
 
-    #[test]
-    fn failing_a_zero_point_case_or_batch_skips_everything_after_it() {
-        let cases = [worth(case(1, None), 0.0), case(2, None), case(3, Some(1))];
-        assert_eq!(skipped(false, &cases, &[false, true, true]), [2, 3]);
-        let batch = [worth(case(1, Some(1)), 0.0), worth(case(2, Some(1)), 0.0), case(3, None)];
-        assert_eq!(skipped(false, &batch, &[false, true, true]), [2, 3]);
-        assert!(skipped(false, &cases, &[true, false, true]).is_empty(), "a passed pretest skips nothing");
-    }
+    /// (whole short-circuit, cases, passed flags, skipped positions)
+    type Row<'a> = (bool, &'a [PlannedCase], &'a [bool], &'a [u32]);
 
     #[test]
-    fn a_failure_skips_the_rest_of_its_batch_only() {
-        let cases = [case(1, Some(1)), case(2, Some(1)), case(3, Some(1)), case(4, Some(2)), case(5, None)];
-        assert_eq!(skipped(false, &cases, &[true, false, true, true, true]), [3]);
-    }
-
-    #[test]
-    fn plain_failures_skip_nothing_without_whole_short_circuit() {
-        let cases = [case(1, None), case(2, None), case(3, None)];
-        assert!(skipped(false, &cases, &[false, false, true]).is_empty());
-    }
-
-    #[test]
-    fn whole_short_circuit_skips_everything_after_the_first_failure() {
-        let cases = [case(1, None), case(2, Some(1)), case(3, Some(1)), case(4, None)];
-        assert_eq!(skipped(true, &cases, &[true, false, true, true]), [3, 4]);
-    }
-
-    #[test]
-    fn a_new_batch_after_a_failed_batch_runs() {
-        let cases = [case(1, Some(1)), case(2, Some(1)), case(3, Some(2))];
-        assert_eq!(skipped(false, &cases, &[false, true, true]), [2]);
+    fn skipped_cases_follow_batches_pretests_and_whole_short_circuit() {
+        let pretest_then_tests = [worth(case(1, None), 0.0), case(2, None), case(3, Some(1))];
+        let pretest_batch = [worth(case(1, Some(1)), 0.0), worth(case(2, Some(1)), 0.0), case(3, None)];
+        let two_batches =
+            [case(1, Some(1)), case(2, Some(1)), case(3, Some(1)), case(4, Some(2)), case(5, None)];
+        let plain = [case(1, None), case(2, None), case(3, None)];
+        let mixed = [case(1, None), case(2, Some(1)), case(3, Some(1)), case(4, None)];
+        let next_batch = [case(1, Some(1)), case(2, Some(1)), case(3, Some(2))];
+        let table: [Row; 7] = [
+            (false, &pretest_then_tests, &[false, true, true], &[2, 3]), // a failed 0-point case ends judging
+            (false, &pretest_batch, &[false, true, true], &[2, 3]),
+            (false, &pretest_then_tests, &[true, false, true], &[]), // a passed pretest skips nothing
+            (false, &two_batches, &[true, false, true, true, true], &[3]), // the rest of its batch only
+            (false, &plain, &[false, false, true], &[]),
+            (true, &mixed, &[true, false, true, true], &[3, 4]),
+            (false, &next_batch, &[false, true, true], &[2]), // a new batch after a failed one runs
+        ];
+        for (whole, cases, passed, want) in table {
+            assert_eq!(skipped(whole, cases, passed), want, "whole={whole} passed={passed:?}");
+        }
     }
 }

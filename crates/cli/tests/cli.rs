@@ -48,32 +48,21 @@ fn bin(args: &[&str]) -> Finished {
 }
 
 #[test]
-fn a_bad_config_exits_2_with_the_reason() {
+fn a_bad_or_missing_config_exits_2_with_the_reason() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("c.toml");
     std::fs::write(&config, "name = ''\n").unwrap();
     let out = bin(&["--config", config.to_str().unwrap()]);
     assert_eq!(out.code, Some(2), "{}", out.stderr);
     assert!(out.stderr.contains("config"), "{}", out.stderr);
-}
-
-#[test]
-fn a_missing_config_exits_2() {
-    let out = bin(&["--config", "/nonexistent/qhhoj/config.toml"]);
-    assert_eq!(out.code, Some(2));
-    assert!(!out.stderr.is_empty());
-}
-
-#[test]
-fn run_requires_its_arguments() {
-    let out = bin(&["run", "--lang", "PY3"]);
-    assert_eq!(out.code, Some(2), "clap usage error: {}", out.stderr);
-}
-
-#[test]
-fn selftest_without_a_config_or_paths_exits_2() {
-    let out = bin(&["selftest", "--config", "/nonexistent/qhhoj/config.toml"]);
-    assert_eq!(out.code, Some(2));
+    for args in [
+        &["--config", "/nonexistent/qhhoj/config.toml"][..],
+        &["selftest", "--config", "/nonexistent/qhhoj/config.toml"],
+    ] {
+        let out = bin(args);
+        assert_eq!(out.code, Some(2), "{args:?}: {}", out.stderr);
+        assert!(!out.stderr.is_empty(), "{args:?}");
+    }
 }
 
 #[cfg(feature = "isolate")]

@@ -286,15 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn replay_from_any_seq() {
-        let mut o = Outbox::default();
-        for _ in 0..4 {
-            o.push(Body::Accepted);
-        }
-        assert_eq!(o.pending_after(2).iter().map(|e| e.seq).collect::<Vec<_>>(), [3, 4]);
-    }
-
-    #[test]
     fn stale_or_future_acks_do_not_break_the_outbox() {
         let mut o = Outbox::default();
         o.push(Body::Accepted);

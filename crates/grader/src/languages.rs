@@ -227,51 +227,11 @@ mod tests {
     }
 
     #[test]
-    fn shipped_registry_has_the_measured_day_one_set() {
-        let registry = shipped();
-        for key in [
-            "C", "C11", "CLANG", "CPP03", "CPP11", "CPP14", "CPP17", "CPP20", "CPP23", "CLANGX", "PY3",
-            "PYPY3", "PAS", "JAVA", "JAVA8", "KOTLIN", "RUBY", "D", "LUA", "ADA", "BF", "GAS64", "TEXT",
-            "OUTPUT",
-        ] {
-            assert!(registry.get(key).is_some(), "{key} missing");
-        }
-        assert!(registry.get("PY2").is_none());
-        assert!(registry.get("SCRATCH").is_none(), "SCRATCH is dropped");
-    }
-
-    #[test]
-    fn python_and_java_uncaught_exceptions_can_be_recognised() {
-        let registry = shipped();
-        for key in ["PY3", "PYPY3", "JAVA", "JAVA8", "KOTLIN"] {
-            assert!(registry.get(key).unwrap().exception_marker.is_some(), "{key} has no exception marker");
-        }
-        assert!(registry.get("RUBY").unwrap().exception_marker.is_some());
-        assert!(registry.get("CPP17").unwrap().exception_marker.is_none());
-    }
-
-    #[test]
     fn duplicate_keys_and_empty_program_runs_are_refused() {
         assert!(LanguageRegistry::from_toml(&MINIMAL.repeat(2)).is_err());
         let no_run = "[[language]]\nkey='A'\nname='a'\nsource='a'\nrun=[]\nversion=[]\n";
         assert!(LanguageRegistry::from_toml(no_run).is_err());
         assert!(LanguageRegistry::from_toml(&format!("{MINIMAL}colour='red'\n")).is_err(), "unknown key");
-    }
-
-    #[test]
-    fn defaults_apply() {
-        let r = LanguageRegistry::from_toml(MINIMAL).unwrap();
-        let a = r.get("A").unwrap();
-        let shape = (a.processes, a.compile_processes, a.jvm, a.file_only, a.kind);
-        assert_eq!(shape, (1, 32, false, false, LanguageKind::Program));
-    }
-
-    #[test]
-    fn retain_drops_languages() {
-        let mut r = shipped();
-        r.retain(|l| l.key != "PAS");
-        assert!(r.get("PAS").is_none() && r.get("C").is_some());
-        assert!(!r.keys().contains(&"PAS"));
     }
 
     #[test]

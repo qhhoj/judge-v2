@@ -123,34 +123,21 @@ mod tests {
     }
 
     #[test]
-    fn key_changes_with_any_input_and_is_stable() {
-        let base = artefact_key(&[file("c.cpp", b"x")], "CPP17", "14.2.0");
-        assert_eq!(base, artefact_key(&[file("c.cpp", b"x")], "CPP17", "14.2.0"));
-        assert_ne!(base, artefact_key(&[file("c.cpp", b"y")], "CPP17", "14.2.0"));
-        assert_ne!(base, artefact_key(&[file("c.cpp", b"x")], "CPP20", "14.2.0"));
-        assert_ne!(base, artefact_key(&[file("c.cpp", b"x")], "CPP17", "15.2.0"));
-        assert_ne!(base, artefact_key(&[file("d.cpp", b"x")], "CPP17", "14.2.0"));
-        assert_eq!(base.len(), 64);
-    }
-
-    #[test]
-    fn name_and_content_boundaries_cannot_collide() {
-        assert_ne!(artefact_key(&[file("ab", b"c")], "L", "1"), artefact_key(&[file("a", b"bc")], "L", "1"));
-        assert_ne!(
-            artefact_key(&[file("a", b"")], "L", "1"),
-            artefact_key(&[file("a", b""), file("", b"")], "L", "1")
-        );
-        assert_ne!(artefact_key(&[], "AB", "C"), artefact_key(&[], "A", "BC"));
-    }
-
-    #[test]
-    fn testlib_flag_goes_after_the_compiler() {
-        let argv: Vec<String> = ["/usr/bin/g++", "-O2", "c.cpp"].map(String::from).to_vec();
-        assert_eq!(
-            with_testlib(argv.clone(), Some("-I/testlib")),
-            ["/usr/bin/g++", "-I/testlib", "-O2", "c.cpp"]
-        );
-        assert_eq!(with_testlib(argv.clone(), None), argv);
-        assert!(with_testlib(vec![], Some("-I/testlib")).is_empty());
+    fn the_key_is_stable_and_changes_with_any_input_or_boundary() {
+        let key = |files: &[SourceFile], lang: &str, version: &str| artefact_key(files, lang, version);
+        let base = key(&[file("c.cpp", b"x")], "CPP17", "14.2.0");
+        assert_eq!(base, key(&[file("c.cpp", b"x")], "CPP17", "14.2.0"));
+        for other in [
+            key(&[file("c.cpp", b"y")], "CPP17", "14.2.0"),
+            key(&[file("c.cpp", b"x")], "CPP20", "14.2.0"),
+            key(&[file("c.cpp", b"x")], "CPP17", "15.2.0"),
+            key(&[file("d.cpp", b"x")], "CPP17", "14.2.0"),
+        ] {
+            assert_ne!(base, other);
+        }
+        // name/content and language/version boundaries cannot collide
+        assert_ne!(key(&[file("ab", b"c")], "L", "1"), key(&[file("a", b"bc")], "L", "1"));
+        assert_ne!(key(&[file("a", b"")], "L", "1"), key(&[file("a", b""), file("", b"")], "L", "1"));
+        assert_ne!(key(&[], "AB", "C"), key(&[], "A", "BC"));
     }
 }

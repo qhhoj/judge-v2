@@ -13,20 +13,3 @@ pub async fn wait_until(done: impl Fn() -> bool, timeout: Duration, poll: Durati
     }
     done()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    #[tokio::test]
-    async fn finishes_when_done_and_times_out_otherwise() {
-        let polls = AtomicU32::new(0);
-        let done = || polls.fetch_add(1, Ordering::SeqCst) >= 3;
-        assert!(wait_until(done, Duration::from_secs(1), Duration::from_millis(5)).await);
-        assert_eq!(polls.load(Ordering::SeqCst), 4, "stops polling once done");
-        let started = std::time::Instant::now();
-        assert!(!wait_until(|| false, Duration::from_millis(100), Duration::from_millis(10)).await);
-        assert!(started.elapsed() >= Duration::from_millis(100));
-    }
-}

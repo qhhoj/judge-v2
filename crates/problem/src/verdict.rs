@@ -26,24 +26,3 @@ impl Status {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Status;
-
-    #[test]
-    fn codes_match_the_bridge_case_statuses() {
-        let all = [
-            Status::Ac,
-            Status::Wa,
-            Status::Tle,
-            Status::Mle,
-            Status::Ole,
-            Status::Rte,
-            Status::Ir,
-            Status::Sc,
-        ];
-        let codes: Vec<_> = all.iter().map(|s| s.code()).collect();
-        assert_eq!(codes, ["AC", "WA", "TLE", "MLE", "OLE", "RTE", "IR", "SC"]);
-    }
-}

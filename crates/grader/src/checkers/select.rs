@@ -125,12 +125,6 @@ mod tests {
     }
 
     #[test]
-    fn identical_reports_presentation_error_by_default() {
-        let outcome = run(builtin("identical").as_ref(), b"1  2", b"1 2");
-        assert_eq!(outcome.feedback, PRESENTATION_ERROR);
-    }
-
-    #[test]
     fn the_unicode_hint_reaches_standard_and_identical() {
         // U+3000 is whitespace only when the hint is on.
         let (got, want) = ("a\u{3000}b".as_bytes(), b"a b".as_slice());

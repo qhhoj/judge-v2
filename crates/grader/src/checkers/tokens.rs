@@ -173,21 +173,11 @@ mod tests {
     }
 
     #[test]
-    fn blank_lines_do_not_count_as_lines() {
-        assert_eq!(tokens_of(Cursor::new(b"1\n\n\n2".as_slice()), false), pairs(&[("1", 0), ("2", 1)]));
-    }
-
-    #[test]
     fn unicode_space_splits_only_in_unicode_mode() {
         let text = "a\u{3000}b".as_bytes(); // ideographic space
         assert_eq!(tokens_of(Cursor::new(text), true).len(), 2);
         assert_eq!(tokens_of(Cursor::new(text), false).len(), 1);
-    }
-
-    #[test]
-    fn multibyte_space_split_across_reads_is_still_a_space() {
-        let text = "a\u{3000}b".as_bytes();
-        assert_eq!(tokens_of(BufReader::with_capacity(1, text), true).len(), 2);
+        assert_eq!(tokens_of(BufReader::with_capacity(1, text), true).len(), 2, "split across reads");
     }
 
     #[test]

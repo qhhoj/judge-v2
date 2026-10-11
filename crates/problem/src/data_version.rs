@@ -141,13 +141,15 @@ mod tests {
     }
 
     #[test]
-    fn stamp_is_read_with_or_without_newline_and_missing_is_none() {
+    fn stamp_is_read_with_or_without_newline_missing_is_none_and_garbage_fails() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(read_stamp(dir.path()).unwrap(), None);
         std::fs::write(dir.path().join(".data-version"), "7\n").unwrap();
         assert_eq!(read_stamp(dir.path()).unwrap(), Some(7));
         std::fs::write(dir.path().join(".data-version"), "12").unwrap();
         assert_eq!(read_stamp(dir.path()).unwrap(), Some(12));
+        std::fs::write(dir.path().join(".data-version"), "seven").unwrap();
+        assert!(matches!(read_stamp(dir.path()), Err(DataError::BadStamp(_))));
     }
 
     #[test]
@@ -164,13 +166,6 @@ mod tests {
             matches!(regular_file(dir.path()), Err(DataError::Io(_))),
             "a directory is not a regular file"
         );
-    }
-
-    #[test]
-    fn garbage_stamp_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".data-version"), "seven").unwrap();
-        assert!(matches!(read_stamp(dir.path()), Err(DataError::BadStamp(_))));
     }
 
     #[test]

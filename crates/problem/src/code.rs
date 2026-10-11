@@ -20,12 +20,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn valid_codes_map_under_the_root() {
-        assert_eq!(problem_dir(Path::new("/data"), "e2e_sum").unwrap(), Path::new("/data/e2e_sum"));
-    }
-
-    #[test]
     fn traversal_and_odd_codes_are_refused() {
+        assert_eq!(problem_dir(Path::new("/data"), "e2e_sum").unwrap(), Path::new("/data/e2e_sum"));
         for code in ["", "..", "a/b", "../etc", "A", "a.b", "x".repeat(33).as_str(), "a b", ".data-version"] {
             assert!(matches!(problem_dir(Path::new("/data"), code), Err(DataError::BadCode(_))), "{code:?}");
         }

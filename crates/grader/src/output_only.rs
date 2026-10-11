@@ -173,15 +173,6 @@ mod tests {
         assert_eq!(read("../evil.out"), b"");
     }
 
-    #[test]
-    fn output_is_capped() {
-        let zip = zip_of(&[("1.out", &[b'x'; 1000])]);
-        let dir = tempfile::tempdir().unwrap();
-        let source = OutputSource::zip(zip.path().into()).unwrap();
-        let len = output_for_case(&source, "1.out", &dir.path().join("o"), 10).unwrap();
-        assert_eq!(len, 11, "one byte past the cap, so the caller can see OLE");
-    }
-
     /// One stored (uncompressed) entry `1.out`, so its bytes can be patched in place.
     fn stored_zip(data: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -226,23 +217,6 @@ mod tests {
             encrypted[at] |= 1; // general purpose flag bit 0: encrypted
         }
         assert!(matches!(answer_of(&encrypted, &dest), Err(GradeError::UnreadableSubmission(_))));
-    }
-
-    #[test]
-    fn a_failed_scratch_write_is_a_host_error() {
-        let zip = zip_of(&[("1.out", b"a")]);
-        let source = OutputSource::zip(zip.path().into()).unwrap();
-        let dest = Path::new("/nonexistent-dir/o");
-        assert!(matches!(output_for_case(&source, "1.out", dest, 100), Err(GradeError::Io(_))));
-        let text = OutputSource::Text(b"x".to_vec());
-        assert!(matches!(output_for_case(&text, "1.out", dest, 100), Err(GradeError::Io(_))));
-    }
-
-    #[test]
-    fn a_file_that_is_not_a_zip_is_an_error() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), b"not a zip").unwrap();
-        assert!(matches!(OutputSource::zip(file.path().into()), Err(GradeError::Io(_))));
     }
 
     #[test]

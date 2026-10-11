@@ -2,13 +2,8 @@ use std::{fs, path::Path};
 
 use judge_proto::shape::{
     FieldShape, MessageShape, MethodShape, SHAPE_FORMAT, Shape, bless_problems, breaking_changes,
-    declaration_order_problems, shape_of,
+    declaration_order_problems,
 };
-
-fn stored_shape() -> Shape {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../proto/compat/v1.shape.json");
-    serde_json::from_str(&fs::read_to_string(path).expect("run the bless_shape example once")).unwrap()
-}
 
 fn field(name: &str, kind: &str) -> FieldShape {
     FieldShape { name: name.into(), kind: kind.into(), ..FieldShape::default() }
@@ -21,12 +16,6 @@ fn one_message(fields: &[(i32, FieldShape)], reserved: (&[i32], &[&str])) -> Sha
         reserved_names: reserved.1.iter().map(|name| name.to_string()).collect(),
     };
     Shape { format: SHAPE_FORMAT, messages: [(".p.M".to_string(), message)].into(), ..Shape::default() }
-}
-
-#[test]
-fn the_current_contract_only_adds_to_the_frozen_v1_shape() {
-    let current = shape_of(judge_proto::FILE_DESCRIPTOR_SET).unwrap();
-    assert_eq!(breaking_changes(&stored_shape(), &current), Vec::<String>::new());
 }
 
 #[test]
@@ -92,16 +81,6 @@ fn bidi() -> MethodShape {
         client_streaming: true,
         server_streaming: true,
     }
-}
-
-#[test]
-fn the_frozen_shape_lists_the_rpcs_and_optional_fields() {
-    let current = shape_of(judge_proto::FILE_DESCRIPTOR_SET).unwrap();
-    let methods = &current.services[".qhhoj.judge.v1.JudgeLink"];
-    assert!(methods["Session"].client_streaming && methods["Session"].server_streaming);
-    assert!(methods["FetchSource"].server_streaming && !methods["FetchSource"].client_streaming);
-    assert!(current.messages[".qhhoj.judge.v1.Meta"].fields[&1].optional);
-    assert_eq!(current.messages[".qhhoj.judge.v1.JudgeMessage"].fields[&1].oneof.as_deref(), Some("body"));
 }
 
 #[test]

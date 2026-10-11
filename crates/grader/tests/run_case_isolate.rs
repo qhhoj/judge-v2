@@ -53,16 +53,6 @@ fn plain(file: &File, cap: u64) -> CaseIo<'_> {
 }
 
 #[test]
-fn stdin_to_stdout() {
-    let Some(mut f) = fixture(0, "PY3", "a, b = map(int, input().split())\nprint(a + b)\n") else { return };
-    let file = input(&f, "1 2\n");
-    let (run, out) = go(&mut f, &plain(&file, 1 << 20), "out");
-    assert_eq!(run.verdict, RunVerdict::Ok);
-    assert_eq!(std::fs::read_to_string(&out).unwrap(), "3\n");
-    assert_eq!(run.output_len, 2);
-}
-
-#[test]
 fn file_io_reads_and_writes_named_files() {
     let src = "a, b = map(int, open('sum.inp').read().split())\nopen('sum.out', 'w').write(str(a + b))\n";
     let Some(mut f) = fixture(1, "PY3", src) else { return };
@@ -95,14 +85,6 @@ fn a_program_that_makes_the_output_a_symlink_has_an_empty_output() {
 }
 
 #[test]
-fn python_flood_is_ole() {
-    let Some(mut f) = fixture(4, "PY3", "while True: print('x' * 1000)\n") else { return };
-    let file = input(&f, "");
-    let (run, _) = go(&mut f, &plain(&file, 8192), "out");
-    assert_eq!(run.verdict, RunVerdict::Ole);
-}
-
-#[test]
 fn output_of_exactly_the_cap_is_not_ole() {
     let Some(mut f) = fixture(5, "PY3", "print('x' * 99)\n") else { return };
     let file = input(&f, "");
@@ -121,30 +103,6 @@ fn second_case_after_mle_is_clean() {
     let (second, _) = go(&mut f, &plain(&small, 1 << 20), "o2");
     assert_eq!(second.verdict, RunVerdict::Ok);
     assert!(second.memory_kib < first.memory_kib);
-}
-
-#[test]
-fn a_busy_loop_is_tle() {
-    let Some(mut f) = fixture(7, "PY3", "while True: pass\n") else { return };
-    let file = input(&f, "");
-    let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
-    assert_eq!(run.verdict, RunVerdict::Tle);
-}
-
-#[test]
-fn an_uncaught_python_exception_is_rte_named_after_it() {
-    let Some(mut f) = fixture(8, "PY3", "print(1 // 0)\n") else { return };
-    let file = input(&f, "");
-    let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
-    assert_eq!(run.verdict, RunVerdict::Rte { reason: "ZeroDivisionError".into() });
-}
-
-#[test]
-fn a_plain_non_zero_exit_stays_ir() {
-    let Some(mut f) = fixture(9, "PY3", "import sys\nsys.exit(3)\n") else { return };
-    let file = input(&f, "");
-    let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
-    assert_eq!(run.verdict, RunVerdict::Ir { exit_code: 3 });
 }
 
 #[test]

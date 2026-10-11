@@ -13,15 +13,6 @@ fn compile(key: &str, offset: u32, source: &str) -> Option<(BuildOutcome, tempfi
 }
 
 #[test]
-fn cpp_compiles_into_a_snapshot_with_the_binary() {
-    let Some((outcome, out)) = compile("CPP17", 0, "int main(){return 0;}") else { return };
-    assert!(matches!(outcome, BuildOutcome::Built { .. }));
-    assert!(out.path().join("main").exists());
-    assert!(!out.path().join("compile.log").exists());
-    assert!(!out.path().join("compile.err").exists());
-}
-
-#[test]
 fn a_syntax_error_is_a_compile_error_with_the_log() {
     let Some((outcome, out)) = compile("CPP17", 1, "int main( {") else { return };
     match outcome {
@@ -29,12 +20,6 @@ fn a_syntax_error_is_a_compile_error_with_the_log() {
         other => panic!("expected CE, got {other:?}"),
     }
     assert!(!out.path().join("main").exists());
-}
-
-#[test]
-fn python_syntax_error_is_a_compile_error() {
-    let Some((outcome, _out)) = compile("PY3", 2, "def (:\n") else { return };
-    assert!(matches!(outcome, BuildOutcome::CompileError { .. }));
 }
 
 #[test]

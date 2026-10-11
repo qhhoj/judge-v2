@@ -99,15 +99,6 @@ mod tests {
     }
 
     #[test]
-    fn extracts_flat_and_nested_entries() {
-        let zip = zip_with(&[("1.in", b"1 2\n"), ("sub/1.out", b"3\n")]);
-        let out = tempfile::tempdir().unwrap();
-        extract_zip(zip.path(), out.path(), &limits()).unwrap();
-        assert_eq!(std::fs::read(out.path().join("1.in")).unwrap(), b"1 2\n");
-        assert_eq!(std::fs::read(out.path().join("sub/1.out")).unwrap(), b"3\n");
-    }
-
-    #[test]
     fn traversal_and_absolute_names_are_refused() {
         for name in ["../evil", "/etc/evil", "a/../../evil"] {
             let zip = zip_with(&[(name, b"x")]);

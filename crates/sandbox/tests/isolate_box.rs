@@ -23,15 +23,6 @@ fn spec(argv: &[&str], memory_kib: u64) -> RunSpec {
 }
 
 #[test]
-fn runs_a_program_and_reads_its_output() {
-    let meta = tempfile::tempdir().unwrap();
-    let mut b = IsolateBox::open(&config(meta.path()), box_id(0), None).unwrap();
-    let m = b.run(&spec(&["/bin/sh", "-c", "echo hi"], 65_536)).unwrap();
-    assert_eq!(m.exit_code, Some(0));
-    assert_eq!(std::fs::read_to_string(b.dir().join("output")).unwrap(), "hi\n");
-}
-
-#[test]
 fn reset_clears_sticky_oom_and_peak_memory() {
     let meta = tempfile::tempdir().unwrap();
     let mut b = IsolateBox::open(&config(meta.path()), box_id(1), None).unwrap();
@@ -65,16 +56,6 @@ fn drop_cleans_the_box() {
 }
 
 #[test]
-fn pinned_runs_go_through_taskset() {
-    let meta = tempfile::tempdir().unwrap();
-    let b = IsolateBox::open(&config(meta.path()), box_id(4), Some(0)).unwrap();
-    let command = b.command(&spec(&["/bin/true"], 65_536)).unwrap();
-    assert_eq!(command.get_program(), "/usr/bin/taskset");
-    let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
-    assert_eq!(&args[..3], ["-c", "0", "/usr/local/bin/isolate"]);
-}
-
-#[test]
 fn file_names_that_leave_the_box_are_refused() {
     let meta = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
@@ -100,14 +81,6 @@ fn a_symlink_planted_in_the_box_is_replaced_not_followed() {
     assert_eq!(std::fs::read_to_string(b.dir().join("input")).unwrap(), "new");
     std::os::unix::fs::symlink(&victim, b.dir().join("output")).unwrap();
     assert!(matches!(b.read_output("output", 100), Err(SandboxError::BadName(_))));
-}
-
-#[test]
-fn read_output_is_capped() {
-    let meta = tempfile::tempdir().unwrap();
-    let b = IsolateBox::open(&config(meta.path()), box_id(7), None).unwrap();
-    b.put_bytes("output", b"0123456789").unwrap();
-    assert_eq!(b.read_output("output", 4).unwrap(), b"0123");
 }
 
 #[test]

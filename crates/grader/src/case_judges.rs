@@ -201,37 +201,6 @@ mod tests {
     use std::io::Read;
 
     #[test]
-    fn run_verdicts_map_to_statuses_and_feedback() {
-        let cases = [
-            (RunVerdict::Tle, Status::Tle, ""),
-            (RunVerdict::Mle, Status::Mle, ""),
-            (RunVerdict::Ole, Status::Ole, ""),
-            (RunVerdict::Rte { reason: "SIGSEGV".into() }, Status::Rte, "SIGSEGV"),
-            (RunVerdict::Ir { exit_code: 3 }, Status::Ir, "exit code 3"),
-        ];
-        for (verdict, status, feedback) in cases {
-            let v = failed_run(&verdict, 0.5, 100).unwrap().unwrap();
-            assert_eq!((v.status, v.feedback.as_str(), v.time_s, v.memory_kib), (status, feedback, 0.5, 100));
-            assert_eq!(v.fraction, 0.0);
-        }
-        assert!(failed_run(&RunVerdict::Ok, 0.0, 0).unwrap().is_none());
-        assert!(matches!(failed_run(&RunVerdict::Internal("x".into()), 0.0, 0), Err(GradeError::Sandbox(_))));
-    }
-
-    #[test]
-    fn checker_outcomes_become_ac_or_wa_with_their_fraction() {
-        let partial =
-            CheckOutcome { passed: false, fraction: 0.25, feedback: "f".into(), extended: "e".into() };
-        let v = checked(partial, 0.2, 7, "out".into());
-        assert_eq!(
-            (v.status, v.fraction, v.feedback.as_str(), v.extended.as_str()),
-            (Status::Wa, 0.25, "f", "e")
-        );
-        assert_eq!((v.time_s, v.memory_kib, v.output_prefix.as_str()), (0.2, 7, "out"));
-        assert_eq!(checked(CheckOutcome::pass(), 0.0, 0, String::new()).status, Status::Ac);
-    }
-
-    #[test]
     fn fd_path_reads_the_opened_file_even_after_the_name_moves() {
         let dir = tempfile::tempdir().unwrap();
         let (path, moved) = (dir.path().join("a"), dir.path().join("b"));

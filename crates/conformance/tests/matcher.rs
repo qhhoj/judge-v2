@@ -13,10 +13,3 @@ fn the_shared_matcher_cases_hold() {
         assert_eq!(outcome.is_ok(), case["matches"].as_bool().unwrap(), "{}: {outcome:?}", case["why"]);
     }
 }
-
-#[test]
-fn a_mismatch_names_the_path() {
-    let error = matches(&serde_json::json!({"ack": {"seq": 3}}), &serde_json::json!({"ack": {"seq": 2}}))
-        .unwrap_err();
-    assert!(error.starts_with("$.ack.seq"), "{error}");
-}

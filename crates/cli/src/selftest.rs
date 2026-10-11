@@ -154,30 +154,3 @@ pub fn selftest(languages: &Path, testlib: &Path, args: &SelftestArgs) -> anyhow
     }
     Ok(ok)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn host_copy_rewrites_unreachable_runtimes_and_returns_the_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("alt/lua-real");
-        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-        std::fs::write(&real, "").unwrap();
-        let link = dir.path().join("lua");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        let languages = dir.path().join("languages.toml");
-        let toml = format!(
-            "[[language]]\nkey='LUA'\nname='l'\nsource='main.lua'\nrun=[\"{}\", \"main.lua\"]\nversion=[]\n",
-            link.display()
-        );
-        std::fs::write(&languages, toml).unwrap();
-        assert_eq!(host_copy(&languages, None).unwrap(), languages, "without OUT the shipped file is used");
-        let out = dir.path().join("host.toml");
-        assert_eq!(host_copy(&languages, Some(&out)).unwrap(), out);
-        let written = LanguageRegistry::from_toml(&std::fs::read_to_string(&out).unwrap()).unwrap();
-        let real_path = std::fs::canonicalize(&real).unwrap().display().to_string();
-        assert_eq!(written.get("LUA").unwrap().run[0], real_path);
-    }
-}

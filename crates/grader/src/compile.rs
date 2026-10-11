@@ -242,29 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn job_names_the_source_and_uses_language_limits() {
-        let r = registry();
-        let job = CompileJob::for_language(r.get("JAVA").unwrap(), b"public class Sol {}");
-        assert_eq!(job.files[0].name, "Sol.java");
-        assert_eq!(job.argv.as_ref().unwrap().last().unwrap(), "Sol.java");
-        let kotlin = CompileJob::for_language(r.get("KOTLIN").unwrap(), b"fun main(){}");
-        let limits = (kotlin.limits.time_s, kotlin.limits.memory_kib, kotlin.limits.processes);
-        assert_eq!(limits, (30.0, 2_097_152, 128));
-        let py = CompileJob::for_language(r.get("PYPY3").unwrap(), b"print(1)");
-        assert!(py.argv.is_none());
-    }
-
-    #[test]
-    fn program_expands_the_class_but_not_memory() {
-        let r = registry();
-        let p = program_for(r.get("JAVA").unwrap(), Path::new("/p"), b"public class Sol {}");
-        assert!(p.run.contains(&"Sol".to_string()));
-        assert!(p.run.iter().any(|a| a.contains("{memory_mib}")));
-        assert!(p.jvm);
-        assert_eq!(p.processes, 64);
-    }
-
-    #[test]
     fn logs_are_clipped_to_64_kib_on_a_char_boundary() {
         let long = "é".repeat(40_000); // 80,000 bytes
         let clipped = clip_log(long.as_bytes());

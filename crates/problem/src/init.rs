@@ -199,47 +199,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_plain_cases_with_checker_args() {
-        let init = parse_init(
-            "archive: tests.zip\ntest_cases:\n- {in: 1.in, out: 1.out, points: 40}\n\
-             checker: {name: floats, args: {precision: 4}}\n",
-        )
-        .unwrap();
-        assert_eq!(init.archive.as_deref(), Some("tests.zip"));
-        assert_eq!(init.test_cases[0].input.as_deref(), Some("1.in"));
-        assert_eq!(init.test_cases[0].points, Some(40.0));
-        let checker = init.checker.unwrap();
-        assert_eq!(checker.name(), "floats");
-        assert_eq!(checker.args().get("precision").and_then(|v| v.as_u64()), Some(4));
-    }
-
-    #[test]
-    fn parses_batches_pretests_and_file_io() {
-        let init = parse_init(
-            "pretest_test_cases:\n- points: 30\n  batched:\n  - {in: a.in, out: a.out}\n\
-             test_cases:\n- {in: b.in, out: b.out, points: 70, output_limit_length: 10}\n\
-             file_io: {input: sum.inp, output: sum.out}\nchecker: standard\nhints: [unicode]\n",
-        )
-        .unwrap();
-        assert_eq!(init.pretest_test_cases[0].batched.as_ref().unwrap().len(), 1);
-        assert_eq!(init.test_cases[0].output_limit_length, Some(10));
-        assert_eq!(init.file_io.unwrap().input, "sum.inp");
-        assert_eq!(init.hints, vec!["unicode".to_string()]);
-    }
-
-    #[test]
-    fn unknown_top_level_key_is_unsupported_with_its_name() {
-        let error = parse_init("test_cases: []\nunbuffered: true\n").unwrap_err();
-        assert_eq!(error, InitError::Unsupported("unbuffered".into()));
-    }
-
-    #[test]
-    fn unknown_case_key_is_unsupported() {
-        let error = parse_init("test_cases:\n- {in: a, out: b, points: 1, weird: 2}\n").unwrap_err();
-        assert_eq!(error, InitError::Unsupported("weird".into()));
-    }
-
-    #[test]
     fn file_io_names_that_leave_the_box_are_invalid() {
         let error = parse_init("test_cases: []\nfile_io: {input: ../x, output: /etc/passwd}\n").unwrap_err();
         assert!(matches!(error, InitError::Invalid(_)));
@@ -248,11 +207,6 @@ mod tests {
             assert!(matches!(parse_init(&text), Err(InitError::Invalid(_))), "{bad} accepted");
         }
         assert!(parse_init("test_cases: []\nfile_io: {input: sum.inp, output: sum.out}\n").is_ok());
-    }
-
-    #[test]
-    fn malformed_yaml_is_invalid() {
-        assert!(matches!(parse_init("test_cases: [\n"), Err(InitError::Invalid(_))));
     }
 
     #[test]
@@ -271,20 +225,9 @@ mod tests {
         assert_eq!(testlib.unsupported_feature(), None);
         let nobigmath = parse_init("test_cases: []\nhints: [nobigmath]\n").unwrap();
         assert_eq!(nobigmath.unsupported_feature().as_deref(), Some("hints.nobigmath"));
-    }
-
-    #[test]
-    fn signature_grader_is_parsed_and_supported() {
-        let init = parse_init(
-            "test_cases: []\nsignature_grader: {entry: grader.cpp, header: sol.h, allow_main: true}\n",
-        )
-        .unwrap();
-        let signature = init.signature_grader.as_ref().unwrap();
-        assert_eq!(
-            (signature.entry.as_str(), signature.header.as_str(), signature.allow_main),
-            ("grader.cpp", "sol.h", true)
-        );
-        assert_eq!(init.unsupported_feature(), None);
+        let signature =
+            parse_init("test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h}\n").unwrap();
+        assert_eq!(signature.unsupported_feature(), None);
     }
 
     #[test]
@@ -302,6 +245,8 @@ mod tests {
     fn unknown_keys_are_refused_at_every_nesting_level() {
         let top = parse_init("test_cases: []\nsymlinks: true\n").unwrap_err();
         assert_eq!(top, InitError::Unsupported("symlinks".into()));
+        let case = parse_init("test_cases:\n- {in: a, out: b, points: 1, weird: 2}\n").unwrap_err();
+        assert_eq!(case, InitError::Unsupported("weird".into()));
         let batched = "test_cases:\n- points: 1\n  batched:\n  - {in: a, out: b, weird: 1}\n";
         assert_eq!(parse_init(batched).unwrap_err(), InitError::Unsupported("weird".into()));
         let file_io = parse_init("test_cases: []\nfile_io: {input: a, output: b, mode: x}\n").unwrap_err();

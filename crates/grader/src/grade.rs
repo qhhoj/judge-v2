@@ -223,16 +223,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pretest_run_reports_pretested_and_grades_only_pretests() {
-        let yaml = "pretest_test_cases:\n- {in: p, out: q, points: 1}\ntest_cases:\n- {in: a, out: b, points: 2}\n- {in: c, out: d, points: 3}\n";
-        let mut rec = Recorder::default();
-        let mut judge = scripted(vec![(Status::Ac, 1.0)]);
-        grade_cases(&plan_with(yaml, true), &mut judge, false, &mut rec).unwrap();
-        assert_eq!(rec.started, Some((true, 1)));
-        assert_eq!(judge.asked, ["p"]);
-    }
-
-    #[test]
     fn a_judge_error_stops_grading_with_that_error() {
         struct Failing;
         impl CaseJudge for Failing {

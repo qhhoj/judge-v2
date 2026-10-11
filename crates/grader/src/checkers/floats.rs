@@ -63,24 +63,23 @@ mod tests {
 
     #[test]
     fn tolerance_by_mode() {
-        assert!(within(1.0, 1.0000005, 1e-6, ErrorMode::Absolute));
-        assert!(!within(1.0, 1.00001, 1e-6, ErrorMode::Absolute));
-        assert!(within(1e9, 1e9 + 100.0, 1e-6, ErrorMode::Relative));
-        assert!(!within(1e9, 1e9 + 100.0, 1e-6, ErrorMode::Absolute));
-        assert!(within(1e9, 1e9 + 100.0, 1e-6, ErrorMode::Default));
-    }
-
-    #[test]
-    fn relative_mode_needs_an_exact_zero_but_default_keeps_absolute() {
-        assert!(!within(0.0, 1e-7, 1e-6, ErrorMode::Relative));
-        assert!(within(0.0, 0.0, 1e-6, ErrorMode::Relative));
-        assert!(within(0.0, 1e-7, 1e-6, ErrorMode::Default));
-    }
-
-    #[test]
-    fn non_finite_output_fails() {
-        assert!(!within(1.0, f64::NAN, 1e-6, ErrorMode::Default));
-        assert!(!within(1.0, f64::INFINITY, 1e-6, ErrorMode::Default));
+        use ErrorMode::{Absolute, Default as Either, Relative};
+        // (expected, got, mode, within 1e-6)
+        let table = [
+            (1.0, 1.0000005, Absolute, true),
+            (1.0, 1.00001, Absolute, false),
+            (1e9, 1e9 + 100.0, Relative, true),
+            (1e9, 1e9 + 100.0, Absolute, false),
+            (1e9, 1e9 + 100.0, Either, true),
+            (0.0, 1e-7, Relative, false), // relative needs an exact zero
+            (0.0, 0.0, Relative, true),
+            (0.0, 1e-7, Either, true), // default keeps absolute
+            (1.0, f64::NAN, Either, false),
+            (1.0, f64::INFINITY, Either, false),
+        ];
+        for (expected, got, mode, ok) in table {
+            assert_eq!(within(expected, got, 1e-6, mode), ok, "{expected} {got} {mode:?}");
+        }
     }
 
     #[test]
