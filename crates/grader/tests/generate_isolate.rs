@@ -223,3 +223,29 @@ fn the_total_cap_and_a_cancel_stop_the_job() {
     let cancelled = run_with(&mut bench, plan(vec![test(1, ("gen", &["2", "3"]))]), &aborted).unwrap_err();
     assert!(cancelled.is_cancelled());
 }
+
+fn compile_check(programs: Vec<PlanProgram>) -> GenerationPlan {
+    GenerationPlan { programs, ..plan(vec![]) }
+}
+
+#[test]
+fn a_compile_check_of_a_good_testlib_checker_succeeds_with_an_empty_result() {
+    let mut bench = bench(54);
+    let good = compile_check(vec![program("checker", Role::Checker, "files/checker.cpp")]);
+    assert!(run(&mut bench, good).unwrap().is_empty());
+}
+
+#[test]
+fn a_compile_check_names_the_program_that_does_not_compile_and_its_log() {
+    let mut bench = bench(56);
+    let broken = compile_check(vec![
+        program("checker", Role::Checker, "files/checker.cpp"),
+        program("bad", Role::Interactor, "files/broken_checker.cpp"),
+    ]);
+    let failure = run(&mut bench, broken).unwrap_err();
+    assert_eq!(
+        (failure.stage, failure.kind, failure.program.as_str()),
+        (Stage::Compile, Kind::CompileError, "bad")
+    );
+    assert!(failure.detail.contains("undeclared_name_in_checker"), "{}", failure.detail);
+}

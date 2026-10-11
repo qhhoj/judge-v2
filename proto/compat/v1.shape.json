@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "minor": 2,
+  "minor": 3,
   "messages": {
     ".qhhoj.judge.v1.Abort": {
       "fields": {
@@ -1330,7 +1330,9 @@
       "0": "ROLE_UNSPECIFIED",
       "1": "ROLE_GENERATOR",
       "2": "ROLE_VALIDATOR",
-      "3": "ROLE_SOLUTION"
+      "3": "ROLE_SOLUTION",
+      "4": "ROLE_CHECKER",
+      "5": "ROLE_INTERACTOR"
     },
     ".qhhoj.judge.v1.Outcome": {
       "0": "OUTCOME_UNSPECIFIED",
