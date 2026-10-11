@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "minor": 1,
+  "minor": 2,
   "messages": {
     ".qhhoj.judge.v1.Abort": {
       "fields": {
@@ -215,6 +215,33 @@
           "repeated": false,
           "optional": false,
           "oneof": "body"
+        },
+        "8": {
+          "name": "generate",
+          "kind": ".qhhoj.judge.v1.GenerateTests",
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
+        },
+        "9": {
+          "name": "cancel_generation",
+          "kind": ".qhhoj.judge.v1.CancelGeneration",
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.CancelGeneration": {
+      "fields": {
+        "1": {
+          "name": "generation_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
         }
       },
       "reserved_numbers": [],
@@ -456,6 +483,293 @@
       "reserved_numbers": [],
       "reserved_names": []
     },
+    ".qhhoj.judge.v1.GenerateTests": {
+      "fields": {
+        "1": {
+          "name": "generation_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "bundle_size",
+          "kind": "Uint64",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "deadline_s",
+          "kind": "Uint32",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "4": {
+          "name": "limits",
+          "kind": ".qhhoj.judge.v1.GenerationLimits",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "5": {
+          "name": "programs",
+          "kind": ".qhhoj.judge.v1.GenerationProgram",
+          "repeated": true,
+          "optional": false,
+          "oneof": null
+        },
+        "6": {
+          "name": "tests",
+          "kind": ".qhhoj.judge.v1.GenerationTest",
+          "repeated": true,
+          "optional": false,
+          "oneof": null
+        },
+        "7": {
+          "name": "input_file",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "8": {
+          "name": "output_file",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GenerationDone": {
+      "fields": {
+        "1": {
+          "name": "generation_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "ok",
+          "kind": "Bool",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "failure",
+          "kind": ".qhhoj.judge.v1.GenerationFailure",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GenerationFailure": {
+      "fields": {
+        "1": {
+          "name": "stage",
+          "kind": ".qhhoj.judge.v1.GenerationFailure.Stage",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "kind",
+          "kind": ".qhhoj.judge.v1.GenerationFailure.Kind",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "program",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "4": {
+          "name": "test_index",
+          "kind": "Uint32",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "5": {
+          "name": "detail",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GenerationLimits": {
+      "fields": {
+        "1": {
+          "name": "generator",
+          "kind": ".qhhoj.judge.v1.ProgramLimits",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "validator",
+          "kind": ".qhhoj.judge.v1.ProgramLimits",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "solution",
+          "kind": ".qhhoj.judge.v1.ProgramLimits",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "4": {
+          "name": "max_file_bytes",
+          "kind": "Uint64",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "5": {
+          "name": "max_total_bytes",
+          "kind": "Uint64",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "6": {
+          "name": "max_upload_bytes",
+          "kind": "Uint64",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GenerationProgram": {
+      "fields": {
+        "1": {
+          "name": "name",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "role",
+          "kind": ".qhhoj.judge.v1.GenerationProgram.Role",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "language_key",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "4": {
+          "name": "source_path",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GenerationRequest": {
+      "fields": {
+        "1": {
+          "name": "generation_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "session_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.GenerationTest": {
+      "fields": {
+        "1": {
+          "name": "index",
+          "kind": "Uint32",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "input_name",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "answer_name",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "4": {
+          "name": "group",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "5": {
+          "name": "manual_path",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "6": {
+          "name": "generator",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "7": {
+          "name": "args",
+          "kind": "String",
+          "repeated": true,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
     ".qhhoj.judge.v1.GradingStarted": {
       "fields": {
         "1": {
@@ -649,6 +963,13 @@
           "repeated": false,
           "optional": false,
           "oneof": "body"
+        },
+        "10": {
+          "name": "generation_done",
+          "kind": ".qhhoj.judge.v1.GenerationDone",
+          "repeated": false,
+          "optional": false,
+          "oneof": "body"
         }
       },
       "reserved_numbers": [],
@@ -790,6 +1111,33 @@
       "reserved_numbers": [],
       "reserved_names": []
     },
+    ".qhhoj.judge.v1.ProgramLimits": {
+      "fields": {
+        "1": {
+          "name": "time_s",
+          "kind": "Double",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "wall_s",
+          "kind": "Double",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "memory_kib",
+          "kind": "Uint64",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
     ".qhhoj.judge.v1.ResultAck": {
       "fields": {
         "1": {
@@ -864,6 +1212,46 @@
       "reserved_numbers": [],
       "reserved_names": []
     },
+    ".qhhoj.judge.v1.UploadChunk": {
+      "fields": {
+        "1": {
+          "name": "generation_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "2": {
+          "name": "session_id",
+          "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "3": {
+          "name": "data",
+          "kind": "Bytes",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
+    ".qhhoj.judge.v1.UploadReceipt": {
+      "fields": {
+        "1": {
+          "name": "bytes",
+          "kind": "Uint64",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        }
+      },
+      "reserved_numbers": [],
+      "reserved_names": []
+    },
     ".qhhoj.judge.v1.Welcome": {
       "fields": {
         "1": {
@@ -917,6 +1305,33 @@
       "6": "ERROR_CODE_UNKNOWN_REF",
       "7": "ERROR_CODE_INTERNAL"
     },
+    ".qhhoj.judge.v1.GenerationFailure.Kind": {
+      "0": "KIND_UNSPECIFIED",
+      "1": "KIND_COMPILE_ERROR",
+      "2": "KIND_CRASHED",
+      "3": "KIND_TIME_LIMIT",
+      "4": "KIND_MEMORY_LIMIT",
+      "5": "KIND_OUTPUT_LIMIT",
+      "6": "KIND_REJECTED",
+      "7": "KIND_MISSING_FILE",
+      "8": "KIND_UNSUPPORTED_LANGUAGE",
+      "9": "KIND_JOB_TIME_LIMIT",
+      "10": "KIND_INTERNAL"
+    },
+    ".qhhoj.judge.v1.GenerationFailure.Stage": {
+      "0": "STAGE_UNSPECIFIED",
+      "1": "STAGE_COMPILE",
+      "2": "STAGE_GENERATE",
+      "3": "STAGE_VALIDATE",
+      "4": "STAGE_SOLVE",
+      "5": "STAGE_JOB"
+    },
+    ".qhhoj.judge.v1.GenerationProgram.Role": {
+      "0": "ROLE_UNSPECIFIED",
+      "1": "ROLE_GENERATOR",
+      "2": "ROLE_VALIDATOR",
+      "3": "ROLE_SOLUTION"
+    },
     ".qhhoj.judge.v1.Outcome": {
       "0": "OUTCOME_UNSPECIFIED",
       "1": "OUTCOME_GRADED",
@@ -951,6 +1366,12 @@
   },
   "services": {
     ".qhhoj.judge.v1.JudgeLink": {
+      "FetchGenerationBundle": {
+        "input": ".qhhoj.judge.v1.GenerationRequest",
+        "output": ".qhhoj.judge.v1.Chunk",
+        "client_streaming": false,
+        "server_streaming": true
+      },
       "FetchSource": {
         "input": ".qhhoj.judge.v1.FetchSourceRequest",
         "output": ".qhhoj.judge.v1.Chunk",
@@ -962,6 +1383,12 @@
         "output": ".qhhoj.judge.v1.BridgeMessage",
         "client_streaming": true,
         "server_streaming": true
+      },
+      "UploadGeneratedTests": {
+        "input": ".qhhoj.judge.v1.UploadChunk",
+        "output": ".qhhoj.judge.v1.UploadReceipt",
+        "client_streaming": true,
+        "server_streaming": false
       }
     }
   }

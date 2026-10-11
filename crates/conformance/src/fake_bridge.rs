@@ -10,8 +10,8 @@ use std::{
 };
 
 use judge_proto::v1::{
-    BridgeMessage, Chunk, FetchSourceRequest, JudgeMessage, bridge_message::Body,
-    judge_link_server::JudgeLink,
+    BridgeMessage, Chunk, FetchSourceRequest, GenerationRequest, JudgeMessage, UploadChunk, UploadReceipt,
+    bridge_message::Body, judge_link_server::JudgeLink,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -134,6 +134,7 @@ fn chunks(bytes: u64) -> ReceiverStream<Result<Chunk, Status>> {
 impl JudgeLink for FakeBridge {
     type SessionStream = ReceiverStream<Result<BridgeMessage, Status>>;
     type FetchSourceStream = ReceiverStream<Result<Chunk, Status>>;
+    type FetchGenerationBundleStream = ReceiverStream<Result<Chunk, Status>>;
 
     async fn session(
         &self,
@@ -179,6 +180,27 @@ impl JudgeLink for FakeBridge {
             return Err(refusal(&expect));
         }
         Ok(Response::new(chunks(bytes)))
+    }
+
+    /// Scenarios do not script generation transfers yet: a call is reported as unscripted.
+    async fn fetch_generation_bundle(
+        &self,
+        request: Request<GenerationRequest>,
+    ) -> Result<Response<Self::FetchGenerationBundleStream>, Status> {
+        let _ = self
+            .incoming
+            .send(Incoming::Unscripted { judge: judge_name(&request), call: "FetchGenerationBundle" });
+        Err(Status::failed_precondition("no generation transfer in the scenario"))
+    }
+
+    async fn upload_generated_tests(
+        &self,
+        request: Request<Streaming<UploadChunk>>,
+    ) -> Result<Response<UploadReceipt>, Status> {
+        let _ = self
+            .incoming
+            .send(Incoming::Unscripted { judge: judge_name(&request), call: "UploadGeneratedTests" });
+        Err(Status::failed_precondition("no generation transfer in the scenario"))
     }
 }
 
