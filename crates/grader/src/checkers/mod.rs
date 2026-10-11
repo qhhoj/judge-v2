@@ -6,6 +6,7 @@ pub mod identical;
 pub mod linecount;
 pub mod select;
 pub mod standard;
+pub mod themis;
 pub mod tokens;
 
 use std::path::Path;
