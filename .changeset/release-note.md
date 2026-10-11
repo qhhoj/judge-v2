@@ -2,4 +2,4 @@
 default: patch
 ---
 
-Release tooling: release PRs carry this note so the change-file check passes.
+Release 2.2.0 carries this note so the change-file check passes.
