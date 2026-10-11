@@ -3,6 +3,8 @@
 use crate::init::{CaseEntry, CheckerSpec, InitError, InitYaml};
 
 pub const MAX_SUBMISSION_CASES: usize = 10000;
+/// Largest `output_limit_length` an init.yml may set. The grader reads up to this much program output into memory.
+pub const MAX_OUTPUT_LIMIT: u64 = 64 << 20;
 
 #[derive(Debug, Clone)]
 pub struct PlanOptions {
@@ -58,7 +60,8 @@ pub fn plan_cases(init: &InitYaml, options: &PlanOptions) -> Result<CasePlan, In
         output_limit: init.output_limit_length.unwrap_or(options.default_output_limit),
         output_prefix: init.output_prefix_length.unwrap_or(options.default_output_prefix),
     };
-    let mut builder = Builder { cases: Vec::new(), batches: 0 };
+    let ceiling = MAX_OUTPUT_LIMIT.max(options.default_output_limit);
+    let mut builder = Builder { cases: Vec::new(), batches: 0, ceiling };
     if pretested {
         builder.add_entries(&init.pretest_test_cases, &problem, Pass::AsWritten)?;
     } else {
@@ -88,6 +91,8 @@ struct Scoring {
 struct Builder {
     cases: Vec<PlannedCase>,
     batches: u32,
+    /// Highest output limit a case may resolve to.
+    ceiling: u64,
 }
 
 impl Builder {
@@ -124,6 +129,9 @@ impl Builder {
     fn push(&mut self, entry: &CaseEntry, options: &Inherited, scoring: Scoring) -> Result<(), InitError> {
         if self.cases.len() >= MAX_SUBMISSION_CASES {
             return Err(invalid(format!("more than {MAX_SUBMISSION_CASES} cases")));
+        }
+        if options.output_limit > self.ceiling {
+            return Err(invalid(format!("output_limit_length above {} bytes", self.ceiling)));
         }
         let (Some(input), Some(output)) = (&entry.input, &entry.out) else {
             return Err(invalid("a case needs both `in` and `out`"));
@@ -219,6 +227,20 @@ mod tests {
         ] {
             assert!(matches!(plan(yaml, false), Err(InitError::Invalid(_))), "{yaml}");
         }
+    }
+
+    #[test]
+    fn output_limit_above_the_ceiling_is_invalid_at_any_level() {
+        for yaml in [
+            "output_limit_length: 99999999999\ntest_cases:\n- {in: a, out: b, points: 1}\n",
+            "test_cases:\n- {in: a, out: b, points: 1, output_limit_length: 99999999999}\n",
+            "test_cases:\n- points: 1\n  output_limit_length: 99999999999\n  batched: [{in: a, out: b}]\n",
+        ] {
+            assert!(matches!(plan(yaml, false), Err(InitError::Invalid(_))), "{yaml}");
+        }
+        let at_ceiling =
+            format!("output_limit_length: {MAX_OUTPUT_LIMIT}\ntest_cases:\n- {{in: a, out: b, points: 1}}\n");
+        assert!(plan(&at_ceiling, false).is_ok());
     }
 
     #[test]

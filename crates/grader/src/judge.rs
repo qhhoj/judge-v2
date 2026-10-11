@@ -352,6 +352,7 @@ fn grade_outputs(
         LanguageKind::OutputZip => {
             let zip = env.scratch.join("submission.zip");
             std::fs::write(&zip, &source)?;
+            drop(source); // the archive is read from disk; do not hold the upload for the whole run
             OutputSource::zip(zip)?
         }
         _ => OutputSource::Text(source),
