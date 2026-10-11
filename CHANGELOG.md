@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0 (2026-10-11)
+
+### Features
+
+- Container image ghcr.io/qhhoj/judge-v2 (packaging/Containerfile), built by CI on every push.
+- Test generation job (protocol minor 2, feature generate.polygon) and `qhhoj-judge generate`: build a Polygon standard package's tests in isolate.
+
+### Fixes
+
+- Bound memory use: init.yml output_limit_length is capped at 64 MiB, the metrics listener limits and times out connections, the runtime version probe cannot hang on a leaked pipe, and an uploaded output zip is released once written to disk.
+- Test suite trimmed to behaviour tests; no runtime change.
+
 ## 2.0.1 (2026-10-10)
 
 ### Fixes
