@@ -20,7 +20,37 @@ const STDERR: &str = ".stderr";
 pub struct CustomChecker {
     pub program: Program,
     pub kind: CustomKind,
+    pub partial: PartialPoints,
     pub time_limit_s: f64,
+}
+
+/// What testlib's `points N` means (the old judge's reading, which migrated checkers were written for):
+/// N points of the case, or N percent of the case's points with `treat_checker_points_as_percentage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PartialPoints {
+    #[default]
+    Absolute,
+    Percentage,
+}
+
+/// A partial-points reading for one case: its mode and the points the case is worth.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PartialScale {
+    pub mode: PartialPoints,
+    pub case_points: f64,
+}
+
+impl PartialScale {
+    /// The share of the case that `points` earns, clamped to 0..=1. A case worth nothing (a pretest in a full
+    /// run) earns its whole (zero) value.
+    pub fn fraction(&self, points: f64) -> f64 {
+        let fraction = match self.mode {
+            PartialPoints::Percentage => points / 100.0,
+            PartialPoints::Absolute if self.case_points > 0.0 => points / self.case_points,
+            PartialPoints::Absolute => 1.0,
+        };
+        fraction.clamp(0.0, 1.0)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,14 +110,20 @@ fn outcome(passed: bool, fraction: f64, report: &ExitReport, testlib: bool) -> C
     }
 }
 
-/// testlib: 0 AC, 1 WA, 2 and 4 presentation error, 8 unexpected EOF (WA), 7 partial points, 3 fail (IE).
-/// default: 0 AC, 1 WA, 2 partial points on stdout, anything else IE. No exit code (signal, limit) is IE.
-pub fn interpret(kind: CustomKind, report: &ExitReport) -> Result<CheckOutcome, CheckError> {
+/// testlib: 0 AC, 1 WA, 2 and 4 presentation error, 8 unexpected EOF (WA), 7 partial points read through
+/// `scale`, 3 fail (IE). default: 0 AC, 1 WA, 2 a 0..1 share on stdout, anything else IE. No exit code
+/// (signal, limit) is IE.
+pub fn interpret(
+    kind: CustomKind,
+    report: &ExitReport,
+    scale: PartialScale,
+) -> Result<CheckOutcome, CheckError> {
     let testlib = kind == CustomKind::Testlib;
     let fail =
         |what: &str| CheckError(format!("checker {what}: {}", clip_text(&report.stderr, MAX_EXTENDED)));
     let partial = |text: &str| -> Result<CheckOutcome, CheckError> {
-        let fraction = first_number(text).ok_or_else(|| fail("gave partial points without a score"))?;
+        let score = first_number(text).ok_or_else(|| fail("gave partial points without a score"))?;
+        let fraction = if testlib { scale.fraction(score) } else { score };
         Ok(outcome(true, fraction, report, testlib))
     };
     match (kind, report.code) {
@@ -158,7 +194,8 @@ impl CustomChecker {
         let code = finished_code(&verdict, meta.exit_code, "checker")?;
         let report =
             ExitReport { code, stdout: read_text(sandbox, STDOUT), stderr: read_text(sandbox, STDERR) };
-        Ok(interpret(self.kind, &report)?)
+        let scale = PartialScale { mode: self.partial, case_points: io.points };
+        Ok(interpret(self.kind, &report, scale)?)
     }
 }
 
@@ -170,8 +207,14 @@ mod tests {
         ExitReport { code: Some(code), stdout: stdout.into(), stderr: stderr.into() }
     }
 
+    const ONE_POINT: PartialScale = PartialScale { mode: PartialPoints::Absolute, case_points: 1.0 };
+
     fn testlib(code: i32, stderr: &str) -> Result<CheckOutcome, CheckError> {
-        interpret(CustomKind::Testlib, &report(code, "", stderr))
+        interpret(CustomKind::Testlib, &report(code, "", stderr), ONE_POINT)
+    }
+
+    fn testlib_on(mode: PartialPoints, case_points: f64, stderr: &str) -> CheckOutcome {
+        interpret(CustomKind::Testlib, &report(7, "", stderr), PartialScale { mode, case_points }).unwrap()
     }
 
     #[test]
@@ -211,15 +254,44 @@ mod tests {
     }
 
     #[test]
+    fn testlib_points_are_points_of_the_case_by_default() {
+        let partial = testlib_on(PartialPoints::Absolute, 5.0, "points 3 three of five");
+        assert!(partial.passed && (partial.fraction - 0.6).abs() < 1e-9, "{partial:?}");
+        assert_eq!(testlib_on(PartialPoints::Absolute, 5.0, "points 9 too many").fraction, 1.0);
+        assert_eq!(testlib_on(PartialPoints::Absolute, 5.0, "points -2 negative").fraction, 0.0);
+        let pretest = testlib_on(PartialPoints::Absolute, 0.0, "points 3 worth nothing");
+        assert!(pretest.passed, "a zero-point case still passes: {pretest:?}");
+    }
+
+    #[test]
+    fn testlib_points_are_a_percentage_with_the_flag() {
+        let half = testlib_on(PartialPoints::Percentage, 40.0, "points 50 half");
+        assert!((half.fraction - 0.5).abs() < 1e-9, "{half:?}");
+        assert_eq!(testlib_on(PartialPoints::Percentage, 40.0, "points 150 over").fraction, 1.0);
+        assert_eq!(testlib_on(PartialPoints::Percentage, 40.0, "points -1 under").fraction, 0.0);
+    }
+
+    #[test]
+    fn an_accepted_case_gets_full_points_whatever_the_mode() {
+        let report = report(0, "", "ok fine");
+        for mode in [PartialPoints::Absolute, PartialPoints::Percentage] {
+            let ok =
+                interpret(CustomKind::Testlib, &report, PartialScale { mode, case_points: 7.0 }).unwrap();
+            assert!(ok.passed && ok.fraction == 1.0);
+        }
+    }
+
+    #[test]
     fn a_signal_or_limit_has_no_exit_code_and_is_an_error() {
         let killed = ExitReport { code: None, stdout: String::new(), stderr: String::new() };
-        assert!(interpret(CustomKind::Testlib, &killed).is_err());
-        assert!(interpret(CustomKind::Default, &killed).is_err());
+        assert!(interpret(CustomKind::Testlib, &killed, ONE_POINT).is_err());
+        assert!(interpret(CustomKind::Default, &killed, ONE_POINT).is_err());
     }
 
     #[test]
     fn default_exit_codes_read_partial_points_from_stdout() {
-        let default = |code, stdout: &str| interpret(CustomKind::Default, &report(code, stdout, ""));
+        let default =
+            |code, stdout: &str| interpret(CustomKind::Default, &report(code, stdout, ""), ONE_POINT);
         assert!(default(0, "").unwrap().passed);
         assert!(!default(1, "").unwrap().passed);
         assert!((default(2, "0.5\n").unwrap().fraction - 0.5).abs() < 1e-9);
@@ -231,7 +303,7 @@ mod tests {
     #[test]
     fn feedback_is_clipped_on_a_char_boundary() {
         let long = "x".repeat(600);
-        let r = interpret(CustomKind::Default, &report(1, "", &long)).unwrap();
+        let r = interpret(CustomKind::Default, &report(1, "", &long), ONE_POINT).unwrap();
         assert_eq!((r.feedback.len(), r.extended.len()), (50, 512));
         assert_eq!(clip_text(&"é".repeat(30), 5), "éé");
     }

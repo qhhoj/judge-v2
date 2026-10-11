@@ -67,7 +67,7 @@ fn judge(offset: u32, source: &str, allow_main: bool) -> Outcome {
     let run = run_case(&mut sandbox, &Runnable { program: &program, limits: &limits }, &io, &output).unwrap();
     let answer = dirs[1].path().join("ans");
     std::fs::write(&answer, "3\n").unwrap();
-    let io = CheckInput { input: &answer, output: &output, answer: &answer };
+    let io = CheckInput { input: &answer, output: &output, answer: &answer, points: 1.0 };
     let passed = Standard { unicode: false }.check(&io).unwrap().passed;
     Outcome::Run(run.verdict, passed)
 }

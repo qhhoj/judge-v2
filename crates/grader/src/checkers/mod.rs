@@ -17,6 +17,8 @@ pub struct CheckInput<'a> {
     pub input: &'a Path,
     pub output: &'a Path,
     pub answer: &'a Path,
+    /// What the case is worth; a custom checker's partial points are read against it.
+    pub points: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +70,8 @@ pub(crate) mod testing {
 
     pub fn run(checker: &dyn Checker, output: &[u8], answer: &[u8]) -> CheckOutcome {
         let f = files(output, answer);
-        checker.check(&CheckInput { input: &f.input, output: &f.output, answer: &f.answer }).unwrap()
+        checker
+            .check(&CheckInput { input: &f.input, output: &f.output, answer: &f.answer, points: 1.0 })
+            .unwrap()
     }
 }
