@@ -1,0 +1,13 @@
+name: 38-generation-refused
+summary: A generation whose bundle is over the 512 MiB cap is refused with GenerationDone before any transfer; a cancel for a generation the judge does not hold changes nothing.
+applies_to: [judge]
+setup:
+  judges: [{name: j1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 1, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}], features: [generate.polygon]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - bridge: {to: j1, message: {generate: {generationId: g1, bundleSize: "536870913", deadlineS: 60}}}
+  - judge: {from: j1, message: {generationDone: {generationId: g1, ok: false, failure: {stage: STAGE_JOB, kind: KIND_OUTPUT_LIMIT}}}}
+  - bridge: {to: j1, message: {cancelGeneration: {generationId: nothing-here}}}
+  - quiet: {to: j1, ms: 300}

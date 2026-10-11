@@ -5,6 +5,7 @@ use crate::config::{Config, load};
 use crate::cores::worker_cores;
 use crate::drain::wait_until;
 use crate::gates::Gates;
+use crate::generation::GrpcGeneration;
 use crate::link::{Connection, LinkContext, SlotPool, run_link};
 use crate::metrics::{Metrics, serve};
 use crate::outbox::{OUTBOX_WATERMARK, Outboxes};
@@ -155,6 +156,7 @@ fn build(config: &Arc<Config>) -> anyhow::Result<Daemon> {
         outboxes: outboxes.clone(),
         resolver: Arc::new(resolver(config, &shared)),
         fetch: Arc::new(GrpcFetch { config: config.clone(), connection: connection.clone() }),
+        generation: Arc::new(GrpcGeneration { config: config.clone(), connection: connection.clone() }),
         gates: Gates { dir: config.control_dir.clone() },
         metrics: metrics.clone(),
         scratch: config.cache_dir.join("work"),

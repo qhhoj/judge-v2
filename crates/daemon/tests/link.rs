@@ -4,6 +4,7 @@ use judge_daemon::link::{LinkContext, SlotPool, SlotsFull, run_link};
 use judge_daemon::metrics::Metrics;
 use judge_daemon::outbox::{AssignmentRef, Body, OUTBOX_WATERMARK, Outboxes};
 use judge_daemon::wire::{Assignment, HelloInfo, seq_of};
+use judge_grader::generate::GenerationPlan;
 use judge_proto::v1::{self, BridgeMessage, bridge_message, judge_message};
 use std::sync::{Arc, Mutex};
 use support::fake_bridge::{eventually, start};
@@ -28,6 +29,19 @@ impl SlotPool for FakePool {
     }
     fn drop_run(&self, r: &AssignmentRef) {
         self.events.lock().unwrap().push(format!("drop {}", r.submission_id));
+    }
+    fn generate(&self, plan: GenerationPlan, session_id: String) -> Result<(), SlotsFull> {
+        if self.full {
+            return Err(SlotsFull);
+        }
+        self.events.lock().unwrap().push(format!("generate {} in {session_id}", plan.id));
+        Ok(())
+    }
+    fn cancel_generation(&self, generation_id: &str) {
+        self.events.lock().unwrap().push(format!("cancel {generation_id}"));
+    }
+    fn cancel_generations(&self) {
+        self.events.lock().unwrap().push("cancel all generations".into());
     }
     fn busy(&self) -> u32 {
         1
@@ -329,4 +343,46 @@ async fn an_unknown_bridge_message_is_ignored() {
     let pong = |m: &v1::JudgeMessage| matches!(&m.body, Some(judge_message::Body::Pong(p)) if p.nonce == 5);
     eventually(|| h.bridge.messages(0).iter().any(pong)).await;
     assert_eq!(h.bridge.session_count(), 1, "the session survived");
+}
+
+fn generate_message(id: &str) -> BridgeMessage {
+    BridgeMessage {
+        body: Some(bridge_message::Body::Generate(v1::GenerateTests {
+            generation_id: id.into(),
+            bundle_size: 10,
+            deadline_s: 60,
+            ..Default::default()
+        })),
+    }
+}
+
+#[tokio::test]
+async fn a_generation_goes_to_the_pool_with_its_session_and_a_cancel_follows() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.bridge.send(0, welcome(vec![]));
+    h.bridge.send(0, generate_message("g1"));
+    let cancel = v1::CancelGeneration { generation_id: "g1".into() };
+    h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::CancelGeneration(cancel)) });
+    eventually(|| h.pool.events.lock().unwrap().len() == 2).await;
+    assert_eq!(*h.pool.events.lock().unwrap(), ["generate g1 in s", "cancel g1"]);
+}
+
+#[tokio::test]
+async fn a_generation_without_a_free_slot_is_answered_slots_full_and_the_session_end_cancels_generations() {
+    let h = harness(true).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.bridge.send(0, welcome(vec![]));
+    h.bridge.send(0, generate_message("g2"));
+    eventually(|| {
+        h.bridge.messages(0).iter().any(|m| match &m.body {
+            Some(judge_message::Body::Error(e)) => {
+                e.code == v1::ErrorCode::SlotsFull as i32 && e.r#ref.is_none() && e.message.contains("g2")
+            }
+            _ => false,
+        })
+    })
+    .await;
+    h.bridge.hang_up(0);
+    eventually(|| h.pool.events.lock().unwrap().iter().any(|e| e == "cancel all generations")).await;
 }

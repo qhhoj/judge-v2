@@ -14,6 +14,9 @@ use tonic::{Request, Response, Status, Streaming};
 
 type Out = mpsc::UnboundedSender<Result<BridgeMessage, Status>>;
 
+/// One upload: the first message's generation id and session id, then all the data.
+pub type Upload = (String, String, Vec<u8>);
+
 #[derive(Clone, Default)]
 pub struct Shared {
     pub sessions: Arc<Mutex<Vec<Out>>>,
@@ -22,7 +25,7 @@ pub struct Shared {
     /// What FetchGenerationBundle serves, in chunks of 4 bytes.
     pub bundle: Arc<Mutex<Vec<u8>>>,
     /// Per UploadGeneratedTests call: the first message's generation and session ids, and all the data.
-    pub uploads: Arc<Mutex<Vec<(String, String, Vec<u8>)>>>,
+    pub uploads: Arc<Mutex<Vec<Upload>>>,
 }
 
 struct Service(Shared);

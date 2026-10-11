@@ -1,4 +1,5 @@
 use judge_daemon::gates::Gates;
+use judge_daemon::generation::{GenerationLink, Ticket};
 use judge_daemon::link::SlotPool;
 use judge_daemon::metrics::Metrics;
 use judge_daemon::outbox::{AssignmentRef, Body, OUTBOX_WATERMARK, Outboxes};
@@ -60,6 +61,21 @@ impl Runner for Scripted {
             });
         }
         Outcome::Graded
+    }
+}
+
+/// Generation is not exercised here (tests/generation.rs).
+struct NoGeneration;
+#[tonic::async_trait]
+impl GenerationLink for NoGeneration {
+    async fn fetch_bundle(&self, _: &Ticket, _: u64, _: &Path) -> Result<(), String> {
+        Err("no generation".into())
+    }
+    async fn upload(&self, _: &Ticket, _: &Path) -> Result<(), String> {
+        Err("no generation".into())
+    }
+    async fn send(&self, _: &Ticket, _: judge_daemon::wire::JudgeMessage) -> Result<(), String> {
+        Err("no generation".into())
     }
 }
 
@@ -137,6 +153,7 @@ fn world_from(opts: Opts) -> World {
         outboxes: outboxes.clone(),
         resolver: Arc::new(resolver(&dirs)),
         fetch: opts.fetch,
+        generation: Arc::new(NoGeneration),
         gates: Gates { dir: Some(gates_dir.path().into()) },
         metrics: Arc::new(Metrics::new()),
         scratch: dirs[2].path().into(),

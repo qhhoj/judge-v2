@@ -1,8 +1,12 @@
 //! The only place that knows proto types (plan A's `judge_proto::v1`).
 
 use crate::outbox::{AssignmentRef, Body, Envelope};
+use judge_grader::generate::{
+    GenerationFailure, GenerationPlan, Kind, PlanLimits, PlanProgram, PlanTest, ProgramLimits, Role, Stage,
+};
 use judge_grader::judge::{Outcome, RetryReason};
 use judge_grader::report::CaseReport;
+use judge_problem::init::FileIo;
 use judge_problem::verdict::Status;
 pub use judge_proto::v1;
 pub use judge_proto::v1::{BridgeMessage, JudgeMessage, bridge_message, judge_message};
@@ -57,6 +61,8 @@ pub enum BridgeEvent {
     },
     Ping(u64),
     Assign(Assignment),
+    Generate(Box<GenerationPlan>),
+    CancelGeneration(String),
     Abort(AssignmentRef),
     Ack(AssignmentRef, u32),
     Disconnect,
@@ -132,8 +138,73 @@ pub fn from_bridge(message: BridgeMessage) -> Result<BridgeEvent, WireError> {
         B::Ack(a) => BridgeEvent::Ack(ref_of(a.r#ref)?, a.seq),
         B::Disconnect(_) => BridgeEvent::Disconnect,
         B::Error(e) => BridgeEvent::Error(e.message),
-        B::Generate(_) | B::CancelGeneration(_) => BridgeEvent::Unknown,
+        B::Generate(plan) => BridgeEvent::Generate(Box::new(generation_plan(plan))),
+        B::CancelGeneration(cancel) => BridgeEvent::CancelGeneration(cancel.generation_id),
     })
+}
+
+fn program_limits(limits: Option<v1::ProgramLimits>) -> ProgramLimits {
+    let limits = limits.unwrap_or_default();
+    ProgramLimits { time_s: limits.time_s, wall_s: limits.wall_s, memory_kib: limits.memory_kib }
+}
+
+fn plan_limits(limits: Option<v1::GenerationLimits>) -> PlanLimits {
+    let limits = limits.unwrap_or_default();
+    PlanLimits {
+        generator: program_limits(limits.generator),
+        validator: program_limits(limits.validator),
+        solution: program_limits(limits.solution),
+        max_file_bytes: limits.max_file_bytes,
+        max_total_bytes: limits.max_total_bytes,
+        max_upload_bytes: limits.max_upload_bytes,
+    }
+}
+
+fn role(value: i32) -> Role {
+    use v1::generation_program::Role as R;
+    match R::try_from(value) {
+        Ok(R::Generator) => Role::Generator,
+        Ok(R::Validator) => Role::Validator,
+        Ok(R::Solution) => Role::Solution,
+        _ => Role::Unspecified,
+    }
+}
+
+fn plan_program(program: v1::GenerationProgram) -> PlanProgram {
+    PlanProgram {
+        role: role(program.role),
+        name: program.name,
+        language_key: program.language_key,
+        source_path: program.source_path,
+    }
+}
+
+fn plan_test(test: v1::GenerationTest) -> PlanTest {
+    PlanTest {
+        index: test.index,
+        input_name: test.input_name,
+        answer_name: test.answer_name,
+        group: test.group,
+        manual_path: test.manual_path,
+        generator: test.generator,
+        args: test.args,
+    }
+}
+
+/// The plan as the grader runs it; whether it can be run is `check_plan`'s question, not the session's.
+pub fn generation_plan(message: v1::GenerateTests) -> GenerationPlan {
+    // the solution's files are used only when both are named
+    let file_io = (!message.input_file.is_empty() && !message.output_file.is_empty())
+        .then_some(FileIo { input: message.input_file, output: message.output_file });
+    GenerationPlan {
+        id: message.generation_id,
+        bundle_size: message.bundle_size,
+        deadline_s: message.deadline_s,
+        limits: plan_limits(message.limits),
+        programs: message.programs.into_iter().map(plan_program).collect(),
+        tests: message.tests.into_iter().map(plan_test).collect(),
+        file_io,
+    }
 }
 
 fn status(s: Status) -> i32 {
@@ -260,6 +331,61 @@ pub fn slots_full(r: &AssignmentRef) -> JudgeMessage {
     }))
 }
 
+/// A generation has no `AssignmentRef`, so the bridge finds the generation in the text.
+pub fn generation_slots_full(generation_id: &str) -> JudgeMessage {
+    plain(judge_message::Body::Error(v1::JudgeError {
+        code: v1::ErrorCode::SlotsFull as i32,
+        message: format!("no free slot for generation {generation_id}"),
+        r#ref: None,
+    }))
+}
+
+fn stage(stage: Stage) -> v1::generation_failure::Stage {
+    use v1::generation_failure::Stage as S;
+    match stage {
+        Stage::Compile => S::Compile,
+        Stage::Generate => S::Generate,
+        Stage::Validate => S::Validate,
+        Stage::Solve => S::Solve,
+        Stage::Job => S::Job,
+    }
+}
+
+fn kind(kind: Kind) -> v1::generation_failure::Kind {
+    use v1::generation_failure::Kind as K;
+    match kind {
+        Kind::CompileError => K::CompileError,
+        Kind::Crashed => K::Crashed,
+        Kind::TimeLimit => K::TimeLimit,
+        Kind::MemoryLimit => K::MemoryLimit,
+        Kind::OutputLimit => K::OutputLimit,
+        Kind::Rejected => K::Rejected,
+        Kind::MissingFile => K::MissingFile,
+        Kind::UnsupportedLanguage => K::UnsupportedLanguage,
+        Kind::JobTimeLimit => K::JobTimeLimit,
+        Kind::Internal => K::Internal,
+    }
+}
+
+fn failure(failure: &GenerationFailure) -> v1::GenerationFailure {
+    v1::GenerationFailure {
+        stage: stage(failure.stage) as i32,
+        kind: kind(failure.kind) as i32,
+        program: failure.program.clone(),
+        test_index: failure.test_index,
+        detail: failure.detail.clone(),
+    }
+}
+
+/// `GenerationDone` for a finished generation; the failure's detail is sent as it is (clip it first).
+pub fn generation_done(generation_id: &str, result: &Result<(), GenerationFailure>) -> JudgeMessage {
+    plain(judge_message::Body::GenerationDone(v1::GenerationDone {
+        generation_id: generation_id.to_string(),
+        ok: result.is_ok(),
+        failure: result.as_ref().err().map(failure),
+    }))
+}
+
 pub fn draining() -> JudgeMessage {
     plain(judge_message::Body::Draining(v1::Draining {}))
 }
@@ -316,6 +442,88 @@ mod tests {
         // Field 99, length-delimited, empty: a member a later minor might add.
         let message = BridgeMessage::decode(&[0x9a, 0x06, 0x00][..]).unwrap();
         assert!(matches!(from_bridge(message), Ok(BridgeEvent::Unknown)));
+    }
+
+    fn generate_message() -> v1::GenerateTests {
+        v1::GenerateTests {
+            generation_id: "g1".into(),
+            bundle_size: 10,
+            deadline_s: 60,
+            limits: Some(v1::GenerationLimits {
+                solution: Some(v1::ProgramLimits { time_s: 4.0, wall_s: 13.0, memory_kib: 262_144 }),
+                max_file_bytes: 7,
+                ..Default::default()
+            }),
+            programs: vec![
+                v1::GenerationProgram {
+                    name: "gen".into(),
+                    role: v1::generation_program::Role::Generator as i32,
+                    language_key: "CPP17".into(),
+                    source_path: "files/gen.cpp".into(),
+                },
+                v1::GenerationProgram { name: "odd".into(), role: 99, ..Default::default() },
+            ],
+            tests: vec![v1::GenerationTest {
+                index: 3,
+                input_name: "03.inp".into(),
+                answer_name: "03.out".into(),
+                group: "2".into(),
+                generator: "gen".into(),
+                args: vec!["5".into()],
+                ..Default::default()
+            }],
+            input_file: "in.txt".into(),
+            output_file: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_generation_plan_keeps_its_fields_and_file_io_needs_both_names() {
+        let plan = generation_plan(generate_message());
+        assert_eq!((plan.id.as_str(), plan.bundle_size, plan.deadline_s), ("g1", 10, 60));
+        assert_eq!((plan.limits.solution.time_s, plan.limits.solution.memory_kib), (4.0, 262_144));
+        assert_eq!(plan.limits.max_file_bytes, 7);
+        assert_eq!(plan.programs[0].role, Role::Generator);
+        assert_eq!(plan.programs[1].role, Role::Unspecified, "an unknown role is the plan check's to refuse");
+        let test = &plan.tests[0];
+        assert_eq!(
+            (test.index, test.group.as_str(), test.generator.as_str(), test.args.len()),
+            (3, "2", "gen", 1)
+        );
+        assert!(plan.file_io.is_none());
+        let both = v1::GenerateTests { output_file: "out.txt".into(), ..generate_message() };
+        let io = generation_plan(both).file_io.unwrap();
+        assert_eq!((io.input.as_str(), io.output.as_str()), ("in.txt", "out.txt"));
+    }
+
+    #[test]
+    fn generate_and_cancel_are_bridge_events() {
+        let generate = BridgeMessage { body: Some(bridge_message::Body::Generate(generate_message())) };
+        assert!(matches!(from_bridge(generate), Ok(BridgeEvent::Generate(plan)) if plan.id == "g1"));
+        let cancel = v1::CancelGeneration { generation_id: "g1".into() };
+        let cancel = BridgeMessage { body: Some(bridge_message::Body::CancelGeneration(cancel)) };
+        assert!(matches!(from_bridge(cancel), Ok(BridgeEvent::CancelGeneration(id)) if id == "g1"));
+    }
+
+    #[test]
+    fn generation_done_carries_ok_or_the_failure() {
+        let ok = generation_done("g1", &Ok(()));
+        let Some(judge_message::Body::GenerationDone(ok)) = ok.body else { panic!() };
+        assert_eq!((ok.generation_id.as_str(), ok.ok, ok.failure), ("g1", true, None));
+        let failure =
+            GenerationFailure::new(Stage::Solve, Kind::TimeLimit, "slow").of_program("sol").at_test(4);
+        let Some(judge_message::Body::GenerationDone(done)) = generation_done("g1", &Err(failure)).body
+        else {
+            panic!()
+        };
+        let failure = done.failure.unwrap();
+        assert!(!done.ok);
+        assert_eq!(failure.stage, v1::generation_failure::Stage::Solve as i32);
+        assert_eq!(failure.kind, v1::generation_failure::Kind::TimeLimit as i32);
+        assert_eq!(
+            (failure.program.as_str(), failure.test_index, failure.detail.as_str()),
+            ("sol", 4, "slow")
+        );
     }
 
     #[test]

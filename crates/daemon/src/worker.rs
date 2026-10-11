@@ -7,10 +7,12 @@
 
 use crate::batcher::{CaseBatcher, MAX_BATCH_AGE};
 use crate::gates::{Gates, Stage};
+use crate::generation::{GenerationAssignment, GenerationLink};
 use crate::metrics::{Metrics, outcome_label};
 use crate::outbox::{AssignmentRef, Body, Outboxes};
 use crate::source::{MAX_FILE_SOURCE, SourceFetch};
 use crate::wire::Assignment;
+use judge_grader::generate::{Control, GenerationFailure, GenerationJob, generate_tests};
 use judge_grader::judge::{JudgeEnv, Outcome, RetryReason, Submission, SubmissionSource, judge_submission};
 use judge_grader::report::{CaseReport, Reporter};
 use judge_problem::data_version::DataError;
@@ -33,6 +35,11 @@ pub trait Runner: Send {
         submission: &Submission,
         reporter: &mut dyn Reporter,
     ) -> Outcome;
+
+    /// Runners that cannot generate tests (the test doubles) fail the job.
+    fn generate(&mut self, _job: &GenerationJob, _control: &Control) -> Result<(), GenerationFailure> {
+        Err(GenerationFailure::internal("this runner cannot generate tests"))
+    }
 }
 
 impl Runner for JudgeEnv {
@@ -43,6 +50,10 @@ impl Runner for JudgeEnv {
         reporter: &mut dyn Reporter,
     ) -> Outcome {
         judge_submission(self, problem, submission, reporter)
+    }
+
+    fn generate(&mut self, job: &GenerationJob, control: &Control) -> Result<(), GenerationFailure> {
+        generate_tests(self, job, control)
     }
 }
 
@@ -63,6 +74,7 @@ pub struct WorkerDeps {
     pub outboxes: Arc<Outboxes>,
     pub resolver: Arc<dyn Resolve>,
     pub fetch: Arc<dyn SourceFetch>,
+    pub generation: Arc<dyn GenerationLink>,
     pub gates: Gates,
     pub metrics: Arc<Metrics>,
     pub scratch: PathBuf,
@@ -73,6 +85,12 @@ pub struct WorkerDeps {
 /// Frees the job's pool slot; called right before `Final` is pushed, so the slot is free by the time
 /// the bridge can see the Final and send the next Assign (preflight C2).
 pub type Release = Arc<dyn Fn() + Send + Sync>;
+
+/// What a slot's worker task takes from the pool.
+pub enum SlotJob {
+    Run(Job),
+    Generate(GenerationAssignment),
+}
 
 pub struct Job {
     pub assignment: Assignment,
@@ -154,7 +172,7 @@ fn discard_source(deps: &WorkerDeps, r: &AssignmentRef) {
 }
 
 /// Resolves once the job's abort flag is set.
-async fn aborted(abort: &AtomicBool) {
+pub(crate) async fn aborted(abort: &AtomicBool) {
     while !abort.load(Ordering::SeqCst) {
         tokio::time::sleep(ABORT_POLL).await;
     }

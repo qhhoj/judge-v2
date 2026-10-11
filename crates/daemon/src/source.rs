@@ -40,16 +40,20 @@ impl GrpcFetch {
 impl SourceFetch for GrpcFetch {
     async fn fetch(&self, r: &AssignmentRef, max_bytes: u64, dest: &Path) -> Result<(), String> {
         let mut stream = self.open(r).await?;
-        let mut file = tokio::fs::File::create(dest).await.map_err(|e| e.to_string())?;
-        let limit = max_bytes.min(MAX_FILE_SOURCE);
-        let mut total = 0u64;
-        while let Some(chunk) = stream.message().await.map_err(|status| status.to_string())? {
-            total += chunk.data.len() as u64;
-            if total > limit {
-                return Err(format!("file source larger than {limit} bytes"));
-            }
-            file.write_all(&chunk.data).await.map_err(|e| e.to_string())?;
-        }
-        file.flush().await.map_err(|e| e.to_string())
+        save_chunks(&mut stream, dest, max_bytes.min(MAX_FILE_SOURCE)).await
     }
+}
+
+/// Writes the stream to `dest`; more than `limit` bytes is an error.
+pub async fn save_chunks(stream: &mut Streaming<Chunk>, dest: &Path, limit: u64) -> Result<(), String> {
+    let mut file = tokio::fs::File::create(dest).await.map_err(|e| e.to_string())?;
+    let mut total = 0u64;
+    while let Some(chunk) = stream.message().await.map_err(|status| status.to_string())? {
+        total += chunk.data.len() as u64;
+        if total > limit {
+            return Err(format!("larger than {limit} bytes"));
+        }
+        file.write_all(&chunk.data).await.map_err(|e| e.to_string())?;
+    }
+    file.flush().await.map_err(|e| e.to_string())
 }
