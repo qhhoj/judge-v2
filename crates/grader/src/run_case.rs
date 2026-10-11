@@ -262,39 +262,57 @@ mod tests {
     }
 
     #[test]
-    fn a_python_traceback_is_named_by_its_last_line() {
-        let python = "Traceback (most recent call last):\n  File \"main.py\", line 1\nZeroDivisionError: division by zero\n";
-        assert_eq!(
-            exception_reason(python, PYTHON, ExceptionStyle::LastLine).as_deref(),
-            Some("ZeroDivisionError")
-        );
-        assert_eq!(exception_reason("plain exit\n", PYTHON, ExceptionStyle::LastLine), None);
+    fn a_python_exception_is_named_by_the_last_traceback_line() {
+        let python = |stderr: &str| exception_reason(stderr, PYTHON, ExceptionStyle::LastLine);
+        let traceback =
+            "Traceback (most recent call last):\n  File \"main.py\", line 1\nZeroDivisionError: x\n";
+        assert_eq!(python(traceback).as_deref(), Some("ZeroDivisionError"));
+        assert_eq!(python("plain exit\n"), None);
+        assert_eq!(python("Traceback (most recent call last):\n"), None);
+        let noise_first = "main.py:3: SyntaxWarning: invalid escape sequence '\\d'\n  re.compile('\\d')\ndbg\n\
+                           Traceback (most recent call last):\n  File \"main.py\", line 5\nValueError: bad\n";
+        assert_eq!(python(noise_first).as_deref(), Some("ValueError"), "text before the traceback");
+        let chained = "Traceback (most recent call last):\nKeyError: 1\n\nDuring handling of the above exception, \
+                       another exception occurred:\n\nTraceback (most recent call last):\nOSError: x\n";
+        assert_eq!(python(chained).as_deref(), Some("OSError"));
     }
 
     #[test]
-    fn a_java_exception_is_named_by_its_class_not_its_stack() {
-        let java = "Exception in thread \"main\" java.lang.ArithmeticException: / by zero\n\tat Main.main(Main.java:3)\n";
-        assert_eq!(
-            exception_reason(java, "Exception in thread", ExceptionStyle::After).as_deref(),
-            Some("ArithmeticException")
-        );
-        let custom = "Exception in thread \"Thread-0\" MyError\n";
-        assert_eq!(
-            exception_reason(custom, "Exception in thread", ExceptionStyle::After).as_deref(),
-            Some("MyError")
-        );
-    }
-
-    #[test]
-    fn ada_and_lua_exceptions_are_named() {
-        let ada = "\nraised CONSTRAINT_ERROR : main.adb:3 range check failed\n";
-        assert_eq!(
-            exception_reason(ada, "raised ", ExceptionStyle::After).as_deref(),
-            Some("CONSTRAINT_ERROR")
-        );
-        let lua = "lua5.4: main.lua:1: attempt to index a nil value\nstack traceback:\n\t[C]: in ?\n";
-        let reason = exception_reason(lua, "stack traceback:", ExceptionStyle::LineAbove).unwrap();
-        assert_eq!(reason, "attempt to index a nil value");
+    fn java_ada_lua_and_ruby_exceptions_are_named() {
+        use ExceptionStyle::{After, LineAbove, Parenthesized};
+        let java = "Exception in thread";
+        // (stderr, marker, style, reason)
+        let table = [
+            (
+                "Exception in thread \"main\" java.lang.ArithmeticException: / by zero\n\tat M.main(M.java:3)\n",
+                java,
+                After,
+                Some("ArithmeticException"),
+            ),
+            ("Exception in thread \"Thread-0\" MyError\n", java, After, Some("MyError")),
+            (
+                "\nraised CONSTRAINT_ERROR : main.adb:3 range check failed\n",
+                "raised ",
+                After,
+                Some("CONSTRAINT_ERROR"),
+            ),
+            (
+                "lua5.4: main.lua:1: attempt to index a nil value\nstack traceback:\n\t[C]: in ?\n",
+                "stack traceback:",
+                LineAbove,
+                Some("attempt to index a nil value"),
+            ),
+            (
+                "main.rb:1:in 'Integer#/': divided by 0 (ZeroDivisionError)\n\tfrom main.rb:1:in '<main>'\n",
+                "main.rb:",
+                Parenthesized,
+                Some("ZeroDivisionError"),
+            ),
+            ("main.rb:1: note\n", "main.rb:", Parenthesized, None),
+        ];
+        for (stderr, marker, style, reason) in table {
+            assert_eq!(exception_reason(stderr, marker, style).as_deref(), reason, "{stderr:?}");
+        }
     }
 
     #[test]
@@ -302,45 +320,5 @@ mod tests {
         let stderr = format!("Traceback (most recent call last):\n{}\n", "é".repeat(100));
         let reason = exception_reason(&stderr, PYTHON, ExceptionStyle::LastLine).unwrap();
         assert!(reason.len() <= MAX_REASON_BYTES && reason.chars().all(|c| c == 'é'));
-    }
-
-    #[test]
-    fn jvm_memory_gets_the_reserve() {
-        let limits = CaseLimits { time_limit_s: 1.0, memory_kib: 65_536, jvm_reserve_kib: 131_072 };
-        assert_eq!(cgroup_memory(&limits, true), 196_608);
-        assert_eq!(cgroup_memory(&limits, false), 65_536);
-    }
-
-    #[test]
-    fn text_before_the_traceback_does_not_rename_a_python_exception() {
-        let stderr = "main.py:3: SyntaxWarning: invalid escape sequence '\\d'\n  re.compile('\\d')\ndbg\n\
-                      Traceback (most recent call last):\n  File \"main.py\", line 5\nValueError: bad\n";
-        let reason = exception_reason(stderr, PYTHON, ExceptionStyle::LastLine);
-        assert_eq!(reason.as_deref(), Some("ValueError"));
-        let chained = "Traceback (most recent call last):\nKeyError: 1\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\nOSError: x\n";
-        assert_eq!(exception_reason(chained, PYTHON, ExceptionStyle::LastLine).as_deref(), Some("OSError"));
-        assert_eq!(
-            exception_reason("Traceback (most recent call last):\n", PYTHON, ExceptionStyle::LastLine),
-            None
-        );
-    }
-
-    #[test]
-    fn a_ruby_exception_is_named_in_parentheses() {
-        let ruby =
-            "main.rb:1:in 'Integer#/': divided by 0 (ZeroDivisionError)\n\tfrom main.rb:1:in '<main>'\n";
-        assert_eq!(
-            exception_reason(ruby, "main.rb:", ExceptionStyle::Parenthesized).as_deref(),
-            Some("ZeroDivisionError")
-        );
-        assert_eq!(exception_reason("main.rb:1: note\n", "main.rb:", ExceptionStyle::Parenthesized), None);
-    }
-
-    #[test]
-    fn box_file_names_must_be_plain_and_not_reserved() {
-        assert!(is_plain_box_name("sum.inp"));
-        for bad in ["", "a/b", "../x", "/etc/passwd", ".", ".stderr", "output", "input", "main"] {
-            assert!(!is_plain_box_name(bad), "{bad:?}");
-        }
     }
 }

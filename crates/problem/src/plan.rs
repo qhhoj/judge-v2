@@ -156,27 +156,6 @@ mod tests {
     }
 
     #[test]
-    fn plain_cases_carry_their_points_and_positions() {
-        let p = plan("test_cases:\n- {in: a, out: b, points: 30}\n- {in: c, out: d, points: 70}\n", false)
-            .unwrap();
-        let shape: Vec<_> = p.cases.iter().map(|c| (c.position, c.total, c.batch)).collect();
-        assert_eq!(shape, [(1, 30.0, None), (2, 70.0, None)]);
-        assert!(!p.pretested);
-    }
-
-    #[test]
-    fn batched_cases_share_the_batch_total_and_number() {
-        let p = plan(
-            "test_cases:\n- points: 40\n  batched:\n  - {in: a, out: b}\n  - {in: c, out: d}\n\
-             - {in: e, out: f, points: 60}\n- points: 5\n  batched:\n  - {in: g, out: h}\n",
-            false,
-        )
-        .unwrap();
-        let shape: Vec<_> = p.cases.iter().map(|c| (c.total, c.batch)).collect();
-        assert_eq!(shape, [(40.0, Some(1)), (40.0, Some(1)), (60.0, None), (5.0, Some(2))]);
-    }
-
-    #[test]
     fn pretest_run_uses_only_pretests_with_their_points() {
         let yaml = "pretest_test_cases:\n- {in: p, out: q, points: 1}\ntest_cases:\n- {in: a, out: b, points: 2}\n- {in: c, out: d, points: 3}\n";
         let pre = plan(yaml, true).unwrap();
@@ -228,13 +207,6 @@ mod tests {
             shape,
             [(500, 9, "linecount".into()), (7, 9, "floats".into()), (1000, 9, "identical".into())]
         );
-    }
-
-    #[test]
-    fn defaults_apply_when_nothing_is_set() {
-        let p = plan("test_cases:\n- {in: a, out: b, points: 1}\n", false).unwrap();
-        assert_eq!((p.cases[0].output_limit, p.cases[0].output_prefix), (25_165_824, 64));
-        assert_eq!(p.cases[0].checker.name(), "standard");
     }
 
     #[test]

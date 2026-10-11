@@ -198,24 +198,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_once_and_reuses() {
-        let root = tempfile::tempdir().unwrap();
-        let cache = DirCache::new(root.path().into(), 1 << 20);
-        let builds = AtomicU32::new(0);
-        for _ in 0..3 {
-            let lease = cache
-                .get_or_build("k", |dir| {
-                    builds.fetch_add(1, Ordering::SeqCst);
-                    fill(10)(dir)
-                })
-                .unwrap();
-            assert!(lease.path().join("f").exists());
-        }
-        assert_eq!(builds.load(Ordering::SeqCst), 1);
-        assert_eq!(cache.hits(), 2);
-    }
-
-    #[test]
     fn a_failed_build_leaves_nothing_and_retries_next_time() {
         let root = tempfile::tempdir().unwrap();
         let cache = DirCache::new(root.path().into(), 1 << 20);

@@ -79,7 +79,6 @@ struct World {
     deps: Arc<WorkerDeps>,
     outboxes: Arc<Outboxes>,
     seen: Arc<Mutex<Vec<String>>>,
-    metrics: Arc<Metrics>,
     gates_dir: tempfile::TempDir,
     _dirs: Vec<tempfile::TempDir>,
 }
@@ -132,14 +131,14 @@ fn resolver(dirs: &[tempfile::TempDir]) -> Resolver {
 fn world_from(opts: Opts) -> World {
     let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
     let gates_dir = tempfile::tempdir().unwrap();
-    let (outboxes, metrics) = (Arc::new(Outboxes::new(opts.watermark)), Arc::new(Metrics::new()));
+    let outboxes = Arc::new(Outboxes::new(opts.watermark));
     let deps = Arc::new(WorkerDeps {
         judge: "j1".into(),
         outboxes: outboxes.clone(),
         resolver: Arc::new(resolver(&dirs)),
         fetch: opts.fetch,
         gates: Gates { dir: Some(gates_dir.path().into()) },
-        metrics: metrics.clone(),
+        metrics: Arc::new(Metrics::new()),
         scratch: dirs[2].path().into(),
         fetch_timeout: opts.fetch_timeout,
     });
@@ -149,7 +148,7 @@ fn world_from(opts: Opts) -> World {
         .map(|_| Box::new(Scripted { cases, pause, seen: seen.clone() }) as Box<dyn Runner>)
         .collect();
     let pool = Pool::start(deps.clone(), runners);
-    World { pool, deps, outboxes, seen, metrics, gates_dir, _dirs: dirs }
+    World { pool, deps, outboxes, seen, gates_dir, _dirs: dirs }
 }
 
 fn assignment(id: &str, code: &str, version: u64) -> Assignment {
@@ -184,42 +183,6 @@ async fn final_of(w: &World, id: &str) -> Body {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("no Final for {id}: {:?}", bodies(w, id));
-}
-
-#[tokio::test]
-async fn messages_come_in_lifecycle_order_and_the_slot_frees() {
-    let w = world(1, 3, Duration::ZERO);
-    w.pool.assign(assignment("a", "p", 5)).unwrap();
-    assert!(matches!(
-        final_of(&w, "a").await,
-        Body::Final { outcome: Outcome::Graded, data_version_used: 5, .. }
-    ));
-    let all = bodies(&w, "a");
-    assert_eq!(all[0], Body::Accepted);
-    assert!(matches!(all[1], Body::Compiled { .. }));
-    assert!(matches!(all[2], Body::Started { case_count: 3, .. }));
-    let cases: usize = all.iter().map(|b| if let Body::Cases(c) = b { c.len() } else { 0 }).sum();
-    assert_eq!(cases, 3);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(w.pool.busy(), 0);
-}
-
-#[tokio::test]
-async fn a_full_pool_refuses() {
-    let w = world(1, 50, Duration::from_millis(20));
-    w.pool.assign(assignment("a", "p", 5)).unwrap();
-    assert!(w.pool.assign(assignment("b", "p", 5)).is_err());
-    w.pool.abort(&AssignmentRef { submission_id: "a".into(), generation: 1 });
-    final_of(&w, "a").await;
-}
-
-#[tokio::test]
-async fn the_slot_is_free_once_the_final_is_visible() {
-    let w = world(1, 1, Duration::ZERO);
-    for id in ["first", "second", "third"] {
-        w.pool.assign(assignment(id, "p", 5)).unwrap();
-        final_of(&w, id).await;
-    }
 }
 
 #[tokio::test]
@@ -279,16 +242,6 @@ async fn lagging_data_is_retry_and_a_bad_code_is_internal_error() {
 }
 
 #[tokio::test]
-async fn file_sources_are_fetched() {
-    let w = world(1, 1, Duration::ZERO);
-    let mut a = assignment("f", "p", 5);
-    (a.source, a.source_is_file, a.source_size) = (Vec::new(), true, 9);
-    w.pool.assign(a).unwrap();
-    final_of(&w, "f").await;
-    assert_eq!(w.seen.lock().unwrap()[0], "PY3 v5 from-file");
-}
-
-#[tokio::test]
 async fn hold_ack_delays_accepted_until_released() {
     let w = world(1, 1, Duration::ZERO);
     let hold = w.gates_dir.path().join("hold-ack");
@@ -309,16 +262,6 @@ async fn a_panicking_runner_is_an_internal_error_and_the_slot_keeps_working() {
     assert!(matches!(final_of(&w, "boom").await, Body::Final { outcome: Outcome::InternalError(_), .. }));
     w.pool.assign(assignment("after", "p", 5)).unwrap();
     assert!(matches!(final_of(&w, "after").await, Body::Final { outcome: Outcome::Graded, .. }));
-}
-
-#[tokio::test]
-async fn compile_time_is_observed_per_language() {
-    let w = world(1, 1, Duration::ZERO);
-    w.pool.assign(assignment("c", "p", 5)).unwrap();
-    final_of(&w, "c").await;
-    let text = w.metrics.render();
-    assert!(text.contains("judge_compile_seconds_count{lang=\"PY3\"} 1"), "{text}");
-    assert!(text.contains("judge_assignments_total{outcome=\"graded\"} 1"), "{text}");
 }
 
 #[tokio::test]

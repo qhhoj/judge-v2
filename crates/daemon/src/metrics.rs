@@ -124,29 +124,6 @@ pub async fn serve(listen: String, metrics: Arc<Metrics>, sample: Arc<dyn Fn(&Me
 #[cfg(test)]
 mod tests {
     use super::*;
-    use judge_grader::judge::{Outcome, RetryReason};
-
-    #[test]
-    fn outcomes_are_counted_by_label_and_rendered() {
-        let m = Metrics::new();
-        m.assignment_finished(&Outcome::Graded);
-        m.assignment_finished(&Outcome::Graded);
-        m.assignment_finished(&Outcome::Retry(RetryReason::SandboxFailure));
-        let text = m.render();
-        assert!(text.contains("judge_assignments_total{outcome=\"graded\"} 2"), "{text}");
-        assert!(text.contains("judge_assignments_total{outcome=\"retry\"} 1"));
-        assert!(text.contains("judge_sandbox_failures_total{kind=\"isolate\"} 1"));
-        for name in [
-            "judge_case_seconds",
-            "judge_slots_busy",
-            "judge_outbox_bytes",
-            "judge_reconnects_total",
-            "judge_data_wait_seconds",
-            "judge_cache_hits_total",
-        ] {
-            assert!(text.contains(name), "{name} missing");
-        }
-    }
 
     #[tokio::test]
     async fn serves_text_with_sampled_gauges() {

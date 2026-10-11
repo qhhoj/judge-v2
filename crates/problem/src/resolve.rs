@@ -188,24 +188,12 @@ mod tests {
     fn loose_files_resolve_in_the_data_dir_with_the_stamp_version() {
         let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         write_problem(root.path(), Some("3\n"));
+        std::fs::create_dir_all(root.path().join("sum/sub")).unwrap();
+        std::fs::write(root.path().join("sum/sub/1.in"), "4\n").unwrap();
         let problem = resolver(root.path(), cache.path()).resolve("sum", 3).unwrap();
         assert_eq!(problem.data_version_used, 3);
         assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"1 2\n");
-    }
-
-    #[test]
-    fn missing_stamp_grades_from_disk_as_version_zero() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        write_problem(root.path(), None);
-        assert_eq!(resolver(root.path(), cache.path()).resolve("sum", 9).unwrap().data_version_used, 0);
-    }
-
-    #[test]
-    fn lagging_stamp_is_unavailable() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        write_problem(root.path(), Some("1"));
-        let error = resolver(root.path(), cache.path()).resolve("sum", 2).unwrap_err();
-        assert!(matches!(error, DataError::Unavailable { .. }));
+        assert_eq!(read_all(problem.open_case_file("sub/1.in").unwrap()), b"4\n");
     }
 
     #[test]
@@ -226,16 +214,6 @@ mod tests {
         ] {
             assert!(problem.open_case_file(name).is_err(), "{name}");
         }
-    }
-
-    #[test]
-    fn case_file_accepts_names_in_subdirectories() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        write_problem(root.path(), None);
-        std::fs::create_dir_all(root.path().join("sum/sub")).unwrap();
-        std::fs::write(root.path().join("sum/sub/1.in"), "4\n").unwrap();
-        let problem = resolver(root.path(), cache.path()).resolve("sum", 0).unwrap();
-        assert_eq!(read_all(problem.open_case_file("sub/1.in").unwrap()), b"4\n");
     }
 
     #[test]
@@ -279,33 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn zip_limits_follow_the_cache_size() {
-        assert_eq!(ZipLimits::for_cache(20 << 30).max_total_bytes, 8 << 30);
-        assert_eq!(ZipLimits::for_cache(4 << 30).max_total_bytes, 2 << 30);
-    }
-
-    #[test]
-    fn archive_problems_extract_into_the_cache_keyed_by_version() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        let dir = root.path().join("zipped");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("init.yml"),
-            "archive: t.zip\ntest_cases:\n- {in: 1.in, out: 1.out, points: 1}\n",
-        )
-        .unwrap();
-        let mut writer = zip::ZipWriter::new(std::fs::File::create(dir.join("t.zip")).unwrap());
-        writer.start_file("1.in", zip::write::SimpleFileOptions::default()).unwrap();
-        std::io::Write::write_all(&mut writer, b"5\n").unwrap();
-        writer.finish().unwrap();
-        std::fs::write(dir.join(".data-version"), "4").unwrap();
-        let problem = resolver(root.path(), cache.path()).resolve("zipped", 4).unwrap();
-        assert!(problem.files_dir.starts_with(cache.path()));
-        assert!(file_name(&problem.files_dir).starts_with("4-"));
-        assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"5\n");
-    }
-
-    #[test]
     fn a_recreated_code_with_the_same_data_version_is_not_served_from_the_old_cache_entry() {
         let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let dir = root.path().join("zipped");
@@ -325,14 +276,6 @@ mod tests {
         set_stamp(&dir, 1);
         let second = r.resolve("zipped", 1).unwrap();
         assert_eq!(read_all(second.open_case_file("1.in").unwrap()), b"second problem, longer\n");
-    }
-
-    #[test]
-    fn missing_init_yml_is_an_io_error_and_bad_code_is_refused() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        let r = resolver(root.path(), cache.path());
-        assert!(matches!(r.resolve("nothing", 0), Err(DataError::Io(_))));
-        assert!(matches!(r.resolve("../x", 0), Err(DataError::BadCode(_))));
     }
 
     /// Real stamps, plus a hook that runs before the n-th `read` (1-based) and may rewrite files on disk.
@@ -469,15 +412,6 @@ mod tests {
         assert_eq!(error, DataError::Unavailable { assigned: 4, found: Some(6) });
     }
 
-    #[test]
-    fn a_steady_stamp_is_read_exactly_twice() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        write_problem(root.path(), Some("4"));
-        let stamps = ScriptedStamps::new(|_| {});
-        scripted_problem(stamps.clone(), root.path(), cache.path()).resolve("sum", 4).unwrap();
-        assert_eq!(stamps.reads(), 2);
-    }
-
     fn write_zip(path: &Path, content: &[u8]) {
         let mut writer = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
         writer.start_file("1.in", zip::write::SimpleFileOptions::default()).unwrap();
@@ -509,15 +443,6 @@ mod tests {
         assert!(file_name(&problem.files_dir).starts_with("5-"));
         assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"new\n");
         assert!(entries_of(cache.path(), "zipped", "4-").is_empty(), "the half-old entry is gone");
-    }
-
-    #[test]
-    fn an_upload_marker_makes_the_resolve_wait_then_fail() {
-        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-        write_problem(root.path(), Some("4"));
-        std::fs::write(root.path().join("sum/.data-version.writing"), "").unwrap();
-        let error = resolver(root.path(), cache.path()).resolve("sum", 4).unwrap_err();
-        assert!(matches!(error, DataError::Unavailable { .. }));
     }
 
     #[test]

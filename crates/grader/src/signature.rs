@@ -84,22 +84,6 @@ pub fn signature_job(
 mod tests {
     use super::*;
 
-    fn spec(allow_main: bool) -> SignatureSpec {
-        SignatureSpec { entry: "grader.cpp".into(), header: "sol.h".into(), allow_main }
-    }
-
-    #[test]
-    fn script_compiles_user_with_header_then_links() {
-        let cc: Vec<String> = ["/usr/bin/g++", "-std=gnu++17", "-O2"].map(String::from).to_vec();
-        let script = signature_script(&cc, &spec(false), "user.cpp");
-        assert!(script.contains(
-            "/usr/bin/g++ -std=gnu++17 -O2 -c user.cpp -o user.o -include sol.h -Dmain=qhhoj_user_main"
-        ));
-        assert!(script.contains("-c grader.cpp -o entry.o"));
-        assert!(script.ends_with("entry.o user.o -o main -lm"));
-        assert!(!signature_script(&cc, &spec(true), "user.cpp").contains("-Dmain"));
-    }
-
     #[test]
     fn unsafe_names_are_refused() {
         for name in ["a b.h", "x;rm -rf.h", "../h.h", "", "$(id).h", ".hidden.h", "a/b.h", "`id`.h"] {

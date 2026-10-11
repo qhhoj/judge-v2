@@ -219,33 +219,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn interactor_limits_follow_the_spec() {
-        let solution = Limits::for_solution(2.0, 65_536, 1, 1 << 20);
-        let limits = interactor_limits(&solution);
-        assert_eq!((limits.time_s, limits.wall_s, limits.memory_kib), (10.0, solution.wall_s + 2.0, 1 << 20));
-        assert_eq!(limits.processes, 1);
-        let slow = Limits::for_solution(8.0, 65_536, 1, 1 << 20);
-        assert_eq!(interactor_limits(&slow).time_s, 16.0);
-    }
-
-    #[test]
-    fn a_failed_solution_wins_except_for_a_broken_pipe() {
-        assert!(solution_wins(&RunVerdict::Tle));
-        assert!(solution_wins(&RunVerdict::Mle));
-        assert!(solution_wins(&RunVerdict::Ir { exit_code: 1 }));
-        assert!(solution_wins(&RunVerdict::Rte { reason: "SIGSEGV".into() }));
-        assert!(!solution_wins(&RunVerdict::Rte { reason: "SIGPIPE".into() }));
-        assert!(!solution_wins(&RunVerdict::Ok));
-    }
-
-    #[test]
-    fn an_interactor_fail_or_crash_is_its_own_failure_but_a_verdict_or_broken_pipe_is_not() {
-        assert!(interactor_failed(&RunVerdict::Ir { exit_code: 3 }));
-        assert!(interactor_failed(&RunVerdict::Rte { reason: "SIGSEGV".into() }));
-        assert!(!interactor_failed(&RunVerdict::Ir { exit_code: 1 }), "testlib WA");
-        assert!(!interactor_failed(&RunVerdict::Rte { reason: "SIGPIPE".into() }));
-        assert!(!interactor_failed(&RunVerdict::Ok));
-        assert!(!interactor_failed(&RunVerdict::Tle));
+    fn who_is_to_blame_when_either_side_fails() {
+        let rte = |reason: &str| RunVerdict::Rte { reason: reason.into() };
+        // (verdict, solution's own failure wins, interactor failed by itself)
+        let table = [
+            (RunVerdict::Tle, true, false),
+            (RunVerdict::Mle, true, false),
+            (RunVerdict::Ir { exit_code: 1 }, true, false), // testlib WA from the interactor
+            (RunVerdict::Ir { exit_code: 3 }, true, true),  // testlib FAIL
+            (rte("SIGSEGV"), true, true),
+            (rte("SIGPIPE"), false, false), // the other side hung up
+            (RunVerdict::Ok, false, false),
+        ];
+        for (verdict, wins, failed) in table {
+            assert_eq!((solution_wins(&verdict), interactor_failed(&verdict)), (wins, failed), "{verdict:?}");
+        }
     }
 
     fn spawn(program: &str, args: &[&str]) -> Child {

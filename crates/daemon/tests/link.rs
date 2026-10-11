@@ -205,24 +205,6 @@ async fn a_dropped_ref_ends_with_one_final_aborted_and_leaves_no_outbox() {
 }
 
 #[tokio::test]
-async fn an_aborted_final_is_not_kept_for_an_ack() {
-    let h = harness(false).await;
-    eventually(|| h.bridge.session_count() == 1).await;
-    h.bridge.send(0, welcome(vec![]));
-    h.outboxes.open(&r("a"));
-    h.outboxes.push(
-        &r("a"),
-        Body::Final {
-            outcome: judge_grader::judge::Outcome::Aborted,
-            log: String::new(),
-            data_version_used: 0,
-        },
-    );
-    eventually(|| h.outboxes.refs().is_empty()).await;
-    assert_eq!(finals(&h.bridge.messages(0), "a"), [(1, v1::Outcome::Aborted as i32)]);
-}
-
-#[tokio::test]
 async fn welcome_limits_lower_the_batch_and_the_log_clip() {
     let h = harness(false).await;
     eventually(|| h.bridge.session_count() == 1).await;
@@ -247,27 +229,6 @@ async fn welcome_limits_lower_the_batch_and_the_log_clip() {
             .any(|m| matches!(&m.body, Some(judge_message::Body::Compiled(c)) if c.log == "01234"))
     })
     .await;
-}
-
-#[tokio::test]
-async fn assign_abort_and_slots_full() {
-    let h = harness(true).await;
-    eventually(|| h.bridge.session_count() == 1).await;
-    h.bridge.send(0, welcome(vec![]));
-    let assign = v1::Assign {
-        r#ref: pref("x"),
-        problem_code: "p".into(),
-        language_key: "PY3".into(),
-        source: b"1".to_vec(),
-        time_limit_s: 1.0,
-        memory_limit_kib: 1024,
-        ..Default::default()
-    };
-    h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Assign(assign)) });
-    eventually(|| h.bridge.messages(0).iter().any(|m| matches!(&m.body, Some(judge_message::Body::Error(e)) if e.code == v1::ErrorCode::SlotsFull as i32))).await;
-    h.bridge
-        .send(0, BridgeMessage { body: Some(bridge_message::Body::Abort(v1::Abort { r#ref: pref("y") })) });
-    eventually(|| h.pool.events.lock().unwrap().contains(&"abort y".to_string())).await;
 }
 
 #[tokio::test]

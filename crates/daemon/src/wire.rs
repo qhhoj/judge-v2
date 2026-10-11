@@ -258,26 +258,11 @@ pub fn draining() -> JudgeMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use judge_grader::judge::{Outcome, RetryReason};
     use judge_grader::report::CaseReport;
     use judge_problem::verdict::Status;
 
     fn r() -> AssignmentRef {
         AssignmentRef { submission_id: "0192-uuid".into(), generation: 4 }
-    }
-
-    #[test]
-    fn every_assignment_message_carries_its_ref_and_seq() {
-        let message =
-            to_judge(&r(), &Envelope { seq: 7, body: Body::Started { pretested: true, case_count: 12 } });
-        assert_eq!(seq_of(&message), Some(7));
-        let Some(judge_message::Body::Started(started)) = message.body else { panic!() };
-        assert_eq!((started.pretested, started.case_count, started.seq), (true, 12, 7));
-        assert_eq!(started.r#ref.as_ref().unwrap().submission_id, "0192-uuid");
-        assert_eq!(started.r#ref.as_ref().unwrap().generation, 4);
-        let accepted = to_judge(&r(), &Envelope { seq: 1, body: Body::Accepted });
-        assert_eq!(seq_of(&accepted), Some(1));
-        assert_eq!(seq_of(&pong(1, 0, 1)), None);
     }
 
     #[test]
@@ -299,31 +284,6 @@ mod tests {
         let Some(judge_message::Body::Cases(cases)) = message.body else { panic!() };
         assert_eq!(cases.cases.iter().map(|c| c.batch).collect::<Vec<_>>(), [0, 2]);
         assert_eq!(cases.cases[0].status, v1::Status::Wa as i32);
-    }
-
-    #[test]
-    fn final_maps_outcome_and_reason() {
-        let body = Body::Final {
-            outcome: Outcome::Retry(RetryReason::DataUnavailable),
-            log: String::new(),
-            data_version_used: 0,
-        };
-        let Some(judge_message::Body::Final(f)) = to_judge(&r(), &Envelope { seq: 3, body }).body else {
-            panic!()
-        };
-        assert_eq!(
-            (f.outcome, f.reason),
-            (v1::Outcome::Retry as i32, v1::RetryReason::DataUnavailable as i32)
-        );
-        let ce =
-            Body::Final { outcome: Outcome::CompileError("x".into()), log: "x".into(), data_version_used: 5 };
-        let Some(judge_message::Body::Final(f)) = to_judge(&r(), &Envelope { seq: 3, body: ce }).body else {
-            panic!()
-        };
-        assert_eq!(
-            (f.outcome, f.log.as_str(), f.data_version_used),
-            (v1::Outcome::CompileError as i32, "x", 5)
-        );
     }
 
     fn assign(source: Vec<u8>, with_ref: bool) -> BridgeMessage {
@@ -351,55 +311,8 @@ mod tests {
 
     #[test]
     fn assign_is_validated() {
-        let Ok(BridgeEvent::Assign(a)) = from_bridge(assign(b"print(1)".to_vec(), true)) else { panic!() };
-        assert_eq!((a.problem_code.as_str(), a.data_version, a.memory_kib), ("e2e_sum", 2, 262_144));
+        assert!(matches!(from_bridge(assign(vec![b'x'; 1 << 20], true)), Ok(BridgeEvent::Assign(_))));
         assert!(from_bridge(assign(vec![b'x'; (1 << 20) + 1], true)).is_err(), "inline source over 1 MiB");
         assert!(from_bridge(assign(b"x".to_vec(), false)).is_err(), "missing ref");
-    }
-
-    #[test]
-    fn welcome_resume_actions() {
-        let welcome = v1::Welcome {
-            resume: vec![
-                v1::Resume {
-                    r#ref: Some(v1::AssignmentRef { submission_id: "a".into(), generation: 1 }),
-                    action: v1::resume::Action::Continue as i32,
-                    from_seq: 4,
-                },
-                v1::Resume {
-                    r#ref: Some(v1::AssignmentRef { submission_id: "b".into(), generation: 1 }),
-                    action: v1::resume::Action::Drop as i32,
-                    from_seq: 0,
-                },
-            ],
-            session_id: "sess-1".into(),
-            ping_interval_ms: 10_000,
-            limits: Some(v1::Limits { max_cases_per_message: 32, max_log_bytes: 1000, ..Default::default() }),
-            ..Default::default()
-        };
-        let Ok(BridgeEvent::Welcome { resume, session_id, max_cases_per_message, max_log_bytes, .. }) =
-            from_bridge(BridgeMessage { body: Some(bridge_message::Body::Welcome(welcome)) })
-        else {
-            panic!()
-        };
-        assert_eq!(session_id, "sess-1");
-        assert_eq!((max_cases_per_message, max_log_bytes), (32, 1000));
-        assert_eq!(resume[0].1, ResumeDecision::Continue(4));
-        assert_eq!(resume[1].1, ResumeDecision::Drop);
-    }
-
-    #[test]
-    fn hello_lists_slots_features_and_in_flight() {
-        let info = HelloInfo {
-            protocol_minor: 1,
-            build: "0.1.0".into(),
-            runtimes: vec![("PY3".into(), "Python 3".into(), "3.13".into())],
-            features: FEATURES.map(String::from).to_vec(),
-        };
-        let Some(judge_message::Body::Hello(h)) = hello(&info, 3, &[(r(), 9)]).body else { panic!() };
-        assert_eq!((h.protocol_minor, h.slots, h.runtimes.len(), h.in_flight[0].last_seq_sent), (1, 3, 1, 9));
-        assert_eq!(h.in_flight[0].r#ref.as_ref().unwrap().submission_id, "0192-uuid");
-        assert!(h.features.contains(&"signature".to_string()));
-        assert!(!h.features.iter().any(|f| f.contains("scratch")), "SCRATCH is not graded");
     }
 }

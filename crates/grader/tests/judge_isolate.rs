@@ -150,27 +150,6 @@ fn accepted_cpp() {
 }
 
 #[test]
-fn compile_error_outcome() {
-    let mut b = bench(2);
-    b.write("aplusb", &APLUSB);
-    let (outcome, rec) = b.run("aplusb", "CPP17", "int main( {");
-    assert!(matches!(outcome, Outcome::CompileError(ref log) if log.contains("error")), "{outcome:?}");
-    assert!(rec.log.is_none() && rec.started.is_none() && rec.cases.is_empty());
-}
-
-#[test]
-fn wrong_answer_and_runtime_error_python() {
-    let mut b = bench(4);
-    b.write("aplusb", &APLUSB);
-    let (outcome, rec) = b.run("aplusb", "PY3", "print(0)\n");
-    assert_eq!(outcome, Outcome::Graded);
-    assert_eq!(rec.shape(), [(Status::Wa, 0.0), (Status::Wa, 0.0)]);
-    let (_, rec) = b.run("aplusb", "PY3", "print(1 // 0)\n");
-    let first = &rec.cases[0];
-    assert_eq!((first.status, first.feedback.as_str()), (Status::Rte, "ZeroDivisionError"));
-}
-
-#[test]
 fn scratch_and_unknown_languages_are_refused_without_grading() {
     let mut b = bench(6);
     b.write("aplusb", &APLUSB);

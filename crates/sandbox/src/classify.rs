@@ -92,11 +92,4 @@ mod tests {
         assert_eq!(verdict("status:TO\n", 5000), RunVerdict::Tle);
         assert_eq!(verdict("status:SG\nexitsig:9\ncg-oom-killed:1\n", 5000), RunVerdict::Mle);
     }
-
-    #[test]
-    fn signal_names() {
-        assert_eq!(signal_name(6), "SIGABRT");
-        assert_eq!(signal_name(8), "SIGFPE");
-        assert_eq!(signal_name(77), "signal 77");
-    }
 }

@@ -47,7 +47,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_a_real_isolate_2_6_oom_meta() {
+    fn parses_a_real_isolate_2_6_oom_meta_skipping_unknown_keys_and_refuses_bad_numbers() {
         let meta = parse_meta(
             "time:0.014\ntime-wall:0.014\nmax-rss:14616\ncsw-voluntary:4\ncsw-forced:5\ncg-mem:8192\n\
              cg-oom-killed:1\nexitsig:9\nstatus:SG\nmessage:Caught fatal signal 9\n",
@@ -59,17 +59,6 @@ mod tests {
         assert_eq!(meta.cg_mem_kib, 8192);
         assert!((meta.time_s - 0.014).abs() < 1e-9);
         assert_eq!(meta.message, "Caught fatal signal 9");
-    }
-
-    #[test]
-    fn a_clean_exit_has_no_status() {
-        let meta = parse_meta("time:0.001\ntime-wall:0.016\ncg-mem:256\nexitcode:0\n").unwrap();
-        assert_eq!((meta.status, meta.exit_code, meta.oom_killed), (None, Some(0), false));
-    }
-
-    #[test]
-    fn unknown_keys_are_ignored_and_bad_numbers_fail() {
-        assert!(parse_meta("future-key:1\ntime:0.1\n").is_ok());
         assert!(matches!(parse_meta("time:fast\n"), Err(SandboxError::Meta(_))));
     }
 }

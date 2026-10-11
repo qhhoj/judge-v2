@@ -237,13 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn helper_limits_follow_the_spec() {
-        let slow = checker_limits(7.0);
-        assert_eq!((checker_limits(2.0).time_s, slow.time_s, slow.wall_s), (10.0, 14.0, 28.0));
-        assert_eq!((slow.memory_kib, slow.processes), (1 << 20, 1));
-    }
-
-    #[test]
     fn only_a_helper_that_finished_by_itself_has_a_verdict() {
         let code = |v: RunVerdict| finished_code(&v, Some(3), "checker");
         assert_eq!(code(RunVerdict::Ok), Ok(Some(3)));

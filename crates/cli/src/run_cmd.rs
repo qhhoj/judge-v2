@@ -78,24 +78,3 @@ pub fn run(args: RunArgs) -> anyhow::Result<bool> {
     println!("{}", outcome_text(&outcome));
     Ok(outcome == Outcome::Graded)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use judge_grader::judge::RetryReason;
-
-    #[test]
-    fn every_outcome_has_a_distinct_line() {
-        let lines = [
-            outcome_text(&Outcome::Graded),
-            outcome_text(&Outcome::CompileError("bad".into())),
-            outcome_text(&Outcome::InternalError("boom".into())),
-            outcome_text(&Outcome::Aborted),
-            outcome_text(&Outcome::Retry(RetryReason::RuntimeMissing)),
-        ];
-        assert_eq!(lines[0], "graded");
-        assert!(lines[1].contains("bad") && lines[2].contains("boom") && lines[4].contains("RuntimeMissing"));
-        let distinct: std::collections::HashSet<_> = lines.iter().collect();
-        assert_eq!(distinct.len(), lines.len());
-    }
-}

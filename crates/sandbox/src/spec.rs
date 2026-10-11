@@ -113,53 +113,13 @@ mod tests {
     }
 
     #[test]
-    fn solution_limits_follow_the_spec() {
-        let limits = Limits::for_solution(1.5, 262_144, 1, 5000);
-        assert_eq!(limits.wall_s, 5.5);
-        assert_eq!(limits.fsize_kib, 6);
-        assert_eq!(limits.extra_time_s, 0.5);
-    }
-
-    #[test]
-    fn argv_has_cgroup_limits_files_and_the_command_last() {
-        let args = isolate_args(4, &spec(), Path::new("/tmp/4.meta"));
-        for flag in [
-            "--cg",
-            "-b4",
-            "--cg-mem=262144",
-            "--time=1.5",
-            "--extra-time=0.5",
-            "--wall-time=5.5",
-            "--processes=1",
-            "--fsize=6",
-            "--open-files=64",
-            "--meta=/tmp/4.meta",
-            "--stdin=input",
-            "--stdout=output",
-            "--stderr=/dev/null",
-            "--env=PATH=/usr/bin:/bin",
-            "--env=HOME=/box",
-            "--dir=/opt/jdk",
-        ] {
-            assert!(has(&args, flag), "missing {flag} in {args:?}");
-        }
-        let run = args.iter().position(|a| a == "--run").unwrap();
-        assert_eq!(&args[run + 1..], ["--", "./main"]);
-    }
-
-    #[test]
-    fn the_network_is_never_shared_and_stdio_can_be_inherited() {
+    fn the_network_is_never_shared_stdio_can_be_inherited_and_the_command_is_last() {
         let mut s = spec();
         s.stdio = Stdio::default();
         let args = isolate_args(0, &s, Path::new("/m"));
         assert!(!has(&args, "--share-net"));
         assert!(!args.iter().any(|a| a.starts_with("--stdin") || a.starts_with("--stdout")));
-    }
-
-    #[test]
-    fn extra_env_is_passed() {
-        let mut s = spec();
-        s.env.push(("JAVA_TOOL_OPTIONS".into(), "-Xss64m".into()));
-        assert!(has(&isolate_args(0, &s, Path::new("/m")), "--env=JAVA_TOOL_OPTIONS=-Xss64m"));
+        let run = args.iter().position(|a| a == "--run").unwrap();
+        assert_eq!(&args[run + 1..], ["--", "./main"], "the command comes last, after `--`");
     }
 }

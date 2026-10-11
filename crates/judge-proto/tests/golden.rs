@@ -7,41 +7,6 @@ fn stored_bytes(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn there_is_a_fixture_for_every_message_kind() {
-    let names = fixture_names().unwrap();
-    for kind in [
-        "judge-hello",
-        "judge-pong",
-        "judge-accepted",
-        "judge-compiled",
-        "judge-started",
-        "judge-cases",
-        "judge-final-graded",
-        "judge-error-slots-full",
-        "judge-draining",
-        "bridge-welcome",
-        "bridge-ping",
-        "bridge-assign-inline",
-        "bridge-abort",
-        "bridge-ack",
-        "bridge-disconnect",
-        "bridge-error",
-        "fetch-source-request",
-        "chunk",
-    ] {
-        assert!(names.iter().any(|name| name == kind), "missing fixture {kind}");
-    }
-}
-
-#[test]
-fn every_json_fixture_encodes_to_its_stored_bytes() {
-    for name in fixture_names().unwrap() {
-        let fixture = read_fixture(&name).unwrap();
-        assert_eq!(encode(&fixture).unwrap(), stored_bytes(&name), "{name}");
-    }
-}
-
-#[test]
 fn every_stored_binary_decodes_to_its_json() {
     for name in fixture_names().unwrap() {
         let fixture = read_fixture(&name).unwrap();

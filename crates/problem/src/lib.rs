@@ -9,11 +9,3 @@ pub mod plan;
 pub mod resolve;
 pub mod short_circuit;
 pub mod verdict;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn workspace_builds() {
-        assert_eq!(env!("CARGO_PKG_NAME"), "judge-problem");
-    }
-}

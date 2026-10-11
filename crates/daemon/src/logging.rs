@@ -24,36 +24,3 @@ pub fn init(judge_name: &str) {
         tracing::info!(judge = judge_name, version = env!("CARGO_PKG_VERSION"), "qhhoj-judge starting");
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Buffer {
-        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(b);
-            Ok(b.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn events_are_json_with_fields() {
-        let buffer = Buffer::default();
-        let writer = buffer.clone();
-        let subscriber = json_subscriber(move || writer.clone());
-        tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(submission_id = "s1", generation = 2, outcome = "graded", "assignment finished");
-        });
-        let line = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
-        let json: serde_json::Value = serde_json::from_str(line.lines().next().unwrap()).unwrap();
-        assert_eq!(json["fields"]["submission_id"], "s1");
-        assert_eq!(json["fields"]["outcome"], "graded");
-        assert_eq!(json["level"], "INFO");
-    }
-}

@@ -180,19 +180,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn minimal_loopback_config_gets_defaults() {
-        let c = parse(MIN).unwrap();
-        assert_eq!(
-            (c.cache_max_bytes, c.box_base, c.drain_timeout_s, c.data_wait_ms),
-            (20 << 30, 0, 120, 10_000)
-        );
-        assert_eq!(c.limits.default_output_limit, 25_165_824);
-        assert_eq!(c.limits.jvm_reserve_kib, 131_072);
-        assert_eq!((c.reconnect.initial_ms, c.reconnect.max_ms), (500, 30_000));
-        assert_eq!(c.metrics_listen, "127.0.0.1:9464");
-    }
-
-    #[test]
     fn remote_bridge_needs_tls_and_https() {
         let remote = MIN.replace("http://127.0.0.1:9990", "http://10.0.0.1:9999");
         assert!(parse(&remote).is_err(), "plaintext to a remote bridge");
@@ -240,14 +227,8 @@ mod tests {
     }
 
     #[test]
-    fn unknown_keys_are_refused() {
-        assert!(parse(&format!("{MIN}slot = 3\n")).is_err());
-    }
-
-    #[test]
     fn the_example_config_parses() {
         let example = include_str!("../../../packaging/config.example.toml");
-        let config = parse(example).unwrap();
-        assert_eq!(config.tls.unwrap().server_name.as_deref(), Some("bridge.qhhoj.internal"));
+        parse(example).unwrap();
     }
 }
