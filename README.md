@@ -43,7 +43,7 @@ Feature `generate.polygon`, protocol minor 2. The bridge sends `GenerateTests`; 
 `input_name`/`answer_name` entries (`UploadGeneratedTests`, 1 MiB chunks) and sends `GenerationDone` (`ok`, or a
 `GenerationFailure` with stage, kind, program, test index, detail). A generation holds one slot like a run, is not
 in the per-run outbox, and ends with the session that assigned it (the judge cancels it when the session ends).
-`CancelGeneration` and the drain timeout stop it between runs; a result for a cancelled generation is not sent.
+`CancelGeneration` and the drain timeout stop it between runs; a cancelled generation ends with `GenerationDone` `STAGE_JOB`/`INTERNAL` "cancelled" (nothing is sent when the session is gone). With no free slot the judge sends `JudgeError` `SLOTS_FULL` and `GenerationDone` "no free slot".
 
 - Bundle: unpacked under the zip limits. Each program is compiled with every file of its bundle directory beside
   it, so `#include "testlib.h"` finds the package's copy (`-I/testlib` is the fallback). An unknown language key

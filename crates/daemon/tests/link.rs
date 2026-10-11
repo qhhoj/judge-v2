@@ -383,6 +383,16 @@ async fn a_generation_without_a_free_slot_is_answered_slots_full_and_the_session
         })
     })
     .await;
+    eventually(|| {
+        h.bridge.messages(0).iter().any(|m| match &m.body {
+            Some(judge_message::Body::GenerationDone(done)) => {
+                let failure = done.failure.clone().unwrap_or_default();
+                done.generation_id == "g2" && !done.ok && failure.detail == "no free slot"
+            }
+            _ => false,
+        })
+    })
+    .await;
     h.bridge.hang_up(0);
     eventually(|| h.pool.events.lock().unwrap().iter().any(|e| e == "cancel all generations")).await;
 }

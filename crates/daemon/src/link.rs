@@ -5,7 +5,7 @@ use crate::config::{Config, is_loopback_url};
 use crate::metrics::Metrics;
 use crate::outbox::{AssignmentRef, Outboxes};
 use crate::wire::{self, Assignment, BridgeEvent, HelloInfo, JudgeMessage, ResumeDecision};
-use judge_grader::generate::GenerationPlan;
+use judge_grader::generate::{GenerationFailure, GenerationPlan};
 use judge_proto::v1::judge_link_client::JudgeLinkClient;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -332,6 +332,8 @@ impl Session<'_> {
         let id = plan.id.clone();
         if self.ctx.pool.generate(plan, self.session_id.clone()).is_err() {
             self.tx.send(wire::generation_slots_full(&id)).await.ok();
+            let refused = GenerationFailure::internal("no free slot");
+            self.tx.send(wire::generation_done(&id, &Err(refused))).await.ok();
         }
     }
 

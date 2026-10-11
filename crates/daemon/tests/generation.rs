@@ -209,7 +209,7 @@ async fn a_bundle_over_the_cap_is_refused_without_fetching() {
 }
 
 #[tokio::test]
-async fn a_running_generation_holds_a_slot_and_a_cancel_ends_it_silently() {
+async fn a_running_generation_holds_a_slot_and_a_cancel_ends_it_with_a_cancelled_done() {
     let runner = Generating { wait_for_cancel: true, ..generating(Ok(())) };
     let w = world(runner, false);
     w.pool.generate(plan("g5"), "s1".into()).unwrap();
@@ -219,16 +219,19 @@ async fn a_running_generation_holds_a_slot_and_a_cancel_ends_it_silently() {
     w.pool.cancel_generation("g5");
     eventually(|| w.pool.busy() == 0).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(done(&w).is_empty(), "nothing is sent for a cancelled generation");
+    let failure = finished(&w).await.failure.unwrap();
+    assert_eq!(failure.stage, v1::generation_failure::Stage::Job as i32);
+    assert_eq!(failure.kind, v1::generation_failure::Kind::Internal as i32);
+    assert_eq!(failure.detail, "cancelled");
     assert_eq!(leftovers(&w), 0);
     w.pool.generate(plan("g6"), "s1".into()).unwrap();
 }
 
 #[tokio::test]
-async fn losing_the_session_cancels_every_generation_and_nothing_reaches_the_new_one() {
+async fn losing_the_session_cancels_every_generation_and_sends_nothing() {
     let runner = Generating { wait_for_cancel: true, ..generating(Ok(())) };
     let w = world(runner, false);
-    w.pool.generate(plan("g7"), "s1".into()).unwrap();
+    w.pool.generate(plan("g7"), "gone-session".into()).unwrap();
     w.pool.cancel_generations();
     eventually(|| w.pool.busy() == 0).await;
     assert!(done(&w).is_empty());

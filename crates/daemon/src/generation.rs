@@ -220,16 +220,9 @@ async fn stages(
     (runner, upload_result(deps, (job, ticket), (files, deadline)).await)
 }
 
-/// The result goes out with its detail clipped to the bridge's log limit. A cancelled job says nothing:
-/// the bridge asked for it, or the session it would answer on is gone.
-async fn report(
-    deps: &WorkerDeps,
-    (job, ticket): (&GenerationAssignment, &Ticket),
-    result: Result<(), GenerationFailure>,
-) {
-    if job.abort.load(Ordering::SeqCst) {
-        return;
-    }
+/// The result goes out with its detail clipped to the bridge's log limit. A cancelled job reports
+/// "cancelled" too (the bridge frees the slot on it); when the session is gone the send fails and nothing goes out.
+async fn report(deps: &WorkerDeps, ticket: &Ticket, result: Result<(), GenerationFailure>) {
     let result = result.map_err(|mut failure| {
         failure.detail = deps.outboxes.limits().clip_log(&failure.detail);
         failure
@@ -254,6 +247,6 @@ pub async fn process_generation(
     let _ = tokio::fs::remove_file(&files.bundle).await;
     let _ = tokio::fs::remove_file(&files.result).await;
     (job.release)();
-    report(deps, (&job, &ticket), result).await;
+    report(deps, &ticket, result).await;
     runner
 }
