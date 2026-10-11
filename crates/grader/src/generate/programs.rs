@@ -61,12 +61,13 @@ fn siblings(source: &Path) -> Result<Vec<SourceFile>, GenerationFailure> {
         let small = entry.metadata().is_ok_and(|meta| meta.len() <= MAX_SOURCE_BYTES);
         let Some(name) = entry.file_name().to_str().map(String::from) else { continue };
         if entry.file_type()?.is_file() && small && entry.path() != source {
-            found.push(SourceFile { name, bytes: std::fs::read(entry.path())? });
+            found.push((name, entry.path()));
         }
     }
-    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found.sort();
     found.truncate(MAX_SIBLINGS);
-    Ok(found)
+    // read only what is kept
+    found.into_iter().map(|(name, path)| Ok(SourceFile { name, bytes: std::fs::read(path)? })).collect()
 }
 
 /// The compile job: the source renamed as the language wants it, the package's own files beside it
