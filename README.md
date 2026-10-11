@@ -35,3 +35,30 @@ Pascal or Java that include testlib do not compile (the submission is an interna
   judge's scratch file, and a zip with more than 10,000 entries, are IE.
 - Compile errors instead of misgrading: a program submitted to an output-only problem, and a TEXT or OUTPUT
   submission to a signature or interactive problem.
+
+## Test generation (Polygon standard packages)
+
+Feature `generate.polygon`, protocol minor 2. The bridge sends `GenerateTests`; the judge fetches the bundle
+(`FetchGenerationBundle`, at most 512 MiB), builds every test in its two boxes, uploads a zip of the
+`input_name`/`answer_name` entries (`UploadGeneratedTests`, 1 MiB chunks) and sends `GenerationDone` (`ok`, or a
+`GenerationFailure` with stage, kind, program, test index, detail). A generation holds one slot like a run, is not
+in the per-run outbox, and ends with the session that assigned it (the judge cancels it when the session ends).
+`CancelGeneration` and the drain timeout stop it between runs; a cancelled generation ends with `GenerationDone` `STAGE_JOB`/`INTERNAL` "cancelled" (nothing is sent when the session is gone). With no free slot the judge sends `JudgeError` `SLOTS_FULL` and `GenerationDone` "no free slot".
+
+- Bundle: unpacked under the zip limits. Each program is compiled with every file of its bundle directory beside
+  it, so `#include "testlib.h"` finds the package's copy (`-I/testlib` is the fallback). An unknown language key
+  is `UNSUPPORTED_LANGUAGE`, a compile error `COMPILE_ERROR` with the log.
+- Generate: each distinct (generator, args) runs once (argv = args, no stdin, stdout = the input) with the plan's
+  generator limits and `max_file_bytes`. Manual inputs are copied with CRLF turned into LF (Polygon's Linux
+  package has them that way). A non-zero exit or a signal is `CRASHED` (detail: exit code or signal, then stderr).
+- Validate: the validator, if any, reads every input on stdin with `--testset tests --group <group>` (no `--group`
+  when the test has none); a non-zero exit is `REJECTED` with its stderr (512 bytes).
+- Solve: the one `SOLUTION` program runs on every input (the input and output files when the plan names both),
+  with the plan's solution limits plus the JVM reserve.
+- Caps: `max_total_bytes` over inputs and answers (`STAGE_JOB`, `OUTPUT_LIMIT`), `max_upload_bytes` over the zip,
+  `deadline_s` from receipt (`JOB_TIME_LIMIT`), all checked between runs.
+
+`qhhoj-judge generate --bundle b.zip --plan plan.json --out tests.zip [--languages ... --testlib ...]` runs the same
+code locally; the plan is a `GenerateTests` message as proto3 JSON (camelCase). It prints the output path, or the
+failure and exits 1. Isolate tests: `crates/grader/tests/generate_isolate.rs` (fixture bundle in
+`tests/fixtures/generate`).

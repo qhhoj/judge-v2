@@ -6,6 +6,7 @@ pub mod config;
 pub mod cores;
 pub mod drain;
 pub mod gates;
+pub mod generation;
 pub mod link;
 pub mod logging;
 pub mod metrics;

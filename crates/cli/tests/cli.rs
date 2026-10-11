@@ -184,3 +184,10 @@ mod with_isolate {
         assert!(out.stdout.contains("PY3 FAIL"), "{}", out.stdout);
     }
 }
+
+#[test]
+fn generate_with_an_unreadable_plan_exits_1_naming_the_plan_before_touching_isolate() {
+    let out = bin(&["generate", "--bundle", "/b.zip", "--plan", "/nonexistent/plan.json", "--out", "/o.zip"]);
+    assert_eq!(out.code, Some(1), "{}", out.stderr);
+    assert!(out.stderr.contains("plan /nonexistent/plan.json"), "{}", out.stderr);
+}

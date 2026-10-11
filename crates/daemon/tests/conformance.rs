@@ -13,6 +13,7 @@ use conformance::play::key_of;
 use conformance::scenario::{Role, Scenario, Step, load_all, parse_judge, scenarios_dir};
 use judge_daemon::config::{Config, parse};
 use judge_daemon::gates::Gates;
+use judge_daemon::generation::GrpcGeneration;
 use judge_daemon::link::{Connection, LinkContext, SlotPool, run_link};
 use judge_daemon::metrics::Metrics;
 use judge_daemon::outbox::{AssignmentRef, OUTBOX_WATERMARK, Outboxes};
@@ -35,7 +36,7 @@ use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio_stream::wrappers::TcpListenerStream;
 
-const JUDGE_SCENARIOS: [&str; 11] = [
+const JUDGE_SCENARIOS: [&str; 12] = [
     "11-grade",
     "12-compile-error",
     "18-resume-continue",
@@ -47,6 +48,7 @@ const JUDGE_SCENARIOS: [&str; 11] = [
     "30-judge-refuses-beyond-slots",
     "32-fetch-source",
     "33-draining",
+    "38-generation-refused",
 ];
 const HOLD_LIMIT: Duration = Duration::from_secs(5);
 /// The longest the replay waits for a resume or an abort the transcript promises; then the scenario fails.
@@ -413,6 +415,7 @@ fn pool(
         outboxes: w.outboxes.clone(),
         resolver: Arc::new(resolver(scenario, dirs[1].path(), dirs[2].path())),
         fetch: Arc::new(GrpcFetch { config: w.config.clone(), connection: w.connection.clone() }),
+        generation: Arc::new(GrpcGeneration { config: w.config.clone(), connection: w.connection.clone() }),
         gates: Gates { dir: Some(dirs[3].path().into()) },
         metrics: Arc::new(Metrics::new()),
         scratch: dirs[4].path().into(),

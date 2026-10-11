@@ -17,6 +17,14 @@ service JudgeLink {
   // The source of a file-only submission in chunks of at most 1 MiB,
   // only for a ref the calling judge's live session holds.
   rpc FetchSource(FetchSourceRequest) returns (stream Chunk);
+  // Minor 2. The bundle of a generation (a zip of sources, headers and manual
+  // inputs) in chunks of at most 1 MiB, only for a generation the calling
+  // judge's live session holds.
+  rpc FetchGenerationBundle(GenerationRequest) returns (stream Chunk);
+  // Minor 2. The result zip of a generation; the first message names the
+  // generation and the session, every message carries data. Accepted only for a
+  // generation the calling judge's live session holds, at most once.
+  rpc UploadGeneratedTests(stream UploadChunk) returns (UploadReceipt);
 }
 
 // One run of a submission; a rejudge or requeue is a new generation.
@@ -36,6 +44,7 @@ message JudgeMessage {
     Final final = 7;
     JudgeError error = 8;
     Draining draining = 9;
+    GenerationDone generation_done = 10;
   }
 }
 
@@ -48,6 +57,8 @@ message BridgeMessage {
     ResultAck ack = 5;
     Disconnect disconnect = 6;
     BridgeError error = 7;
+    GenerateTests generate = 8;
+    CancelGeneration cancel_generation = 9;
   }
 }
 
@@ -271,4 +282,135 @@ message FetchSourceRequest {
 
 message Chunk {
   bytes data = 1;
+}
+
+// ---- Test generation (minor 2, feature "generate.polygon") ----
+// A generation builds every test of a Polygon standard package: it runs the
+// generators, the validator and the main solution in isolate and uploads a zip
+// whose entries are the tests' input_name and answer_name. It takes one slot
+// and is bound to the session that received it: it is not in the per-run
+// outbox and does not survive a reconnect.
+
+message GenerationProgram {
+  enum Role {
+    ROLE_UNSPECIFIED = 0;
+    ROLE_GENERATOR = 1;
+    ROLE_VALIDATOR = 2;
+    ROLE_SOLUTION = 3;
+  }
+  // Unique in the generation; generators are named as in a test's command.
+  string name = 1;
+  Role role = 2;
+  string language_key = 3;
+  // Path of the source inside the bundle; every file in the same bundle
+  // directory is copied beside it when compiling (headers).
+  string source_path = 4;
+}
+
+message GenerationTest {
+  // 1-based, as Polygon numbers tests.
+  uint32 index = 1;
+  // Names of the input and answer entries in the result zip.
+  string input_name = 2;
+  string answer_name = 3;
+  // Polygon group, passed to the validator as --group; empty when none.
+  string group = 4;
+  // Exactly one: a manual test's input inside the bundle, or a generator run.
+  string manual_path = 5;
+  string generator = 6;
+  repeated string args = 7;
+}
+
+message ProgramLimits {
+  double time_s = 1;
+  double wall_s = 2;
+  uint64 memory_kib = 3;
+}
+
+message GenerationLimits {
+  ProgramLimits generator = 1;
+  ProgramLimits validator = 2;
+  ProgramLimits solution = 3;
+  // Cap of each generated input and answer.
+  uint64 max_file_bytes = 4;
+  // Cap of all inputs and answers together, uncompressed.
+  uint64 max_total_bytes = 5;
+  // Cap of the uploaded zip.
+  uint64 max_upload_bytes = 6;
+}
+
+message GenerateTests {
+  string generation_id = 1;
+  uint64 bundle_size = 2;
+  // Overall cap, from when the judge receives the message.
+  uint32 deadline_s = 3;
+  GenerationLimits limits = 4;
+  repeated GenerationProgram programs = 5;
+  repeated GenerationTest tests = 6;
+  // The solution reads and writes these files instead of stdin and stdout
+  // when both are set (problem.xml input-file / output-file).
+  string input_file = 7;
+  string output_file = 8;
+}
+
+message CancelGeneration {
+  string generation_id = 1;
+}
+
+message GenerationRequest {
+  string generation_id = 1;
+  string session_id = 2;
+}
+
+message UploadChunk {
+  // Read from the first message only.
+  string generation_id = 1;
+  string session_id = 2;
+  bytes data = 3;
+}
+
+message UploadReceipt {
+  uint64 bytes = 1;
+}
+
+message GenerationFailure {
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;
+    STAGE_COMPILE = 1;
+    STAGE_GENERATE = 2;
+    STAGE_VALIDATE = 3;
+    STAGE_SOLVE = 4;
+    // The job as a whole: fetch, deadline, caps, upload, cancel.
+    STAGE_JOB = 5;
+  }
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_COMPILE_ERROR = 1;
+    // Non-zero exit or a signal; detail says which.
+    KIND_CRASHED = 2;
+    KIND_TIME_LIMIT = 3;
+    KIND_MEMORY_LIMIT = 4;
+    KIND_OUTPUT_LIMIT = 5;
+    // The validator exited non-zero; detail is its stderr.
+    KIND_REJECTED = 6;
+    KIND_MISSING_FILE = 7;
+    KIND_UNSUPPORTED_LANGUAGE = 8;
+    KIND_JOB_TIME_LIMIT = 9;
+    KIND_INTERNAL = 10;
+  }
+  Stage stage = 1;
+  Kind kind = 2;
+  // The program's name, empty for job-level failures.
+  string program = 3;
+  // GenerationTest.index, 0 when not about one test.
+  uint32 test_index = 4;
+  // Compile log, validator stderr, exit code or signal; clipped to max_log_bytes.
+  string detail = 5;
+}
+
+// Sent after the upload completed (ok) or instead of it (failure).
+message GenerationDone {
+  string generation_id = 1;
+  bool ok = 2;
+  GenerationFailure failure = 3;
 }

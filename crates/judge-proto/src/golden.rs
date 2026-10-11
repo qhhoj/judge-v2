@@ -9,7 +9,9 @@ use prost::Message;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::v1::{BridgeMessage, Chunk, FetchSourceRequest, JudgeMessage};
+use crate::v1::{
+    BridgeMessage, Chunk, FetchSourceRequest, GenerationRequest, JudgeMessage, UploadChunk, UploadReceipt,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct Fixture {
@@ -59,6 +61,9 @@ pub fn encode(fixture: &Fixture) -> Result<Vec<u8>, GoldenError> {
         "BridgeMessage" => of::<BridgeMessage>(&fixture.message),
         "FetchSourceRequest" => of::<FetchSourceRequest>(&fixture.message),
         "Chunk" => of::<Chunk>(&fixture.message),
+        "GenerationRequest" => of::<GenerationRequest>(&fixture.message),
+        "UploadChunk" => of::<UploadChunk>(&fixture.message),
+        "UploadReceipt" => of::<UploadReceipt>(&fixture.message),
         other => Err(GoldenError::UnknownType(other.to_string())),
     }
 }
@@ -73,6 +78,9 @@ pub fn decode_to_json(type_name: &str, bytes: &[u8]) -> Result<Value, GoldenErro
         "BridgeMessage" => of::<BridgeMessage>(bytes),
         "FetchSourceRequest" => of::<FetchSourceRequest>(bytes),
         "Chunk" => of::<Chunk>(bytes),
+        "GenerationRequest" => of::<GenerationRequest>(bytes),
+        "UploadChunk" => of::<UploadChunk>(bytes),
+        "UploadReceipt" => of::<UploadReceipt>(bytes),
         other => Err(GoldenError::UnknownType(other.to_string())),
     }
 }

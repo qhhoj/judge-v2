@@ -1,20 +1,29 @@
 //! N slots, one worker task per slot (spec §2 "Daemon", §3.5 credit).
 
+use crate::generation::{GenerationAssignment, process_generation};
 use crate::link::{SlotPool, SlotsFull};
 use crate::outbox::{AssignmentRef, Outboxes};
 use crate::wire::Assignment;
-use crate::worker::{Job, Release, Runner, WorkerDeps, process};
+use crate::worker::{Job, Release, Runner, SlotJob, WorkerDeps, process};
+use judge_grader::generate::GenerationPlan;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+/// What a busy slot is doing: a submission's run, or a test generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Work {
+    Run(AssignmentRef),
+    Generation(String),
+}
+
 struct Running {
-    r: AssignmentRef,
+    work: Work,
     abort: Arc<AtomicBool>,
 }
 
 struct Slot {
-    tx: mpsc::UnboundedSender<Job>,
+    tx: mpsc::UnboundedSender<SlotJob>,
     running: Arc<Mutex<Option<Running>>>,
 }
 
@@ -46,32 +55,63 @@ impl Pool {
     }
 
     fn kill(&self, r: &AssignmentRef) {
+        self.abort_where(|work| work == &Work::Run(r.clone()));
+    }
+
+    fn abort_where(&self, matching: impl Fn(&Work) -> bool) {
         for slot in &self.slots {
-            if let Some(running) = slot.running.lock().unwrap().as_ref().filter(|run| &run.r == r) {
+            if let Some(running) = slot.running.lock().unwrap().as_ref().filter(|run| matching(&run.work)) {
                 running.abort.store(true, Ordering::SeqCst);
             }
         }
+    }
+
+    fn is_running(&self, work: &Work) -> bool {
+        self.slots
+            .iter()
+            .any(|slot| slot.running.lock().unwrap().as_ref().is_some_and(|run| &run.work == work))
+    }
+
+    /// Gives the work to the first free slot; `job` makes the slot's job from its abort flag and release.
+    fn place(
+        &self,
+        work: Work,
+        job: impl FnOnce(Arc<AtomicBool>, Release) -> SlotJob,
+    ) -> Result<(), SlotsFull> {
+        for slot in &self.slots {
+            let mut running = slot.running.lock().unwrap();
+            if running.is_none() {
+                let abort = Arc::new(AtomicBool::new(false));
+                *running = Some(Running { work: work.clone(), abort: abort.clone() });
+                let _ = slot.tx.send(job(abort, release(&slot.running, &work)));
+                return Ok(());
+            }
+        }
+        Err(SlotsFull)
     }
 }
 
 /// One worker task per slot. The slot is freed by the job's `release` (right before its Final),
 /// not when `process` returns; a job assigned meanwhile waits in the channel for the runner.
 fn spawn_slot(deps: Arc<WorkerDeps>, mut runner: Box<dyn Runner>) -> Slot {
-    let (tx, mut rx) = mpsc::unbounded_channel::<Job>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<SlotJob>();
     tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
-            runner = process(&deps, runner, job).await;
+            runner = match job {
+                SlotJob::Run(job) => process(&deps, runner, job).await,
+                SlotJob::Generate(job) => process_generation(&deps, runner, job).await,
+            };
         }
     });
     Slot { tx, running: Arc::default() }
 }
 
-/// Clears `running` only while it still holds `r` (a newer assignment may already sit there).
-fn release(running: &Arc<Mutex<Option<Running>>>, r: &AssignmentRef) -> Release {
-    let (running, r) = (running.clone(), r.clone());
+/// Clears `running` only while it still holds `work` (a newer assignment may already sit there).
+fn release(running: &Arc<Mutex<Option<Running>>>, work: &Work) -> Release {
+    let (running, work) = (running.clone(), work.clone());
     Arc::new(move || {
         let mut slot = running.lock().unwrap();
-        if slot.as_ref().is_some_and(|run| run.r == r) {
+        if slot.as_ref().is_some_and(|run| run.work == work) {
             *slot = None;
         }
     })
@@ -85,18 +125,31 @@ impl SlotPool for Pool {
             tracing::warn!(submission_id = %assignment.r.submission_id, generation = assignment.r.generation, "duplicate Assign ignored");
             return Ok(());
         }
-        for slot in &self.slots {
-            let mut running = slot.running.lock().unwrap();
-            if running.is_none() {
-                let abort = Arc::new(AtomicBool::new(false));
-                *running = Some(Running { r: assignment.r.clone(), abort: abort.clone() });
-                self.outboxes.open(&assignment.r);
-                let release = release(&slot.running, &assignment.r);
-                let _ = slot.tx.send(Job { assignment, abort, release });
-                return Ok(());
-            }
+        let r = assignment.r.clone();
+        self.place(Work::Run(r.clone()), |abort, release| {
+            self.outboxes.open(&r);
+            SlotJob::Run(Job { assignment, abort, release })
+        })
+    }
+
+    /// Takes a free slot like an Assign does; a generation already held is ignored.
+    fn generate(&self, plan: GenerationPlan, session_id: String) -> Result<(), SlotsFull> {
+        let work = Work::Generation(plan.id.clone());
+        if self.is_running(&work) {
+            tracing::warn!(generation_id = %plan.id, "duplicate GenerateTests ignored");
+            return Ok(());
         }
-        Err(SlotsFull)
+        self.place(work, |abort, release| {
+            SlotJob::Generate(GenerationAssignment { plan, session_id, abort, release })
+        })
+    }
+
+    fn cancel_generation(&self, generation_id: &str) {
+        self.abort_where(|work| work == &Work::Generation(generation_id.to_string()));
+    }
+
+    fn cancel_generations(&self) {
+        self.abort_where(|work| matches!(work, Work::Generation(_)));
     }
 
     fn abort(&self, r: &AssignmentRef) {

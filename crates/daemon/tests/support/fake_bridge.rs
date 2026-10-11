@@ -1,6 +1,8 @@
 //! A scripted bridge: records what the judge sends, lets the test send per session.
 use judge_proto::v1::judge_link_server::{JudgeLink, JudgeLinkServer};
-use judge_proto::v1::{BridgeMessage, Chunk, FetchSourceRequest, JudgeMessage};
+use judge_proto::v1::{
+    BridgeMessage, Chunk, FetchSourceRequest, GenerationRequest, JudgeMessage, UploadChunk, UploadReceipt,
+};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -12,11 +14,18 @@ use tonic::{Request, Response, Status, Streaming};
 
 type Out = mpsc::UnboundedSender<Result<BridgeMessage, Status>>;
 
+/// One upload: the first message's generation id and session id, then all the data.
+pub type Upload = (String, String, Vec<u8>);
+
 #[derive(Clone, Default)]
 pub struct Shared {
     pub sessions: Arc<Mutex<Vec<Out>>>,
     pub received: Arc<Mutex<Vec<(usize, JudgeMessage)>>>,
     pub credentials: Arc<Mutex<Vec<(String, String)>>>,
+    /// What FetchGenerationBundle serves, in chunks of 4 bytes.
+    pub bundle: Arc<Mutex<Vec<u8>>>,
+    /// Per UploadGeneratedTests call: the first message's generation and session ids, and all the data.
+    pub uploads: Arc<Mutex<Vec<Upload>>>,
 }
 
 struct Service(Shared);
@@ -25,6 +34,7 @@ struct Service(Shared);
 impl JudgeLink for Service {
     type SessionStream = Pin<Box<dyn Stream<Item = Result<BridgeMessage, Status>> + Send>>;
     type FetchSourceStream = Pin<Box<dyn Stream<Item = Result<Chunk, Status>> + Send>>;
+    type FetchGenerationBundleStream = Pin<Box<dyn Stream<Item = Result<Chunk, Status>> + Send>>;
 
     async fn session(
         &self,
@@ -55,6 +65,32 @@ impl JudgeLink for Service {
     ) -> Result<Response<Self::FetchSourceStream>, Status> {
         let chunks = vec![Ok(Chunk { data: b"print(".to_vec() }), Ok(Chunk { data: b"3)\n".to_vec() })];
         Ok(Response::new(Box::pin(tokio_stream::iter(chunks))))
+    }
+
+    async fn fetch_generation_bundle(
+        &self,
+        _request: Request<GenerationRequest>,
+    ) -> Result<Response<Self::FetchGenerationBundleStream>, Status> {
+        let bundle = self.0.bundle.lock().unwrap().clone();
+        let chunks: Vec<_> = bundle.chunks(4).map(|part| Ok(Chunk { data: part.to_vec() })).collect();
+        Ok(Response::new(Box::pin(tokio_stream::iter(chunks))))
+    }
+
+    async fn upload_generated_tests(
+        &self,
+        request: Request<Streaming<UploadChunk>>,
+    ) -> Result<Response<UploadReceipt>, Status> {
+        let mut inbound = request.into_inner();
+        let (mut ids, mut data) = (None, Vec::new());
+        while let Some(chunk) = inbound.next().await {
+            let chunk = chunk?;
+            ids.get_or_insert((chunk.generation_id, chunk.session_id));
+            data.extend(chunk.data);
+        }
+        let (generation, session) = ids.unwrap_or_default();
+        let bytes = data.len() as u64;
+        self.0.uploads.lock().unwrap().push((generation, session, data));
+        Ok(Response::new(UploadReceipt { bytes }))
     }
 }
 

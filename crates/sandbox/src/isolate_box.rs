@@ -100,8 +100,8 @@ impl IsolateBox {
         write_new(&self.box_path(name)?, &mut &bytes[..], 0o644)
     }
 
-    /// Reads at most `cap` bytes of a regular file the program left in the box. A symlink is refused.
-    pub fn read_output(&self, name: &str, cap: u64) -> Result<Vec<u8>, SandboxError> {
+    /// Opens a regular file the program left in the box for reading. A symlink is refused.
+    pub fn open_output(&self, name: &str) -> Result<File, SandboxError> {
         let path = self.box_path(name)?;
         // O_NOFOLLOW refuses a symlink, O_NONBLOCK keeps a FIFO from hanging the open.
         let file = OpenOptions::new()
@@ -112,8 +112,13 @@ impl IsolateBox {
         if !file.metadata()?.is_file() {
             return Err(SandboxError::BadName(name.to_string()));
         }
+        Ok(file)
+    }
+
+    /// Reads at most `cap` bytes of a regular file the program left in the box. A symlink is refused.
+    pub fn read_output(&self, name: &str, cap: u64) -> Result<Vec<u8>, SandboxError> {
         let mut bytes = Vec::new();
-        file.take(cap).read_to_end(&mut bytes)?;
+        self.open_output(name)?.take(cap).read_to_end(&mut bytes)?;
         Ok(bytes)
     }
 

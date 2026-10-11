@@ -5,6 +5,7 @@ use crate::config::{Config, is_loopback_url};
 use crate::metrics::Metrics;
 use crate::outbox::{AssignmentRef, Outboxes};
 use crate::wire::{self, Assignment, BridgeEvent, HelloInfo, JudgeMessage, ResumeDecision};
+use judge_grader::generate::{GenerationFailure, GenerationPlan};
 use judge_proto::v1::judge_link_client::JudgeLinkClient;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,6 +27,11 @@ pub trait SlotPool: Send + Sync {
     fn assign(&self, assignment: Assignment) -> Result<(), SlotsFull>;
     fn abort(&self, r: &AssignmentRef);
     fn drop_run(&self, r: &AssignmentRef);
+    /// Takes a free slot for a generation of the session `session_id`.
+    fn generate(&self, plan: GenerationPlan, session_id: String) -> Result<(), SlotsFull>;
+    fn cancel_generation(&self, generation_id: &str);
+    /// A generation does not survive its session.
+    fn cancel_generations(&self);
     fn busy(&self) -> u32;
     fn slots(&self) -> u32;
 }
@@ -47,6 +53,8 @@ pub enum LinkError {
 pub struct Connection {
     pub channel: Channel,
     pub session_id: String,
+    /// The session's send queue, for what is not in an outbox (`GenerationDone`).
+    pub outbound: mpsc::Sender<JudgeMessage>,
 }
 
 #[derive(Clone)]
@@ -139,6 +147,7 @@ fn log_end(ended: Result<(), LinkError>) {
 /// No FetchSource without a session; aborted runs whose Final never went out are forgotten.
 async fn end_session(ctx: &LinkContext) {
     *ctx.connection.write().await = None;
+    ctx.pool.cancel_generations();
     ctx.outboxes.drop_aborted_finals();
     ctx.metrics.reconnects.inc();
 }
@@ -154,6 +163,7 @@ struct Watch {
 /// Per-session state: what has been sent per ref, and the send queue.
 struct Session<'a> {
     ctx: &'a LinkContext,
+    session_id: String,
     tx: mpsc::Sender<JudgeMessage>,
     sent: HashMap<AssignmentRef, u32>,
 }
@@ -190,10 +200,11 @@ async fn session(ctx: &LinkContext) -> Result<(), LinkError> {
     let (mut inbound, welcomed) = tokio::time::timeout(HANDSHAKE, handshake(ctx, &mut client, rx))
         .await
         .map_err(|_| LinkError::Protocol("no Welcome in 15 s".into()))??;
-    let mut state = Session { ctx, tx, sent: HashMap::new() };
+    let outbound = tx.clone();
+    let mut state = Session { ctx, session_id: welcomed.session_id.clone(), tx, sent: HashMap::new() };
     // Resume decisions apply before the session is visible, so no fetch or worker races them.
     state.apply_resume(in_flight, welcomed.resume);
-    *ctx.connection.write().await = Some(Connection { channel, session_id: welcomed.session_id });
+    *ctx.connection.write().await = Some(Connection { channel, session_id: welcomed.session_id, outbound });
     // judge-v2-up.sh (plan D) waits for this line.
     tracing::info!(judge = %ctx.config.name, "bridge session started");
     state.run(&mut inbound).await
@@ -303,6 +314,8 @@ impl Session<'_> {
                 self.tx.send(wire::pong(nonce, self.ctx.pool.busy(), self.ctx.pool.slots())).await.ok();
             }
             BridgeEvent::Assign(assignment) => self.assign(assignment).await,
+            BridgeEvent::Generate(plan) => self.generate(*plan).await,
+            BridgeEvent::CancelGeneration(id) => self.ctx.pool.cancel_generation(&id),
             BridgeEvent::Abort(r) => self.ctx.pool.abort(&r),
             BridgeEvent::Ack(r, seq) => {
                 self.ctx.outboxes.ack(&r, seq);
@@ -313,6 +326,15 @@ impl Session<'_> {
             BridgeEvent::Welcome { .. } => return Err(LinkError::Protocol("second Welcome".into())),
         }
         Ok(true)
+    }
+
+    async fn generate(&mut self, plan: GenerationPlan) {
+        let id = plan.id.clone();
+        if self.ctx.pool.generate(plan, self.session_id.clone()).is_err() {
+            self.tx.send(wire::generation_slots_full(&id)).await.ok();
+            let refused = GenerationFailure::internal("no free slot");
+            self.tx.send(wire::generation_done(&id, &Err(refused))).await.ok();
+        }
     }
 
     async fn assign(&mut self, assignment: Assignment) {
