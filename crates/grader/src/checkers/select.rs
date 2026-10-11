@@ -13,6 +13,7 @@ use serde_norway::{Mapping, Value};
 pub enum CustomKind {
     Testlib,
     Default,
+    Themis,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +62,7 @@ fn custom(args: &Mapping) -> Result<CheckerChoice, CheckError> {
     let kind = match arg_str(args, "type").unwrap_or("testlib") {
         "testlib" => CustomKind::Testlib,
         "default" => CustomKind::Default,
+        "themis" => CustomKind::Themis,
         other => return Err(CheckError(format!("unsupported custom checker type {other:?}"))),
     };
     let source = arg_str(args, "files").ok_or_else(|| missing("files"))?.to_string();
@@ -179,7 +181,7 @@ mod tests {
         assert!(broken("rot13"));
         assert!(broken("{name: bridged, args: {lang: CPP17}}"));
         assert!(broken("{name: bridged, args: {files: c.cpp}}"));
-        assert!(broken("{name: bridged, args: {type: themis, lang: CPP17, files: c.cpp}}"));
+        assert!(broken("{name: bridged, args: {type: cms, lang: CPP17, files: c.cpp}}"));
         assert!(broken("{name: floats, args: {error_mode: sideways}}"));
         assert!(broken("{name: floats, args: {precision: -1}}"));
         assert!(broken("{name: floats, args: {precision: 99999999999}}"));

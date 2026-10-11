@@ -5,8 +5,10 @@ mod common;
 use common::{artefacts, cpp_helper, sandbox};
 use judge_grader::checkers::custom::{CustomChecker, PartialPoints};
 use judge_grader::checkers::select::CustomKind;
+use judge_grader::checkers::themis::{ThemisNames, names_for};
 use judge_grader::checkers::{CheckInput, CheckOutcome};
 use judge_grader::error::GradeError;
+use judge_problem::init::FileIo;
 use judge_sandbox::IsolateBox;
 use std::net::TcpListener;
 use std::path::Path;
@@ -35,7 +37,13 @@ fn fixture(offset: u32, kind: CustomKind, source: &str) -> Fixture {
     let program = artefacts(dirs[1].path()).program(&mut sandbox, &cpp_helper(source)).unwrap();
     let scratch = dirs[2].path().to_path_buf();
     Fixture {
-        checker: CustomChecker { program, kind, partial: PartialPoints::Absolute, time_limit_s: 1.0 },
+        checker: CustomChecker {
+            program,
+            kind,
+            partial: PartialPoints::Absolute,
+            themis_names: ThemisNames::default(),
+            time_limit_s: 1.0,
+        },
         _dirs: dirs,
         sandbox,
         scratch,
@@ -158,4 +166,77 @@ fn testlib_points_are_case_points_or_a_percentage_with_the_flag() {
     f.checker.partial = PartialPoints::Percentage;
     let half = judge_worth(&mut f, "50", 40.0);
     assert!((half.fraction - 0.5).abs() < 1e-9, "{half:?}");
+}
+
+/// Reads both directories with getline (CRLF-safe) and opens upper-case names; compares with the answer file.
+const THEMIS_ANSWER_FILE: &str = r#"#include <fstream>
+#include <iostream>
+#include <string>
+int main() {
+    std::string test, work;
+    std::getline(std::cin, test);
+    std::getline(std::cin, work);
+    for (std::string* s : {&test, &work}) if (!s->empty() && s->back() == '\r') s->pop_back();
+    std::ifstream ans(test + "/Sum.OUT"), out(work + "/Sum.OUT"), in(test + "/Sum.INP");
+    long long a, b, want, got;
+    if (!(in >> a >> b) || !(ans >> want)) return 3;
+    if (!(out >> got)) { std::cout << "Khong doc duoc output\n0\n"; return 0; }
+    if (got == want) std::cout << "Dung\n1.0\n";
+    else if (got == want + 1) std::cout << "Gan dung\n0.5\n";
+    else std::cout << "Sai\n0\n";
+}
+"#;
+
+/// Reads the directories with scanf, joins with "%s/%s", opens lower-case names and recomputes the answer.
+const THEMIS_RECOMPUTE: &str = r#"#include <cstdio>
+int main() {
+    char test[512], work[512], path[1100];
+    if (scanf("%511s %511s", test, work) != 2) return 3;
+    long long a, b, got;
+    snprintf(path, sizeof path, "%s/%s", test, "sum.inp");
+    FILE* in = fopen(path, "r");
+    if (!in || fscanf(in, "%lld %lld", &a, &b) != 2) return 3;
+    snprintf(path, sizeof path, "%s/%s", work, "sum.out");
+    FILE* out = fopen(path, "r");
+    if (!out || fscanf(out, "%lld", &got) != 1) { printf("Thieu output\n0\n"); return 0; }
+    printf(got == a + b ? "1\n" : "Sai\n0\n");
+}
+"#;
+
+fn themis(offset: u32, source: &str, file_io: Option<FileIo>) -> Fixture {
+    let mut f = fixture(offset, CustomKind::Themis, source);
+    f.checker.themis_names = names_for(file_io.as_ref(), source.as_bytes());
+    f
+}
+
+fn judge_case(f: &mut Fixture, input: &str, answer: &str, output: &str) -> CheckOutcome {
+    let at = |name: &str| -> std::path::PathBuf { Path::new(&f.scratch).join(name) };
+    for (name, text) in [("in", input), ("ans", answer), ("out", output)] {
+        std::fs::write(at(name), text).unwrap();
+    }
+    let io = CheckInput { input: &at("in"), output: &at("out"), answer: &at("ans"), points: 1.0 };
+    f.checker.check(&mut f.sandbox, &io).unwrap()
+}
+
+#[test]
+fn a_themis_checker_finds_the_case_files_by_its_own_names_and_scores_from_stdout() {
+    let io = FileIo { input: "sum.inp".into(), output: "sum.out".into() };
+    let mut f = themis(8, THEMIS_ANSWER_FILE, Some(io));
+    let ac = judge_case(&mut f, "2 3\n", "5\n", "5\n");
+    assert!(ac.passed && ac.fraction == 1.0 && ac.feedback == "Dung", "{ac:?}");
+    let half = judge_case(&mut f, "2 3\n", "5\n", "6\n");
+    assert!(half.passed && (half.fraction - 0.5).abs() < 1e-9, "{half:?}");
+    let wa = judge_case(&mut f, "2 3\n", "5\n", "9\n");
+    assert!(!wa.passed && wa.fraction == 0.0 && wa.feedback == "Sai", "{wa:?}");
+    let empty = judge_case(&mut f, "2 3\n", "5\n", "");
+    assert!(!empty.passed && empty.feedback == "Khong doc duoc output", "{empty:?}");
+}
+
+#[test]
+fn a_themis_checker_without_file_io_is_laid_out_by_its_source_literals() {
+    let mut f = themis(9, THEMIS_RECOMPUTE, None);
+    assert!(judge_case(&mut f, "2 3\n", "", "5\n").passed);
+    let wa = judge_case(&mut f, "2 3\n", "", "4\n");
+    assert!(!wa.passed && wa.feedback == "Sai", "{wa:?}");
+    assert_eq!(judge_case(&mut f, "2 3\n", "", "").fraction, 0.0, "no output is score 0");
 }

@@ -133,7 +133,7 @@ impl CheckerSpec {
     }
 }
 
-const GRADED_CUSTOM_CHECKERS: [&str; 2] = ["testlib", "default"];
+const GRADED_CUSTOM_CHECKERS: [&str; 3] = ["testlib", "default", "themis"];
 
 impl InitYaml {
     pub fn unsupported_feature(&self) -> Option<String> {
@@ -213,11 +213,11 @@ mod tests {
     fn capability_gated_features_are_reported() {
         let generator = parse_init("generator: gen.cpp\ntest_cases: []\n").unwrap();
         assert_eq!(generator.unsupported_feature().as_deref(), Some("generator"));
-        let themis = parse_init(
-            "test_cases: []\nchecker: {name: bridged, args: {type: themis, lang: CPP17, files: c.cpp}}\n",
+        let cms = parse_init(
+            "test_cases: []\nchecker: {name: bridged, args: {type: cms, lang: CPP17, files: c.cpp}}\n",
         )
         .unwrap();
-        assert_eq!(themis.unsupported_feature().as_deref(), Some("checker.themis"));
+        assert_eq!(cms.unsupported_feature().as_deref(), Some("checker.cms"));
         let testlib = parse_init(
             "test_cases: []\nchecker: {name: bridged, args: {type: testlib, lang: CPP17, files: c.cpp}}\n",
         )

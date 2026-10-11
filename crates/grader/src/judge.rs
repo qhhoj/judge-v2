@@ -9,7 +9,8 @@ use crate::case_judges::{
     CaseContext, Check, InteractiveCases, OutputCases, ProgramCases, UnreadableOutputs,
 };
 use crate::checkers::custom::CustomChecker;
-use crate::checkers::select::{CheckerChoice, choose};
+use crate::checkers::select::{CheckerChoice, CustomKind, choose};
+use crate::checkers::themis::{self, ThemisNames};
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::error::GradeError;
 use crate::grade::grade_cases;
@@ -282,14 +283,33 @@ fn check_of(
         CheckerChoice::Builtin(checker) => Ok(Check::Builtin(checker)),
         CheckerChoice::Custom(custom) => {
             let program = helper_program(env, problem, &custom.lang, &[&custom.source])?;
+            let themis_names = match custom.kind {
+                CustomKind::Themis => themis_names(problem, &custom.source)?,
+                _ => ThemisNames::default(),
+            };
+            let partial = custom.partial;
             Ok(Check::Custom(CustomChecker {
                 program,
                 kind: custom.kind,
-                partial: custom.partial,
+                partial,
+                themis_names,
                 time_limit_s,
             }))
         }
     }
+}
+
+/// A themis checker opens the case files by name: the problem's file I/O names and its own source's literals.
+fn themis_names(problem: &ResolvedProblem, source: &str) -> Result<ThemisNames, GradeError> {
+    let bytes = read_data_source(problem, source)?.bytes;
+    let names = themis::names_for(problem.init.file_io.as_ref(), &bytes);
+    if names.is_empty() {
+        return Err(GradeError::Checker(
+            "a themis checker needs the problem's file I/O names, or `.inp`/`.out` names in its source"
+                .into(),
+        ));
+    }
+    Ok(names)
 }
 
 fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {

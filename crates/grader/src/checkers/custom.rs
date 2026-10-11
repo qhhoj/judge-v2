@@ -3,6 +3,7 @@
 
 use super::identical::PRESENTATION_ERROR;
 use super::select::CustomKind;
+use super::themis::{self, ThemisNames};
 use super::{CheckError, CheckInput, CheckOutcome};
 use crate::error::GradeError;
 use crate::program::Program;
@@ -21,6 +22,8 @@ pub struct CustomChecker {
     pub program: Program,
     pub kind: CustomKind,
     pub partial: PartialPoints,
+    /// Where a themis checker looks for the case files; empty for the other kinds.
+    pub themis_names: ThemisNames,
     pub time_limit_s: f64,
 }
 
@@ -165,17 +168,18 @@ fn read_text(sandbox: &IsolateBox, name: &str) -> String {
 impl CustomChecker {
     fn spec(&self) -> RunSpec {
         let mut argv = self.program.run.clone();
-        argv.extend(["input", "output", "answer"].map(String::from));
+        let mut stdin = "/dev/null".to_string();
+        if self.kind == CustomKind::Themis {
+            stdin = themis::PATHS_FILE.into();
+        } else {
+            argv.extend(["input", "output", "answer"].map(String::from));
+        }
         let mut limits = checker_limits(self.time_limit_s);
         limits.processes = self.program.processes.max(1);
         RunSpec {
             argv,
             limits,
-            stdio: Stdio {
-                stdin: Some("/dev/null".into()),
-                stdout: Some(STDOUT.into()),
-                stderr: Some(STDERR.into()),
-            },
+            stdio: Stdio { stdin: Some(stdin), stdout: Some(STDOUT.into()), stderr: Some(STDERR.into()) },
             env: self.program.env.clone(),
             dirs: self.program.dirs.clone(),
         }
@@ -186,12 +190,20 @@ impl CustomChecker {
     pub fn check(&self, sandbox: &mut IsolateBox, io: &CheckInput) -> Result<CheckOutcome, GradeError> {
         sandbox.reset()?;
         sandbox.put_tree(&self.program.dir)?;
-        sandbox.put("input", io.input, false)?;
-        sandbox.put("output", io.output, false)?;
-        sandbox.put("answer", io.answer, false)?;
+        if self.kind == CustomKind::Themis {
+            themis::stage(sandbox.dir(), &self.themis_names, (io.input, io.output, io.answer))?;
+            sandbox.put_bytes(themis::PATHS_FILE, themis::paths_text().as_bytes())?;
+        } else {
+            sandbox.put("input", io.input, false)?;
+            sandbox.put("output", io.output, false)?;
+            sandbox.put("answer", io.answer, false)?;
+        }
         let meta = sandbox.run(&self.spec())?;
         let verdict = classify(&meta, OutputUse { written: 0, cap: u64::MAX });
         let code = finished_code(&verdict, meta.exit_code, "checker")?;
+        if self.kind == CustomKind::Themis {
+            return Ok(themis::interpret(code, &read_text(sandbox, STDOUT))?);
+        }
         let report =
             ExitReport { code, stdout: read_text(sandbox, STDOUT), stderr: read_text(sandbox, STDERR) };
         let scale = PartialScale { mode: self.partial, case_points: io.points };
