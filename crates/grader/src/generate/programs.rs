@@ -2,7 +2,7 @@
 
 use super::failure::{GenerationFailure, Kind, Stage};
 use super::plan::{GenerationPlan, PlanProgram, is_safe_relative};
-use crate::artefacts::{MAX_SOURCE_BYTES, with_testlib};
+use crate::artefacts::{MAX_SOURCE_BYTES, for_helper};
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::judge::JudgeEnv;
 use crate::languages::Language;
@@ -78,9 +78,8 @@ fn compile_job(
     source: &SourceFile,
     beside: Vec<SourceFile>,
 ) -> CompileJob {
-    let mut job = CompileJob::for_language(language, &source.bytes);
-    job.argv = job.argv.map(|argv| with_testlib(argv, language.testlib_flag.as_deref()));
-    job.dirs.push(format!("/testlib={}", env.artefacts.testlib_dir().display()));
+    let mut job =
+        for_helper(CompileJob::for_language(language, &source.bytes), language, env.artefacts.testlib_dir());
     let taken = language.source_name(&source.bytes);
     job.files.extend(beside.into_iter().filter(|file| file.name != taken));
     job
