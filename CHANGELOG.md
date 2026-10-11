@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.0 (2026-10-11)
+
+### Features
+
+- testlib `points N` from a custom checker or interactor is N points of the case, clamped to 0..case points; with `treat_checker_points_as_percentage: true` it is N% of the case points.
+- `checker.themis`: bridged checkers with `type: themis` read the test and contestant directories from stdin, find the case files under the problem's file I/O names and the checker source's `.inp`/`.out` literals (every letter case), and print the 0..1 score on the last stdout line.
+
+### Fixes
+
+- Checkers, interactors, generators and validators compile with at least 30 s of CPU (60 s wall): testlib.h alone used most of the 10 s default.
+- Release tooling: release PRs carry this note so the change-file check passes.
+
 ## 2.1.0 (2026-10-11)
 
 ### Features
