@@ -80,6 +80,11 @@ impl Artefacts {
         &self.setup.registry
     }
 
+    /// Host directory mounted read-only at `/testlib` while a program compiles.
+    pub fn testlib_dir(&self) -> &std::path::Path {
+        &self.setup.testlib_dir
+    }
+
     /// Compiles `source` once per key. The returned program's lease keeps the cache entry alive.
     pub fn program(&self, sandbox: &mut IsolateBox, source: &HelperSource) -> Result<Program, GradeError> {
         let language = self
