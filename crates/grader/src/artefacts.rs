@@ -3,7 +3,7 @@
 
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::error::GradeError;
-use crate::languages::LanguageRegistry;
+use crate::languages::{Language, LanguageRegistry};
 use crate::program::{Program, SourceFile};
 use judge_problem::dir_cache::DirCache;
 use judge_problem::resolve::ResolvedProblem;
@@ -52,6 +52,20 @@ pub fn artefact_key(files: &[SourceFile], lang: &str, build_id: &str) -> String 
     hex::encode(hash.finalize())
 }
 
+/// testlib.h alone takes about 10 s of CPU at -O2 on a busy judge, the default compile limit: a helper
+/// (checker, interactor, generator, validator) gets at least this much.
+const HELPER_COMPILE_TIME_S: f64 = 30.0;
+
+/// Makes `job` compile a problem-author program: `/testlib` mounted and on the include path, and at least
+/// `HELPER_COMPILE_TIME_S` of CPU (twice that of wall time).
+pub fn for_helper(mut job: CompileJob, language: &Language, testlib_dir: &std::path::Path) -> CompileJob {
+    job.argv = job.argv.map(|argv| with_testlib(argv, language.testlib_flag.as_deref()));
+    job.dirs.push(format!("/testlib={}", testlib_dir.display()));
+    job.limits.time_s = job.limits.time_s.max(HELPER_COMPILE_TIME_S);
+    job.limits.wall_s = job.limits.wall_s.max(2.0 * HELPER_COMPILE_TIME_S);
+    job
+}
+
 /// The flag goes right after the compiler, before the language's own options.
 pub fn with_testlib(mut argv: Vec<String>, flag: Option<&str>) -> Vec<String> {
     if let (Some(flag), false) = (flag, argv.is_empty()) {
@@ -93,9 +107,8 @@ impl Artefacts {
             .get(&source.lang)
             .ok_or_else(|| GradeError::RuntimeMissing(source.lang.clone()))?;
         let main = &source.files.first().ok_or_else(|| GradeError::Checker("helper has no source".into()))?;
-        let mut job = CompileJob::for_language(language, &main.bytes);
-        job.argv = job.argv.map(|argv| with_testlib(argv, language.testlib_flag.as_deref()));
-        job.dirs.push(format!("/testlib={}", self.setup.testlib_dir.display()));
+        let mut job =
+            for_helper(CompileJob::for_language(language, &main.bytes), language, &self.setup.testlib_dir);
         job.files.extend(source.files[1..].iter().cloned());
         let build_id = self.setup.build_ids.get(&source.lang).map_or("", String::as_str);
         let key = format!("artefacts/{}", artefact_key(&source.files, &source.lang, build_id));
@@ -122,6 +135,30 @@ fn compile_helper(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_helper_compile_gets_the_testlib_mount_and_a_longer_limit_but_keeps_a_longer_override() {
+        let registry = LanguageRegistry::from_toml(include_str!("../../../languages.toml")).unwrap();
+        let testlib = std::path::Path::new("/opt/testlib");
+        let cpp = registry.get("CPP17").unwrap();
+        let job = for_helper(CompileJob::for_language(cpp, b"int main(){}"), cpp, testlib);
+        assert_eq!(
+            (job.limits.time_s, job.limits.wall_s),
+            (HELPER_COMPILE_TIME_S, 2.0 * HELPER_COMPILE_TIME_S)
+        );
+        assert!(job.dirs.contains(&"/testlib=/opt/testlib".to_string()));
+        assert!(job.argv.unwrap().contains(&"-I/testlib".to_string()));
+        let slow = Language {
+            compile_limits: Some(crate::languages::CompileLimitOverride {
+                time_s: 90.0,
+                wall_s: 200.0,
+                memory_kib: 1 << 21,
+            }),
+            ..cpp.clone()
+        };
+        let job = for_helper(CompileJob::for_language(&slow, b"int main(){}"), &slow, testlib);
+        assert_eq!((job.limits.time_s, job.limits.wall_s), (90.0, 200.0));
+    }
 
     fn file(name: &str, bytes: &[u8]) -> SourceFile {
         SourceFile { name: name.into(), bytes: bytes.to_vec() }
