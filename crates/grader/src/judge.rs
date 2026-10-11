@@ -428,6 +428,8 @@ mod tests {
         let testlib =
             parse_init("test_cases: []\ninteractive: {files: i.cpp, type: testlib, lang: CPP17}\n").unwrap();
         assert_eq!(unsupported_feature(&testlib), None);
+        let generator = parse_init("generator: g.cpp\ntest_cases: []\n").unwrap();
+        assert_eq!(unsupported_feature(&generator).as_deref(), Some("generator"));
     }
 
     /// A stamp source answering from fixed values, as the files would at the end of grading.
