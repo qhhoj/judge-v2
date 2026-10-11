@@ -3,6 +3,7 @@
 
 use super::Control;
 use super::failure::{GenerationFailure, Kind, Stage, verdict_failure};
+use super::line_endings::copy_lf;
 use super::pack::Budget;
 use super::plan::{GenerationPlan, PlanTest, ProgramLimits, TestSource};
 use super::programs::bundle_file;
@@ -86,7 +87,7 @@ impl Generation<'_> {
                 GenerationFailure::new(Stage::Generate, Kind::OutputLimit, detail).at_test(test.index)
             );
         }
-        std::fs::copy(source, self.input_path(position))?;
+        copy_lf(File::open(source)?, File::create(self.input_path(position))?)?;
         Ok(())
     }
 

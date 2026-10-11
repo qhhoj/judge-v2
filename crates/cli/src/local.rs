@@ -2,6 +2,7 @@
 
 use judge_daemon::runtimes::{available, detect_versions};
 use judge_grader::artefacts::{ArtefactSetup, Artefacts};
+use judge_grader::generate::{Control, GenerationFailure, GenerationJob, generate_tests};
 use judge_grader::judge::{GraderDefaults, JudgeEnv, Outcome, Submission, judge_submission};
 use judge_grader::languages::LanguageRegistry;
 use judge_grader::report::Reporter;
@@ -39,7 +40,8 @@ impl LocalJudge {
             cache: cache.clone(),
             registry: registry.clone(),
             build_ids: versions,
-            testlib_dir: testlib.into(),
+            // isolate mounts it by absolute path
+            testlib_dir: testlib.canonicalize()?,
         };
         let scratch = work.path().join("scratch");
         std::fs::create_dir_all(&scratch)?;
@@ -52,6 +54,10 @@ impl LocalJudge {
             defaults: DEFAULTS,
         };
         Ok(LocalJudge { env, cache, registry, _work: work })
+    }
+
+    pub fn generate(&mut self, job: &GenerationJob, control: &Control) -> Result<(), GenerationFailure> {
+        generate_tests(&mut self.env, job, control)
     }
 
     /// `problem_dir`'s last segment is the problem code; its parent is the data root.

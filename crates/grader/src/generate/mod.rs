@@ -4,9 +4,11 @@
 //! answer comes out. Everything the package ships runs in the worker's two isolate boxes: the programs are
 //! compiled with the headers beside them, each distinct generator command runs once, the validator checks
 //! every input, the main solution makes every answer. The job stops at the first failure, at the deadline
-//! and on cancel (both are checked between runs, not inside one).
+//! and on cancel (both are checked between runs, not inside one). Manual inputs are copied with LF line
+//! endings, as Polygon's Linux package has them.
 
 mod failure;
+mod line_endings;
 mod pack;
 mod phases;
 mod plan;

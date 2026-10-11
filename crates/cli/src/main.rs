@@ -1,5 +1,6 @@
-//! `qhhoj-judge`: the judge daemon, `run` (one local grade) and `selftest` (one a+b per language).
+//! `qhhoj-judge`: the judge daemon, `run` (one local grade), `generate` and `selftest` (one a+b per language).
 
+mod generate_cmd;
 mod local;
 mod run_cmd;
 mod selftest;
@@ -21,6 +22,8 @@ struct Cli {
 enum Command {
     /// Judge one source against a local problem directory.
     Run(run_cmd::RunArgs),
+    /// Build the tests of a Polygon standard package from a bundle and a plan.
+    Generate(generate_cmd::GenerateArgs),
     /// Compile and run an accepted a+b for every available language.
     Selftest(selftest::SelftestArgs),
 }
@@ -63,6 +66,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     exit(match cli.command {
         Some(Command::Run(args)) => run_cmd::run(args).or_else(report_failure),
+        Some(Command::Generate(args)) => generate_cmd::generate(args).or_else(report_failure),
         Some(Command::Selftest(args)) => {
             selftest_paths(&cli.config, &args).and_then(|(l, t)| selftest::selftest(&l, &t, &args))
         }
