@@ -1,5 +1,6 @@
 //! init.yml checker → a checker (spec §2 "Checkers").
 
+use super::custom::PartialPoints;
 use super::floats::{ErrorMode, Floats};
 use super::identical::Identical;
 use super::linecount::LineCount;
@@ -19,6 +20,7 @@ pub struct CustomSpec {
     pub source: String,
     pub lang: String,
     pub kind: CustomKind,
+    pub partial: PartialPoints,
 }
 
 pub enum CheckerChoice {
@@ -63,7 +65,16 @@ fn custom(args: &Mapping) -> Result<CheckerChoice, CheckError> {
     };
     let source = arg_str(args, "files").ok_or_else(|| missing("files"))?.to_string();
     let lang = arg_str(args, "lang").ok_or_else(|| missing("lang"))?.to_string();
-    Ok(CheckerChoice::Custom(CustomSpec { source, lang, kind }))
+    let partial = match args.get("treat_checker_points_as_percentage") {
+        None | Some(Value::Bool(false)) => PartialPoints::Absolute,
+        Some(Value::Bool(true)) => PartialPoints::Percentage,
+        Some(other) => {
+            return Err(CheckError(format!(
+                "treat_checker_points_as_percentage must be a boolean, got {other:?}"
+            )));
+        }
+    };
+    Ok(CheckerChoice::Custom(CustomSpec { source, lang, kind, partial }))
 }
 
 fn identical(args: &Mapping, unicode: bool) -> CheckerChoice {
@@ -144,6 +155,22 @@ mod tests {
         assert_eq!(custom.kind, CustomKind::Default);
         let testlib = choose(&spec("{name: bridged, args: {lang: CPP17, files: c.cpp}}"), false);
         assert!(matches!(testlib, Ok(CheckerChoice::Custom(CustomSpec { kind: CustomKind::Testlib, .. }))));
+    }
+
+    #[test]
+    fn the_percentage_flag_picks_how_partial_points_are_read() {
+        let partial = |args: &str| match choose(
+            &spec(&format!("{{name: bridged, args: {{lang: CPP17, files: c.cpp{args}}}}}")),
+            false,
+        ) {
+            Ok(CheckerChoice::Custom(custom)) => Ok(custom.partial),
+            Ok(CheckerChoice::Builtin(_)) => panic!("builtin"),
+            Err(error) => Err(error),
+        };
+        assert_eq!(partial(""), Ok(PartialPoints::Absolute));
+        assert_eq!(partial(", treat_checker_points_as_percentage: false"), Ok(PartialPoints::Absolute));
+        assert_eq!(partial(", treat_checker_points_as_percentage: true"), Ok(PartialPoints::Percentage));
+        assert!(partial(", treat_checker_points_as_percentage: yes").is_err());
     }
 
     #[test]

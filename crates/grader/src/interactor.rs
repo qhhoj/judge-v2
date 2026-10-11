@@ -7,7 +7,9 @@
 //! deadline on top of that kills both isolate processes if a limit does not fire.
 
 use crate::checkers::CheckOutcome;
-use crate::checkers::custom::{ExitReport, checker_limits, finished_code, interpret};
+use crate::checkers::custom::{
+    ExitReport, PartialPoints, PartialScale, checker_limits, finished_code, interpret,
+};
 use crate::checkers::select::CustomKind;
 use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
@@ -41,6 +43,8 @@ pub struct Interaction<'a> {
     pub interactor: &'a Program,
     pub input: &'a Path,
     pub answer: &'a Path,
+    /// What the case is worth: testlib's `points N` is N points of it, as for checkers.
+    pub points: f64,
 }
 
 #[derive(Debug)]
@@ -183,13 +187,15 @@ fn solution_result(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeE
     Ok(Interactive { verdict, time_s: meta.time_s, memory_kib: meta.cg_mem_kib, check: None })
 }
 
-fn interactor_outcome(boxes: &Boxes) -> Result<CheckOutcome, GradeError> {
+fn interactor_outcome(boxes: &Boxes, points: f64) -> Result<CheckOutcome, GradeError> {
     let meta = boxes.helper.read_meta()?;
     let verdict = classify(&meta, OutputUse { written: 0, cap: u64::MAX });
     let code = finished_code(&verdict, meta.exit_code, "interactor")?;
     let stderr = boxes.helper.read_output(INTERACTOR_STDERR, MAX_INTERACTOR_STDERR).unwrap_or_default();
     let report = ExitReport { code, stdout: String::new(), stderr: String::from_utf8_lossy(&stderr).into() };
-    interpret(CustomKind::Testlib, &report).map_err(|e| GradeError::Checker(format!("interactor: {}", e.0)))
+    let scale = PartialScale { mode: PartialPoints::Absolute, case_points: points };
+    interpret(CustomKind::Testlib, &report, scale)
+        .map_err(|e| GradeError::Checker(format!("interactor: {}", e.0)))
 }
 
 /// The interactor itself failed: testlib's `_fail` (exit 3) or a crash other than a broken pipe. The case is
@@ -211,7 +217,7 @@ fn decide(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeError> {
     if solution_wins(&result.verdict) && !interactor_failed(&interactor_verdict(boxes)?) {
         return Ok(result);
     }
-    Ok(Interactive { check: Some(interactor_outcome(boxes)?), ..result })
+    Ok(Interactive { check: Some(interactor_outcome(boxes, x.points)?), ..result })
 }
 
 #[cfg(test)]

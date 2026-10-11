@@ -282,7 +282,12 @@ fn check_of(
         CheckerChoice::Builtin(checker) => Ok(Check::Builtin(checker)),
         CheckerChoice::Custom(custom) => {
             let program = helper_program(env, problem, &custom.lang, &[&custom.source])?;
-            Ok(Check::Custom(CustomChecker { program, kind: custom.kind, time_limit_s }))
+            Ok(Check::Custom(CustomChecker {
+                program,
+                kind: custom.kind,
+                partial: custom.partial,
+                time_limit_s,
+            }))
         }
     }
 }

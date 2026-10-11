@@ -65,16 +65,18 @@ pub fn fd_path(file: &File) -> PathBuf {
     PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
 
-/// A case's input and answer, opened once.
+/// A case's input and answer, opened once, and what the case is worth.
 struct CaseFiles {
     input: File,
     answer: File,
+    points: f64,
 }
 
 fn open_case(problem: &ResolvedProblem, case: &PlannedCase) -> Result<CaseFiles, GradeError> {
     Ok(CaseFiles {
         input: problem.open_case_file(&case.input)?,
         answer: problem.open_case_file(&case.output)?,
+        points: case.total,
     })
 }
 
@@ -97,7 +99,7 @@ impl CaseContext<'_> {
         output: &Path,
     ) -> Result<CheckOutcome, GradeError> {
         let (input, answer) = (fd_path(&files.input), fd_path(&files.answer));
-        let io = CheckInput { input: &input, output, answer: &answer };
+        let io = CheckInput { input: &input, output, answer: &answer, points: files.points };
         match &self.check {
             Check::Builtin(checker) => Ok(checker.check(&io)?),
             Check::Custom(custom) => custom.check(helper, &io),
@@ -142,8 +144,13 @@ impl CaseJudge for InteractiveCases<'_> {
         let files = open_case(self.problem, case)?;
         let (input, answer) = (fd_path(&files.input), fd_path(&files.answer));
         let runnable = Runnable { program: &self.program, limits: &self.limits };
-        let x =
-            Interaction { solution: &runnable, interactor: &self.interactor, input: &input, answer: &answer };
+        let x = Interaction {
+            solution: &runnable,
+            interactor: &self.interactor,
+            input: &input,
+            answer: &answer,
+            points: case.total,
+        };
         let boxes = Boxes { solution: &mut *self.boxes.solution, helper: &mut *self.boxes.helper };
         let result = interact(boxes, &x)?;
         // The interactor's verdict, when `interact` kept it, decides: also for a solution killed by SIGPIPE

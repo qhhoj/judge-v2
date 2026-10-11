@@ -3,7 +3,7 @@
 mod common;
 
 use common::{artefacts, cpp_helper, sandbox};
-use judge_grader::checkers::custom::CustomChecker;
+use judge_grader::checkers::custom::{CustomChecker, PartialPoints};
 use judge_grader::checkers::select::CustomKind;
 use judge_grader::checkers::{CheckInput, CheckOutcome};
 use judge_grader::error::GradeError;
@@ -34,7 +34,12 @@ fn fixture(offset: u32, kind: CustomKind, source: &str) -> Fixture {
     let mut sandbox = sandbox(offset, dirs[0].path());
     let program = artefacts(dirs[1].path()).program(&mut sandbox, &cpp_helper(source)).unwrap();
     let scratch = dirs[2].path().to_path_buf();
-    Fixture { checker: CustomChecker { program, kind, time_limit_s: 1.0 }, _dirs: dirs, sandbox, scratch }
+    Fixture {
+        checker: CustomChecker { program, kind, partial: PartialPoints::Absolute, time_limit_s: 1.0 },
+        _dirs: dirs,
+        sandbox,
+        scratch,
+    }
 }
 
 fn judge(f: &mut Fixture, answer: &str, output: &str) -> Result<CheckOutcome, GradeError> {
@@ -42,7 +47,7 @@ fn judge(f: &mut Fixture, answer: &str, output: &str) -> Result<CheckOutcome, Gr
     std::fs::write(at("in"), "").unwrap();
     std::fs::write(at("ans"), answer).unwrap();
     std::fs::write(at("out"), output).unwrap();
-    let io = CheckInput { input: &at("in"), output: &at("out"), answer: &at("ans") };
+    let io = CheckInput { input: &at("in"), output: &at("out"), answer: &at("ans"), points: 1.0 };
     f.checker.check(&mut f.sandbox, &io)
 }
 
@@ -123,4 +128,34 @@ fn a_default_checker_reports_through_its_exit_code() {
     let partial = judge(&mut f, "", "p").unwrap();
     assert!(partial.passed && (partial.fraction - 0.25).abs() < 1e-9);
     assert!(!judge(&mut f, "", "x").unwrap().passed);
+}
+
+const POINTS_CHECKER: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerTestlibCmd(argc, argv);
+    int got = ouf.readInt();
+    if (got == 0) quitf(_ok, "all");
+    quitp(got, "scored");
+}
+"#;
+
+fn judge_worth(f: &mut Fixture, output: &str, points: f64) -> CheckOutcome {
+    let at = |name: &str| -> std::path::PathBuf { Path::new(&f.scratch).join(name) };
+    for (name, text) in [("in", ""), ("ans", ""), ("out", output)] {
+        std::fs::write(at(name), text).unwrap();
+    }
+    let io = CheckInput { input: &at("in"), output: &at("out"), answer: &at("ans"), points };
+    f.checker.check(&mut f.sandbox, &io).unwrap()
+}
+
+#[test]
+fn testlib_points_are_case_points_or_a_percentage_with_the_flag() {
+    let mut f = fixture(7, CustomKind::Testlib, POINTS_CHECKER);
+    let three_of_five = judge_worth(&mut f, "3", 5.0);
+    assert!(three_of_five.passed && (three_of_five.fraction - 0.6).abs() < 1e-9, "{three_of_five:?}");
+    assert_eq!(judge_worth(&mut f, "9", 5.0).fraction, 1.0, "clamped to the case");
+    assert_eq!(judge_worth(&mut f, "0", 5.0).fraction, 1.0, "accepted is full points");
+    f.checker.partial = PartialPoints::Percentage;
+    let half = judge_worth(&mut f, "50", 40.0);
+    assert!((half.fraction - 0.5).abs() < 1e-9, "{half:?}");
 }

@@ -71,6 +71,7 @@ fn play(g: &mut Game, source: &str) -> Result<Interactive, GradeError> {
         interactor: &g.interactor,
         input: &scratch.join("input"),
         answer: &scratch.join("answer"),
+        points: 1.0,
     };
     interact(Boxes { solution: &mut g.solution, helper: &mut g.helper }, &x)
 }
