@@ -13,7 +13,7 @@ pub use judge_proto::v1::{BridgeMessage, JudgeMessage, bridge_message, judge_mes
 
 pub const MAX_INLINE_SOURCE: usize = 1 << 20;
 /// What this judge grades beyond plain programs (`Hello.features`). SCRATCH is not supported.
-pub const FEATURES: [&str; 9] = [
+pub const FEATURES: [&str; 10] = [
     "interactive",
     "file_io",
     "output_only",
@@ -23,6 +23,7 @@ pub const FEATURES: [&str; 9] = [
     "checker.themis",
     "text",
     "generate.polygon",
+    "generate.compile",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +168,8 @@ fn role(value: i32) -> Role {
         Ok(R::Generator) => Role::Generator,
         Ok(R::Validator) => Role::Validator,
         Ok(R::Solution) => Role::Solution,
+        Ok(R::Checker) => Role::Checker,
+        Ok(R::Interactor) => Role::Interactor,
         _ => Role::Unspecified,
     }
 }

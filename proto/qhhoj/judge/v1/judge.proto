@@ -297,6 +297,10 @@ message GenerationProgram {
     ROLE_GENERATOR = 1;
     ROLE_VALIDATOR = 2;
     ROLE_SOLUTION = 3;
+    // Minor 3. Compiled only (compile check), never run.
+    ROLE_CHECKER = 4;
+    // Minor 3. Compiled only (compile check), never run.
+    ROLE_INTERACTOR = 5;
   }
   // Unique in the generation; generators are named as in a test's command.
   string name = 1;
@@ -339,6 +343,13 @@ message GenerationLimits {
   uint64 max_upload_bytes = 6;
 }
 
+// A GenerateTests with no tests is a compile check (minor 3, feature
+// "generate.compile"): every program must be a checker or an interactor and no
+// solution is needed. The judge compiles them in order (testlib.h on the include
+// path), stops at the first compile error (GenerationFailure with stage
+// COMPILE, kind COMPILE_ERROR, the program's name and the compile log), and on
+// success uploads an empty result zip and sends GenerationDone ok. With tests,
+// checker and interactor programs are refused.
 message GenerateTests {
   string generation_id = 1;
   uint64 bundle_size = 2;

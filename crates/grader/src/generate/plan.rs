@@ -10,6 +10,10 @@ pub enum Role {
     Generator,
     Validator,
     Solution,
+    /// Compiled only, in a compile check.
+    Checker,
+    /// Compiled only, in a compile check.
+    Interactor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,7 +102,12 @@ pub fn is_safe_relative(path: &str) -> bool {
     !path.is_empty() && Path::new(path).components().all(|part| matches!(part, Component::Normal(_)))
 }
 
-fn check_programs(plan: &GenerationPlan) -> Result<(), String> {
+/// A generation without tests only compiles its programs, which are checkers and interactors.
+pub fn is_compile_check(plan: &GenerationPlan) -> bool {
+    plan.tests.is_empty()
+}
+
+fn check_unique_named_roles(plan: &GenerationPlan) -> Result<(), String> {
     let mut names = HashSet::new();
     for program in &plan.programs {
         if program.name.is_empty() || !names.insert(program.name.as_str()) {
@@ -107,6 +116,34 @@ fn check_programs(plan: &GenerationPlan) -> Result<(), String> {
         if program.role == Role::Unspecified {
             return Err(format!("program {} has no role", program.name));
         }
+    }
+    Ok(())
+}
+
+fn is_compile_only(role: Role) -> bool {
+    matches!(role, Role::Checker | Role::Interactor)
+}
+
+fn check_compile_programs(plan: &GenerationPlan) -> Result<(), String> {
+    check_unique_named_roles(plan)?;
+    if plan.programs.is_empty() {
+        return Err("no tests and no programs".into());
+    }
+    match plan.programs.iter().find(|program| !is_compile_only(program.role)) {
+        Some(program) => {
+            Err(format!("compile check: program {} is not a checker or an interactor", program.name))
+        }
+        None => Ok(()),
+    }
+}
+
+fn check_programs(plan: &GenerationPlan) -> Result<(), String> {
+    check_unique_named_roles(plan)?;
+    if let Some(program) = plan.programs.iter().find(|program| is_compile_only(program.role)) {
+        return Err(format!(
+            "program {} is a checker or an interactor, which only a compile check takes",
+            program.name
+        ));
     }
     let count = |role| plan.programs.iter().filter(|program| program.role == role).count();
     if count(Role::Solution) != 1 {
@@ -136,9 +173,6 @@ fn check_test(plan: &GenerationPlan, test: &PlanTest) -> Result<(), String> {
 }
 
 fn check_tests(plan: &GenerationPlan) -> Result<(), String> {
-    if plan.tests.is_empty() {
-        return Err("no tests".into());
-    }
     let mut entries = HashSet::new();
     for test in &plan.tests {
         check_test(plan, test)?;
@@ -160,6 +194,9 @@ pub fn check_plan(plan: &GenerationPlan) -> Result<(), String> {
         && !(is_plain_box_name(&io.input) && is_plain_box_name(&io.output))
     {
         return Err("file names must be plain box file names".into());
+    }
+    if is_compile_check(plan) {
+        return check_compile_programs(plan);
     }
     check_programs(plan)?;
     check_tests(plan)
@@ -250,7 +287,35 @@ mod tests {
                 .contains("plain")
         );
         assert!(refused(|p| p.deadline_s = 0).contains("deadline"));
-        assert!(refused(|p| p.tests.clear()).contains("no tests"));
+    }
+
+    fn compile_check() -> GenerationPlan {
+        GenerationPlan {
+            tests: vec![],
+            programs: vec![program("check", Role::Checker), program("talk", Role::Interactor)],
+            ..plan()
+        }
+    }
+
+    #[test]
+    fn a_plan_without_tests_is_a_compile_check_of_checkers_and_interactors_only() {
+        assert!(check_plan(&compile_check()).is_ok());
+        let refused = |edit: fn(&mut GenerationPlan)| {
+            let mut plan = compile_check();
+            edit(&mut plan);
+            check_plan(&plan).unwrap_err()
+        };
+        assert!(refused(|p| p.programs.clear()).contains("no programs"));
+        assert!(refused(|p| p.programs.push(program("sol", Role::Solution))).contains("not a checker"));
+        assert!(refused(|p| p.programs.push(program("gen", Role::Generator))).contains("not a checker"));
+        assert!(refused(|p| p.programs.push(program("check", Role::Checker))).contains("repeated"));
+        assert!(refused(|p| p.deadline_s = 0).contains("deadline"));
+    }
+
+    #[test]
+    fn a_plan_with_tests_refuses_checker_and_interactor_programs() {
+        assert!(refused(|p| p.programs.push(program("check", Role::Checker))).contains("compile check"));
+        assert!(refused(|p| p.programs.push(program("talk", Role::Interactor))).contains("compile check"));
     }
 
     fn manual(path: &str) -> PlanTest {

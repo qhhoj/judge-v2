@@ -6,6 +6,9 @@
 //! every input, the main solution makes every answer. The job stops at the first failure, at the deadline
 //! and on cancel (both are checked between runs, not inside one). Manual inputs are copied with LF line
 //! endings, as Polygon's Linux package has them.
+//!
+//! A plan with no tests is a compile check: its checker and interactor programs are compiled and the
+//! result zip is empty.
 
 mod failure;
 mod line_endings;
@@ -24,6 +27,7 @@ use crate::judge::JudgeEnv;
 use judge_problem::archive::{ZipLimits, extract_zip};
 use pack::{Budget, write_result};
 use phases::Generation;
+use plan::is_compile_check;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -94,6 +98,13 @@ pub fn generate_tests(
     unpack_bundle(&job.bundle_zip, &bundle)?;
     let programs =
         programs::compile_all(env, plan, (&bundle, &work.0.join("programs")), &|| control.check())?;
+    if is_compile_check(plan) {
+        return write_result(
+            &[],
+            |_| unreachable!("a compile check has no tests"),
+            (&job.result_zip, plan.limits.max_upload_bytes),
+        );
+    }
     let budget = Budget::new(plan.limits.max_total_bytes);
     let mut generation = Generation { env, plan, control, programs, bundle, files: work.0.clone(), budget };
     generation.generate_inputs()?;
