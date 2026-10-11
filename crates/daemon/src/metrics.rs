@@ -90,12 +90,16 @@ impl Metrics {
     }
 }
 
+const MAX_SCRAPES: usize = 16;
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Answers every connection on `listen` with the rendered text, after `sample` refreshes sampled gauges.
 pub async fn serve(listen: String, metrics: Arc<Metrics>, sample: Arc<dyn Fn(&Metrics) + Send + Sync>) {
     let listener = match tokio::net::TcpListener::bind(&listen).await {
         Ok(listener) => listener,
         Err(error) => return tracing::error!(%error, listen, "metrics listener failed"),
     };
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_SCRAPES));
     loop {
         let mut stream = match listener.accept().await {
             Ok((stream, _)) => stream,
@@ -106,11 +110,14 @@ pub async fn serve(listen: String, metrics: Arc<Metrics>, sample: Arc<dyn Fn(&Me
                 continue;
             }
         };
+        // Over the cap the connection is dropped: a scraper retries, an idle client costs nothing.
+        let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
         sample(&metrics);
         let body = metrics.render();
         tokio::spawn(async move {
+            let _slot = slot;
             let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request).await;
+            let _ = tokio::time::timeout(REQUEST_TIMEOUT, stream.read(&mut request)).await;
             let head = format!(
                 "HTTP/1.0 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\nContent-Length: {}\r\n\r\n",
                 body.len()

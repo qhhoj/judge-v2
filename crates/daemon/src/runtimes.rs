@@ -5,19 +5,29 @@ use judge_grader::languages::LanguageRegistry;
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Reads a child's pipe to the end on its own thread, so a chatty command never blocks on a full pipe.
-fn drain_pipe(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+/// Most version output kept per pipe; a version line is far shorter.
+const MAX_VERSION_OUTPUT: u64 = 64 << 10;
+/// How long to wait for a pipe to close after the child has exited. A background grandchild that
+/// inherited the pipe would otherwise hold startup forever.
+const PIPE_GRACE: Duration = Duration::from_secs(2);
+
+/// Reads a child's pipe on its own thread, so a chatty command never blocks on a full pipe. The thread
+/// is left behind (not joined) if the pipe never closes.
+fn drain_pipe(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+    let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut bytes);
+        if let Some(pipe) = pipe {
+            let _ = pipe.take(MAX_VERSION_OUTPUT).read_to_end(&mut bytes);
         }
-        bytes
-    })
+        let _ = sender.send(bytes);
+    });
+    receiver
 }
 
 /// Whether `child` exited successfully within the version timeout (killed otherwise).
@@ -48,7 +58,7 @@ fn first_line(argv: &[String]) -> Option<String> {
         .ok()?;
     let (stdout, stderr) = (drain_pipe(child.stdout.take()), drain_pipe(child.stderr.take()));
     let ok = exited_ok(&mut child);
-    let (stdout, stderr) = (stdout.join().ok()?, stderr.join().ok()?);
+    let (stdout, stderr) = (stdout.recv_timeout(PIPE_GRACE).ok()?, stderr.recv_timeout(PIPE_GRACE).ok()?);
     if !ok {
         return None;
     }
