@@ -9,6 +9,7 @@
 
 use super::custom::{MAX_EXTENDED, MAX_FEEDBACK, clip_text};
 use super::{CheckError, CheckOutcome};
+use crate::file_io::letter_cases;
 use judge_problem::init::{FileIo, is_plain_box_name};
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
@@ -36,21 +37,14 @@ impl ThemisNames {
     }
 
     fn add(&mut self, name: &str) {
-        let Some((stem, ext)) = name.rsplit_once('.') else { return };
+        let Some((_, ext)) = name.rsplit_once('.') else { return };
         let set = match ext.to_ascii_lowercase().as_str() {
             "inp" => &mut self.inputs,
             "out" => &mut self.outputs,
             _ => return,
         };
         // Teachers mix cases (`Path.inp` set as file I/O, `Path.INP` opened by the checker).
-        for stem in [stem.to_string(), stem.to_ascii_lowercase(), stem.to_ascii_uppercase()] {
-            for ext in [ext.to_ascii_lowercase(), ext.to_ascii_uppercase()] {
-                let variant = format!("{stem}.{ext}");
-                if is_plain_box_name(&variant) {
-                    set.insert(variant);
-                }
-            }
-        }
+        set.extend(letter_cases(name).into_iter().filter(|name| is_plain_box_name(name)));
     }
 }
 

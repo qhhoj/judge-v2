@@ -5,6 +5,7 @@ pub mod case_judges;
 pub mod checkers;
 pub mod compile;
 pub mod error;
+pub mod file_io;
 pub mod generate;
 pub mod grade;
 pub mod interactor;

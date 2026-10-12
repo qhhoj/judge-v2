@@ -3,6 +3,7 @@ mod common;
 
 use common::{language_or_skip, registry, sandbox};
 use judge_grader::compile::{CompileJob, build, program_for};
+use judge_grader::file_io::SolutionFileIo;
 use judge_grader::languages::Language;
 use judge_grader::program::Program;
 use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
@@ -56,7 +57,7 @@ fn plain(file: &File, cap: u64) -> CaseIo<'_> {
 fn file_io_reads_and_writes_named_files() {
     let src = "a, b = map(int, open('sum.inp').read().split())\nopen('sum.out', 'w').write(str(a + b))\n";
     let Some(mut f) = fixture(1, "PY3", src) else { return };
-    let file_io = FileIo { input: "sum.inp".into(), output: "sum.out".into() };
+    let file_io = SolutionFileIo::new(&FileIo { input: "sum.inp".into(), output: "sum.out".into() }, b"");
     let file = input(&f, "4 5");
     let io = CaseIo { input: &file, output_cap: 1 << 20, file_io: Some(&file_io) };
     let (run, out) = go(&mut f, &io, "out");
@@ -64,10 +65,74 @@ fn file_io_reads_and_writes_named_files() {
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "9");
 }
 
+/// The old judge matched file I/O names ignoring letter case (teachers and contestants use Windows).
+fn file_io_case(
+    offset: u32,
+    src: &str,
+    names: (&str, &str),
+    (text, cap): (&str, u64),
+) -> Option<(RunVerdict, String)> {
+    let mut f = fixture(offset, "PY3", src)?;
+    let file_io =
+        SolutionFileIo::new(&FileIo { input: names.0.into(), output: names.1.into() }, src.as_bytes());
+    let file = input(&f, text);
+    let io = CaseIo { input: &file, output_cap: cap, file_io: Some(&file_io) };
+    let (run, out) = go(&mut f, &io, "out");
+    Some((run.verdict, std::fs::read_to_string(&out).unwrap()))
+}
+
+fn file_io_run(offset: u32, src: &str, names: (&str, &str), text: &str) -> Option<String> {
+    let (verdict, output) = file_io_case(offset, src, names, (text, 1 << 20))?;
+    assert_eq!(verdict, RunVerdict::Ok);
+    Some(output)
+}
+
+#[test]
+fn file_io_names_match_in_any_letter_case() {
+    let upper =
+        "a, b = map(int, open('NUMBER.INP').read().split())\nopen('NUMBER.OUT', 'w').write(str(a + b))\n";
+    let Some(output) = file_io_run(18, upper, ("Number.inp", "Number.out"), "4 5") else { return };
+    assert_eq!(output, "9");
+    let camel =
+        "name = 'PathLib'\nx = int(open(name + '.Inp').read())\nopen('PATHLIB.out', 'w').write(str(2 * x))\n";
+    assert_eq!(file_io_run(18, camel, ("pathlib.inp", "pathlib.out"), "21").unwrap(), "42");
+    let odd = "x = int(open('nUmBeR.iNp').read())\nopen('nUmBeR.oUt', 'w').write(str(x + 1))\n";
+    assert_eq!(file_io_run(18, odd, ("number.inp", "number.out"), "1").unwrap(), "2");
+}
+
+/// Two outputs differing only in case: the configured spelling wins, else the first name in byte order.
+#[test]
+fn of_several_output_spellings_the_configured_one_then_the_first_by_name_is_read() {
+    let both = "open('NUMBER.OUT', 'w').write('upper')\nopen('Number.out', 'w').write('config')\n";
+    let Some(output) = file_io_run(20, both, ("Number.inp", "Number.out"), "") else { return };
+    assert_eq!(output, "config");
+    let neither = "open('number.out', 'w').write('lower')\nopen('NUMBER.OUT', 'w').write('upper')\n";
+    assert_eq!(file_io_run(20, neither, ("Number.inp", "Number.out"), "").unwrap(), "upper");
+}
+
+/// The input's extra names are hard links: they use no file quota and are not output, so an input many
+/// times the output cap is still a normal run.
+#[test]
+fn input_aliases_do_not_count_against_the_output_cap() {
+    let src = "data = open('NUMBER.INP').read()\nopen('number.out', 'w').write(str(len(data)))\n";
+    let text = "7".repeat(1 << 20);
+    let Some((verdict, output)) = file_io_case(21, src, ("Number.inp", "Number.out"), (&text, 100)) else {
+        return;
+    };
+    assert_eq!((verdict, output), (RunVerdict::Ok, (1 << 20).to_string()));
+}
+
+#[test]
+fn a_file_io_program_that_uses_stdin_and_stdout_has_an_empty_output() {
+    let src = "import sys\nprint(sys.stdin.read())\n";
+    let Some(output) = file_io_run(19, src, ("sum.inp", "sum.out"), "7") else { return };
+    assert_eq!(output, "");
+}
+
 #[test]
 fn a_file_io_name_that_leaves_the_box_never_runs() {
     let Some(mut f) = fixture(2, "PY3", "print(1)\n") else { return };
-    let file_io = FileIo { input: "../x".into(), output: "o".into() };
+    let file_io = SolutionFileIo::new(&FileIo { input: "../x".into(), output: "o".into() }, b"");
     let file = input(&f, "");
     let io = CaseIo { input: &file, output_cap: 100, file_io: Some(&file_io) };
     let runnable = Runnable { program: &f.program, limits: &LIMITS };

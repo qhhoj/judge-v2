@@ -6,12 +6,12 @@
 use crate::checkers::custom::CustomChecker;
 use crate::checkers::{CheckInput, CheckOutcome, Checker};
 use crate::error::GradeError;
+use crate::file_io::SolutionFileIo;
 use crate::grade::{CaseJudge, CaseVerdict};
 use crate::interactor::{Boxes, Interaction, interact};
 use crate::output_only::{OutputSource, output_for_case};
 use crate::program::Program;
 use crate::run_case::{CaseIo, CaseLimits, Runnable, read_prefix, run_case};
-use judge_problem::init::FileIo;
 use judge_problem::plan::PlannedCase;
 use judge_problem::resolve::ResolvedProblem;
 use judge_problem::verdict::Status;
@@ -112,7 +112,7 @@ pub struct ProgramCases<'a> {
     pub boxes: Boxes<'a>,
     pub program: Program,
     pub limits: CaseLimits,
-    pub file_io: Option<FileIo>,
+    pub file_io: Option<SolutionFileIo>,
 }
 
 impl CaseJudge for ProgramCases<'_> {
