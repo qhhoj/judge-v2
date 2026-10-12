@@ -294,3 +294,89 @@ async fn the_grpc_link_streams_the_bundle_down_and_the_result_up_in_the_sessions
     assert!(link.upload(&stale, &result).await.is_err());
     assert!(link.send(&stale, judge_daemon::wire::draining()).await.is_err());
 }
+
+/// A generation inside one program run (a compile or a generator), where the cancel flag is not looked at
+/// (`generate/mod.rs`: "checked between runs"): it notices the cancel only after `busy`.
+struct InsideARun {
+    busy: Duration,
+}
+
+impl Runner for InsideARun {
+    fn run(&mut self, _: &ResolvedProblem, _: &Submission, _: &mut dyn Reporter) -> Outcome {
+        Outcome::Aborted
+    }
+
+    fn generate(&mut self, _: &GenerationJob, control: &Control) -> Result<(), GenerationFailure> {
+        std::thread::sleep(self.busy);
+        control.check()
+    }
+}
+
+/// Free slots in the Hello the judge sends on reconnect, built as link.rs `session()` builds it.
+fn advertised_free(pool: &Pool, outboxes: &Outboxes) -> usize {
+    let info = judge_daemon::wire::HelloInfo {
+        protocol_minor: 0,
+        build: "t".into(),
+        runtimes: vec![],
+        features: vec![],
+    };
+    let hello = judge_daemon::wire::hello(&info, pool.slots(), &outboxes.in_flight());
+    let Some(judge_message::Body::Hello(hello)) = hello.body else { panic!("a Hello") };
+    hello.slots as usize - hello.in_flight.len()
+}
+
+fn assignment(id: &str) -> judge_daemon::wire::Assignment {
+    judge_daemon::wire::Assignment {
+        r: judge_daemon::outbox::AssignmentRef { submission_id: id.into(), generation: 1 },
+        problem_code: "p".into(),
+        data_version: 1,
+        language_key: "CPP17".into(),
+        source: b"x".to_vec(),
+        source_is_file: false,
+        source_size: 0,
+        time_limit_s: 1.0,
+        memory_kib: 1 << 16,
+        short_circuit: false,
+        pretests_only: false,
+    }
+}
+
+/// DW-2: after a lost session the judge reconnects (500 ms) and its Hello advertises `slots` with no run in
+/// flight, so the bridge (whose new session holds no generation) may Assign that many. A cancelled
+/// generation still inside a program run keeps its slot, and the Assign is refused with SLOTS_FULL, which
+/// the bridge treats as a protocol error that ends the session.
+#[tokio::test]
+async fn after_a_lost_session_every_slot_the_hello_advertises_takes_an_assign() {
+    let scratch = tempfile::tempdir().unwrap();
+    let link = Arc::new(Link {
+        events: Mutex::default(),
+        sent: Mutex::default(),
+        live: "s1".into(),
+        fetch_hangs: false,
+    });
+    let outboxes = Arc::new(Outboxes::new(OUTBOX_WATERMARK));
+    let deps = WorkerDeps {
+        judge: "j1".into(),
+        outboxes: outboxes.clone(),
+        resolver: Arc::new(NoProblems),
+        fetch: Arc::new(NoSources),
+        generation: link.clone(),
+        gates: Gates { dir: None },
+        metrics: Arc::new(Metrics::new()),
+        scratch: scratch.path().into(),
+        fetch_timeout: Duration::from_secs(5),
+    };
+    let pool = Pool::start(Arc::new(deps), vec![Box::new(InsideARun { busy: Duration::from_secs(3) })]);
+    pool.generate(plan("g10"), "lost-session".into()).unwrap();
+    eventually(|| link.events.lock().unwrap().len() == 1).await;
+    // run_link's end_session, then the reconnect delay
+    pool.cancel_generations();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(advertised_free(&pool, &outboxes), 1);
+    let assignment = assignment("s");
+    let r = assignment.r.clone();
+    assert!(pool.assign(assignment).is_ok(), "an Assign into an advertised slot is refused with SLOTS_FULL");
+    assert!(outboxes.contains(&r) && pool.busy() == 1);
+    // once the cancelled generation lets go, the run is taken and ends with a Final
+    eventually(|| pool.idle() && outboxes.last_seq(&r) >= 2).await;
+}

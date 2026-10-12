@@ -7,7 +7,7 @@ use crate::wire::Assignment;
 use crate::worker::{Job, Release, Runner, SlotJob, WorkerDeps, process};
 use judge_grader::generate::GenerationPlan;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::mpsc;
 
 /// What a busy slot is doing: a submission's run, or a test generation.
@@ -72,22 +72,41 @@ impl Pool {
             .any(|slot| slot.running.lock().unwrap().as_ref().is_some_and(|run| &run.work == work))
     }
 
-    /// Gives the work to the first free slot; `job` makes the slot's job from its abort flag and release.
+    /// Gives the work to the first free slot, else to the first slot a cancelled generation still holds;
+    /// `job` makes the slot's job from its abort flag and release.
     fn place(
         &self,
         work: Work,
         job: impl FnOnce(Arc<AtomicBool>, Release) -> SlotJob,
     ) -> Result<(), SlotsFull> {
-        for slot in &self.slots {
-            let mut running = slot.running.lock().unwrap();
-            if running.is_none() {
-                let abort = Arc::new(AtomicBool::new(false));
-                *running = Some(Running { work: work.clone(), abort: abort.clone() });
-                let _ = slot.tx.send(job(abort, release(&slot.running, &work)));
-                return Ok(());
-            }
-        }
-        Err(SlotsFull)
+        let free = |running: &Option<Running>| running.is_none();
+        let slot = self.claim(free).or_else(|| self.claim(Running::is_cancelled_generation));
+        let Some((slot, mut running)) = slot else { return Err(SlotsFull) };
+        let abort = Arc::new(AtomicBool::new(false));
+        *running = Some(Running { work: work.clone(), abort: abort.clone() });
+        let _ = slot.tx.send(job(abort, release(&slot.running, &work)));
+        Ok(())
+    }
+
+    /// The first slot whose `running` passes `takes`, locked.
+    fn claim(
+        &self,
+        takes: impl Fn(&Option<Running>) -> bool,
+    ) -> Option<(&Slot, MutexGuard<'_, Option<Running>>)> {
+        self.slots.iter().find_map(|slot| {
+            let running = slot.running.lock().unwrap();
+            takes(&running).then_some((slot, running))
+        })
+    }
+}
+
+impl Running {
+    /// A generation cancelled (its session is gone) inside a program run keeps its slot until that run ends,
+    /// though the bridge already counts the slot free; work given to it waits in the slot's channel.
+    fn is_cancelled_generation(running: &Option<Running>) -> bool {
+        running
+            .as_ref()
+            .is_some_and(|run| matches!(run.work, Work::Generation(_)) && run.abort.load(Ordering::SeqCst))
     }
 }
 
