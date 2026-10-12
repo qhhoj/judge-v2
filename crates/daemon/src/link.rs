@@ -144,11 +144,11 @@ fn log_end(ended: Result<(), LinkError>) {
     }
 }
 
-/// No FetchSource without a session; aborted runs whose Final never went out are forgotten.
+/// No FetchSource without a session; finished runs the bridge never acks (aborted, or aborted by it) are forgotten.
 async fn end_session(ctx: &LinkContext) {
     *ctx.connection.write().await = None;
     ctx.pool.cancel_generations();
-    ctx.outboxes.drop_aborted_finals();
+    ctx.outboxes.drop_never_acked();
     ctx.metrics.reconnects.inc();
 }
 
@@ -316,7 +316,10 @@ impl Session<'_> {
             BridgeEvent::Assign(assignment) => self.assign(assignment).await,
             BridgeEvent::Generate(plan) => self.generate(*plan).await,
             BridgeEvent::CancelGeneration(id) => self.ctx.pool.cancel_generation(&id),
-            BridgeEvent::Abort(r) => self.ctx.pool.abort(&r),
+            BridgeEvent::Abort(r) => {
+                self.ctx.pool.abort(&r);
+                self.ctx.outboxes.bridge_aborted(&r);
+            }
             BridgeEvent::Ack(r, seq) => {
                 self.ctx.outboxes.ack(&r, seq);
             }

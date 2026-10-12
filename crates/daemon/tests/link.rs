@@ -396,3 +396,54 @@ async fn a_generation_without_a_free_slot_is_answered_slots_full_and_the_session
     h.bridge.hang_up(0);
     eventually(|| h.pool.events.lock().unwrap().iter().any(|e| e == "cancel all generations")).await;
 }
+
+fn abort_message(id: &str) -> BridgeMessage {
+    BridgeMessage { body: Some(bridge_message::Body::Abort(v1::Abort { r#ref: pref(id) })) }
+}
+
+/// A run graded before the bridge's Abort for it arrived (rejudge void, accept timeout, stale write): the
+/// bridge treats its `Final{GRADED}` as a winding Final and never acks it (judge-session.ts onFinal).
+async fn finished_then_aborted(h: &Harness, id: &str) {
+    h.outboxes.open(&r(id));
+    h.outboxes.push(&r(id), Body::Accepted);
+    h.outboxes.push(&r(id), graded());
+    eventually(|| finals(&h.bridge.messages(0), id).len() == 1).await;
+    h.bridge.send(0, abort_message(id));
+    eventually(|| h.pool.events.lock().unwrap().contains(&format!("abort {id}"))).await;
+}
+
+/// DW-3: the Final went out and the bridge let the run go; its outbox must not outlive that.
+#[tokio::test]
+async fn a_final_the_bridge_aborted_after_it_was_sent_leaves_no_outbox() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.bridge.send(0, welcome(vec![]));
+    finished_then_aborted(&h, "g").await;
+    eventually(|| h.outboxes.refs().is_empty()).await;
+}
+
+/// DW-3: the leaked outbox is listed in the next Hello next to the live runs: more runs than slots, which the
+/// bridge refuses (messages.ts checkHelloBounds), on every reconnect.
+#[tokio::test]
+async fn the_hello_after_such_a_final_lists_no_more_runs_than_slots() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.bridge.send(0, welcome(vec![]));
+    finished_then_aborted(&h, "g").await;
+    for live in ["a", "b"] {
+        h.outboxes.open(&r(live));
+        h.outboxes.push(&r(live), Body::Accepted);
+    }
+    eventually(|| h.bridge.messages(0).iter().filter_map(seq_of).count() == 4).await;
+    h.bridge.hang_up(0);
+    eventually(|| h.bridge.session_count() == 2 && !h.bridge.messages(1).is_empty()).await;
+    let Some(judge_message::Body::Hello(hello)) = &h.bridge.messages(1)[0].body else {
+        panic!("hello first")
+    };
+    assert!(
+        hello.in_flight.len() <= hello.slots as usize,
+        "Hello lists {} runs for {} slots",
+        hello.in_flight.len(),
+        hello.slots
+    );
+}

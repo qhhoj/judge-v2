@@ -98,6 +98,10 @@ pub struct Outbox {
     bytes: usize,
     /// Resume `DROP`: only one `Final{ABORTED}` may still go out.
     dropped: bool,
+    /// The bridge sent Abort: it acks no Final of this run, whatever its outcome.
+    bridge_aborted: bool,
+    /// The newest seq the link sent.
+    sent_seq: u32,
 }
 
 impl Outbox {
@@ -108,6 +112,16 @@ impl Outbox {
 
     fn ends_aborted(&self) -> bool {
         self.unacked.back().is_some_and(|(e, _)| is_aborted_final(&e.body))
+    }
+
+    /// The bridge acks no Final here: a `Final{ABORTED}`, or any Final of a run the bridge aborted.
+    fn never_acked(&self) -> bool {
+        self.finished() && (self.ends_aborted() || self.bridge_aborted)
+    }
+
+    /// The Final went out and no ack will come for it.
+    fn settled(&self) -> bool {
+        self.never_acked() && self.sent_seq == self.last_seq
     }
 
     pub fn push(&mut self, body: Body) -> u32 {
@@ -187,17 +201,28 @@ impl Outboxes {
         Some(seq)
     }
 
-    /// The link sent `seq`: a `Final{ABORTED}` is never acked by the bridge, so its outbox goes now.
+    /// The link sent `seq`: a Final the bridge never acks (see `Outbox::settled`) takes its outbox with it.
     pub fn sent(&self, r: &AssignmentRef, seq: u32) {
+        self.update_settled(r, |outbox| outbox.sent_seq = seq);
+    }
+
+    /// The bridge aborted `r`: it never acks the run's Final, so the outbox goes once that Final is sent.
+    pub fn bridge_aborted(&self, r: &AssignmentRef) {
+        self.update_settled(r, |outbox| outbox.bridge_aborted = true);
+    }
+
+    fn update_settled(&self, r: &AssignmentRef, change: impl FnOnce(&mut Outbox)) {
         let mut inner = self.inner.lock().unwrap();
-        if inner.get(r).is_some_and(|o| o.ends_aborted() && o.last_seq() == seq) {
+        let Some(outbox) = inner.get_mut(r) else { return };
+        change(outbox);
+        if outbox.settled() {
             inner.remove(r);
         }
     }
 
-    /// Session end: an aborted run whose Final was never sent is forgotten (the bridge released it).
-    pub fn drop_aborted_finals(&self) {
-        self.inner.lock().unwrap().retain(|_, outbox| !outbox.ends_aborted());
+    /// Session end: a finished run the bridge never acks (see `Outbox::never_acked`) is forgotten, sent or not.
+    pub fn drop_never_acked(&self) {
+        self.inner.lock().unwrap().retain(|_, outbox| !outbox.never_acked());
     }
 
     /// Resume `DROP`: from now on only one `Final{ABORTED}`; a finished run gets it at once.
@@ -359,8 +384,28 @@ mod tests {
         let live = AssignmentRef { submission_id: "live".into(), generation: 1 };
         boxes.open(&live);
         boxes.push(&live, Body::Accepted);
-        boxes.drop_aborted_finals();
+        boxes.drop_never_acked();
         assert_eq!(boxes.refs(), [live]);
+    }
+
+    #[test]
+    fn the_final_of_a_run_the_bridge_aborted_goes_once_sent_or_at_session_end() {
+        let boxes = Outboxes::new(OUTBOX_WATERMARK);
+        boxes.open(&r());
+        boxes.push(&r(), final_body());
+        boxes.sent(&r(), 1);
+        boxes.bridge_aborted(&r());
+        assert!(boxes.refs().is_empty(), "a sent graded Final the bridge aborted is never acked");
+        let late = AssignmentRef { submission_id: "late".into(), generation: 1 };
+        let kept = AssignmentRef { submission_id: "kept".into(), generation: 1 };
+        for x in [&late, &kept] {
+            boxes.open(x);
+            boxes.push(x, final_body());
+        }
+        boxes.bridge_aborted(&late);
+        assert_eq!(boxes.refs().len(), 2, "unsent: it may still go out in this session");
+        boxes.drop_never_acked();
+        assert_eq!(boxes.refs(), [kept], "a graded Final the bridge still wants stays for resend");
     }
 
     #[test]
