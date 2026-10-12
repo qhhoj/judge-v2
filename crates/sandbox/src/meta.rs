@@ -10,8 +10,22 @@ pub struct Meta {
     pub time_s: f64,
     pub wall_s: f64,
     pub cg_mem_kib: u64,
+    /// Peak resident set of the largest process; 0 when isolate did not report it.
+    pub max_rss_kib: u64,
     pub oom_killed: bool,
     pub message: String,
+}
+
+impl Meta {
+    /// The memory to report for a run. The cgroup peak also counts the page cache of files the program
+    /// wrote (its output), so it is capped by the peak RSS; an OOM kill reports the cgroup peak that hit the
+    /// limit. The memory limit itself is the cgroup's (`oom_killed`), never this number.
+    pub fn memory_kib(&self) -> u64 {
+        if self.oom_killed || self.max_rss_kib == 0 {
+            return self.cg_mem_kib;
+        }
+        self.cg_mem_kib.min(self.max_rss_kib)
+    }
 }
 
 fn number<T: std::str::FromStr>(key: &str, value: &str) -> Result<T, SandboxError> {
@@ -26,6 +40,7 @@ fn apply(meta: &mut Meta, key: &str, value: &str) -> Result<(), SandboxError> {
         "time" => meta.time_s = number(key, value)?,
         "time-wall" => meta.wall_s = number(key, value)?,
         "cg-mem" => meta.cg_mem_kib = number(key, value)?,
+        "max-rss" => meta.max_rss_kib = number(key, value)?,
         "cg-oom-killed" => meta.oom_killed = value == "1",
         "message" => meta.message = value.to_string(),
         _ => {}
@@ -60,5 +75,18 @@ mod tests {
         assert!((meta.time_s - 0.014).abs() < 1e-9);
         assert_eq!(meta.message, "Caught fatal signal 9");
         assert!(matches!(parse_meta("time:fast\n"), Err(SandboxError::Meta(_))));
+    }
+
+    #[test]
+    fn reported_memory_leaves_out_the_page_cache_but_an_oom_shows_the_cgroup_peak() {
+        let memory = |text: &str| parse_meta(text).unwrap().memory_kib();
+        assert_eq!(
+            memory("max-rss:3000\ncg-mem:22000\n"),
+            3000,
+            "20 MiB of written output is not the program"
+        );
+        assert_eq!(memory("max-rss:14616\ncg-mem:8192\n"), 8192);
+        assert_eq!(memory("cg-mem:8192\n"), 8192, "no max-rss: the cgroup peak");
+        assert_eq!(memory("max-rss:3000\ncg-mem:65536\ncg-oom-killed:1\n"), 65536);
     }
 }
