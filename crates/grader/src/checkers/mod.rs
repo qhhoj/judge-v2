@@ -80,4 +80,10 @@ pub(crate) mod testing {
             .check(&CheckInput { input: &f.input, output: &f.output, answer: &f.answer, points: 1.0 })
             .unwrap()
     }
+
+    /// The `-Xmx` a JVM helper gets, in KiB; panics when the flag is missing or not a number.
+    pub fn heap_kib(argv: &[String]) -> u64 {
+        let flag = argv.iter().find_map(|a| a.strip_prefix("-Xmx")).expect("an -Xmx flag");
+        flag.strip_suffix('m').and_then(|mib| mib.parse::<u64>().ok()).expect("-Xmx<N>m") * 1024
+    }
 }

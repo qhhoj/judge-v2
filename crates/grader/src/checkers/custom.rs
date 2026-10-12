@@ -6,6 +6,7 @@ use super::select::CustomKind;
 use super::themis::{self, ThemisNames};
 use super::{CheckError, CheckInput, CheckOutcome};
 use crate::error::GradeError;
+use crate::languages::{Placeholders, expand};
 use crate::program::Program;
 use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
@@ -83,6 +84,16 @@ pub fn checker_limits(solution_time_limit_s: f64) -> Limits {
         fsize_kib: 64 << 10,
         open_files: 64,
     }
+}
+
+/// Box memory a JVM helper keeps outside its heap (metaspace, thread stacks, code cache).
+const HELPER_JVM_RESERVE_KIB: u64 = 128 << 10;
+
+/// A helper's run argv with its placeholders filled in: a JVM's `-Xmx` is the box's memory minus a reserve.
+pub(crate) fn helper_argv(program: &Program, limits: &Limits) -> Vec<String> {
+    let reserve = if program.jvm { HELPER_JVM_RESERVE_KIB } else { 0 };
+    let memory_kib = limits.memory_kib.saturating_sub(reserve);
+    expand(&program.run, &Placeholders { memory_kib, class: None })
 }
 
 /// testlib starts its stderr message with the verdict ("ok ", "wrong answer ", "points 0.5 ", ...).
@@ -167,15 +178,15 @@ fn read_text(sandbox: &IsolateBox, name: &str) -> String {
 
 impl CustomChecker {
     fn spec(&self) -> RunSpec {
-        let mut argv = self.program.run.clone();
+        let mut limits = checker_limits(self.time_limit_s);
+        limits.processes = self.program.processes.max(1);
+        let mut argv = helper_argv(&self.program, &limits);
         let mut stdin = "/dev/null".to_string();
         if self.kind == CustomKind::Themis {
             stdin = themis::PATHS_FILE.into();
         } else {
             argv.extend(["input", "output", "answer"].map(String::from));
         }
-        let mut limits = checker_limits(self.time_limit_s);
-        limits.processes = self.program.processes.max(1);
         RunSpec {
             argv,
             limits,
@@ -214,6 +225,7 @@ impl CustomChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checkers::testing::heap_kib;
 
     fn report(code: i32, stdout: &str, stderr: &str) -> ExitReport {
         ExitReport { code: Some(code), stdout: stdout.into(), stderr: stderr.into() }
@@ -330,5 +342,31 @@ mod tests {
         {
             assert!(matches!(code(stopped), Err(GradeError::Checker(_))));
         }
+    }
+
+    #[test]
+    fn a_java_checker_gets_a_heap_below_its_box_memory() {
+        let registry =
+            crate::languages::LanguageRegistry::from_toml(include_str!("../../../../languages.toml"))
+                .unwrap();
+        let java = registry.get("JAVA8").unwrap();
+        let program =
+            crate::compile::program_for(java, std::path::Path::new("/c"), b"public class Checker {}");
+        let checker = CustomChecker {
+            program,
+            kind: CustomKind::Default,
+            partial: PartialPoints::Absolute,
+            themis_names: ThemisNames::default(),
+            time_limit_s: 1.0,
+        };
+        let spec = checker.spec();
+        assert!(spec.argv.iter().all(|a| !a.contains('{')), "unexpanded placeholder: {:?}", spec.argv);
+        let heap = heap_kib(&spec.argv);
+        assert!(
+            heap >= 512 << 10 && heap < spec.limits.memory_kib,
+            "heap {heap} KiB in a {} KiB box",
+            spec.limits.memory_kib
+        );
+        assert_eq!(spec.argv[spec.argv.len() - 3..], ["input", "output", "answer"]);
     }
 }

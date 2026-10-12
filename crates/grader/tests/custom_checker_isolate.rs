@@ -240,3 +240,80 @@ fn a_themis_checker_without_file_io_is_laid_out_by_its_source_literals() {
     assert!(!wa.passed && wa.feedback == "Sai", "{wa:?}");
     assert_eq!(judge_case(&mut f, "2 3\n", "", "").fraction, 0.0, "no output is score 0");
 }
+
+/// A default-kind Java checker (backend maps `.java` checkers to JAVA8): exit 0 when the tokens match.
+const JAVA_CHECKER: &str = r#"import java.nio.file.*;
+public class Checker {
+    public static void main(String[] args) throws Exception {
+        String got = new String(Files.readAllBytes(Paths.get(args[1]))).trim();
+        String want = new String(Files.readAllBytes(Paths.get(args[2]))).trim();
+        if (got.equals(want)) System.exit(0);
+        System.err.println("expected " + want + ", found " + got);
+        System.exit(1);
+    }
+}
+"#;
+
+#[test]
+fn java_checker_runs_and_accepts_a_correct_output() {
+    use judge_grader::artefacts::HelperSource;
+    use judge_grader::program::SourceFile;
+    let registry = common::registry();
+    if common::language_or_skip(&registry, "JAVA8").is_none() {
+        return;
+    }
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let mut sandbox = sandbox(40, dirs[0].path());
+    let file = SourceFile { name: "Checker.java".into(), bytes: JAVA_CHECKER.as_bytes().to_vec() };
+    let source = HelperSource { lang: "JAVA8".into(), files: vec![file] };
+    let program = artefacts(dirs[1].path()).program(&mut sandbox, &source).unwrap();
+    let mut f = Fixture {
+        checker: CustomChecker {
+            program,
+            kind: CustomKind::Default,
+            partial: PartialPoints::Absolute,
+            themis_names: ThemisNames::default(),
+            time_limit_s: 1.0,
+        },
+        scratch: dirs[2].path().to_path_buf(),
+        _dirs: dirs,
+        sandbox,
+    };
+    let ac = judge(&mut f, "5\n", "5\n");
+    assert!(matches!(&ac, Ok(o) if o.passed), "correct output must be AC: {ac:?}");
+    let wa = judge(&mut f, "5\n", "6\n");
+    assert!(matches!(&wa, Ok(o) if !o.passed), "wrong output is WA: {wa:?}");
+}
+
+/// Runs only the JVM (no javac needed): the checker argv's heap flag must be a real size the JVM accepts in
+/// the 1 GiB checker box, so a JVM startup error never reaches `interpret` as a checker "exit 1" (WA).
+#[test]
+fn a_java_checker_jvm_starts_with_a_valid_heap_flag() {
+    let registry = common::registry();
+    let java = registry.get("JAVA8").unwrap();
+    if !std::path::Path::new(&java.run[0]).exists() {
+        eprintln!("skip: no JVM");
+        return;
+    }
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let sandbox = sandbox(41, dirs[0].path());
+    let mut program = judge_grader::compile::program_for(java, dirs[1].path(), b"public class Checker {}");
+    // A host without the distro JDK's /etc dir still starts the JVM far enough to read its flags.
+    program.dirs.retain(|d| std::path::Path::new(d.rsplit('=').next().unwrap()).exists());
+    let mut f = Fixture {
+        checker: CustomChecker {
+            program,
+            kind: CustomKind::Default,
+            partial: PartialPoints::Absolute,
+            themis_names: ThemisNames::default(),
+            time_limit_s: 1.0,
+        },
+        scratch: dirs[2].path().to_path_buf(),
+        _dirs: dirs,
+        sandbox,
+    };
+    let result = judge(&mut f, "5\n", "5\n");
+    // No class was compiled, so a JVM that accepted its flags gets as far as looking up the main class.
+    let started = matches!(&result, Ok(o) if !o.passed && o.extended.contains("main class Checker"));
+    assert!(started, "the JVM must start with its heap flag and fail only on the missing class: {result:?}");
+}
