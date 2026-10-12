@@ -14,7 +14,7 @@ use crate::checkers::select::CustomKind;
 use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
-use crate::run_case::{Runnable, STDERR_FILE, keeps_stderr, refine, solution_limits};
+use crate::run_case::{Runnable, STDERR_FILE, keeps_stderr, refine, reported_memory, solution_limits};
 use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::error::SandboxError;
@@ -199,7 +199,8 @@ fn solution_result(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeE
         return Err(SandboxError::Isolate(message.clone()).into());
     }
     let verdict = refine(verdict, x.solution.program, boxes.solution);
-    Ok(Interactive { verdict, time_s: meta.time_s, memory_kib: meta.cg_mem_kib, check: None })
+    let memory_kib = reported_memory(&meta, &verdict);
+    Ok(Interactive { verdict, time_s: meta.time_s, memory_kib, check: None })
 }
 
 fn interactor_outcome(

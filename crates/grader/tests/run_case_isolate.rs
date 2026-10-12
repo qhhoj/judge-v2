@@ -252,3 +252,14 @@ fn an_uncaught_ruby_exception_is_rte() {
     let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
     assert_eq!(run.verdict, RunVerdict::Rte { reason: "ZeroDivisionError".into() });
 }
+
+#[test]
+fn reported_memory_is_the_program_not_the_page_cache_of_its_output() {
+    // ~1 MiB of live memory, 20 MiB written to stdout (under the 24 MiB default cap).
+    let src = "#include <cstdio>\n#include <cstring>\nstatic char line[1 << 20];\nint main(){ memset(line, 'x', sizeof line - 1); for (int i = 0; i < 20; i++) fputs(line, stdout); }\n";
+    let Some(mut f) = fixture(40, "CPP17", src) else { return };
+    let file = input(&f, "");
+    let (run, _) = go(&mut f, &plain(&file, 24 << 20), "out");
+    assert_eq!(run.verdict, RunVerdict::Ok);
+    assert!(run.memory_kib < 12 * 1024, "memory {} KiB includes the 20 MiB output", run.memory_kib);
+}

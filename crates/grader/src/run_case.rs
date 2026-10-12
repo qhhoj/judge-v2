@@ -7,6 +7,7 @@ use crate::program::Program;
 use judge_problem::init::is_plain_box_name;
 use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
+use judge_sandbox::meta::Meta;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
 use std::fs::File;
 use std::io::Read;
@@ -175,12 +176,18 @@ pub fn run_case(
     let verdict = classify(&meta, OutputUse { written: output_len, cap: io.output_cap });
     let verdict = refine(verdict, runnable.program, sandbox);
     Ok(CaseRun {
+        memory_kib: reported_memory(&meta, &verdict),
         verdict,
         time_s: meta.time_s,
-        memory_kib: meta.cg_mem_kib,
         output: output.to_path_buf(),
         output_len,
     })
+}
+
+/// The memory shown for a run: the program's own (`Meta::memory_kib`), but the cgroup peak for an MLE, so an
+/// MLE that `refine` found on stderr (a JVM OutOfMemoryError) is not shown far under the limit.
+pub(crate) fn reported_memory(meta: &Meta, verdict: &RunVerdict) -> u64 {
+    if *verdict == RunVerdict::Mle { meta.cg_mem_kib } else { meta.memory_kib() }
 }
 
 /// The last 64 KiB of the kept stderr (where the final exception is), lossy UTF-8.
@@ -272,6 +279,13 @@ mod tests {
     use super::*;
 
     const PYTHON: &str = "Traceback (most recent call last)";
+
+    #[test]
+    fn an_mle_shows_the_cgroup_peak_and_other_runs_the_program_memory() {
+        let meta = Meta { cg_mem_kib: 200_000, max_rss_kib: 180_000, ..Meta::default() };
+        assert_eq!(reported_memory(&meta, &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
+        assert_eq!(reported_memory(&meta, &RunVerdict::Ok), 180_000);
+    }
 
     #[test]
     fn prefix_is_capped_and_lossy() {

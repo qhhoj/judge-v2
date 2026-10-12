@@ -57,8 +57,12 @@ fn game(offset: u32, interactor_source: &str) -> Game {
 }
 
 fn play(g: &mut Game, source: &str) -> Result<Interactive, GradeError> {
+    play_in(g, "CPP17", source)
+}
+
+fn play_in(g: &mut Game, key: &str, source: &str) -> Result<Interactive, GradeError> {
     let registry = registry();
-    let language = registry.get("CPP17").unwrap();
+    let language = registry.get(key).unwrap();
     let dir = g.dirs[2].path().join("program");
     let _ = std::fs::remove_dir_all(&dir);
     build(&mut g.solution, &CompileJob::for_language(language, source.as_bytes()), &dir).unwrap();
@@ -141,4 +145,89 @@ fn a_dead_interactor_is_an_error_even_when_the_solution_then_fails_on_eof() {
     let mut g = game(20, "int main() { return 3; }\n");
     let result = play(&mut g, gives_up_on_eof);
     assert!(matches!(result, Err(GradeError::Checker(ref m)) if m.starts_with("interactor:")), "{result:?}");
+}
+
+/// Quits with WA on the first wrong guess, as most real interactors do.
+const STRICT: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+    int secret = inf.readInt();
+    int guess = ouf.readInt();
+    if (guess != secret) quitf(_wa, "wrong guess %d", guess);
+    std::cout << "=" << std::endl;
+    quitf(_ok, "found");
+}
+"#;
+
+fn assert_interactor_wa(result: Interactive) {
+    let check = result
+        .check
+        .as_ref()
+        .unwrap_or_else(|| panic!("solution verdict won over the interactor's WA: {result:?}"));
+    assert!(!check.passed, "{result:?}");
+    assert_eq!(check.feedback, "wrong guess 1");
+}
+
+#[test]
+fn cpp_writing_after_the_interactor_quit_wa_is_wa() {
+    // Control: C++ dies by SIGPIPE, which is exempt, so the interactor's WA is the verdict.
+    let mut g = game(40, STRICT);
+    let src = "#include <iostream>\n#include <unistd.h>\nint main(){ std::cout << 1 << std::endl; usleep(300000); for (int i = 0; i < 100000; i++) std::cout << 1 << std::endl; }\n";
+    assert_interactor_wa(play(&mut g, src).unwrap());
+}
+
+#[test]
+fn python_reading_after_the_interactor_quit_wa_is_wa_not_eoferror() {
+    let mut g = game(42, STRICT);
+    let src = "print(1, flush=True)\nr = input()\n";
+    assert_interactor_wa(play_in(&mut g, "PY3", src).unwrap());
+}
+
+#[test]
+fn python_writing_after_the_interactor_quit_wa_is_wa_not_brokenpipe() {
+    let mut g = game(44, STRICT);
+    let src = "import time\nprint(1, flush=True)\ntime.sleep(0.3)\nfor _ in range(100000):\n    print(1, flush=True)\n";
+    assert_interactor_wa(play_in(&mut g, "PY3", src).unwrap());
+}
+
+/// Two rounds: after the first answer it takes a while before writing round two.
+const TWO_ROUNDS: &str = r#"#include "testlib.h"
+#include <unistd.h>
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+    int secret = inf.readInt();
+    for (int round = 0; round < 2; round++) {
+        int guess = ouf.readInt();
+        if (guess != secret) quitf(_wa, "wrong guess %d", guess);
+        usleep(300000);
+        std::cout << "=" << std::endl;
+    }
+    quitf(_ok, "both rounds");
+}
+"#;
+
+#[test]
+fn an_interactor_hit_by_sigpipe_after_the_solution_quit_early_is_wa_not_ie() {
+    let mut g = game(46, TWO_ROUNDS);
+    let one_round_only = "#include <iostream>\nint main(){ std::cout << 377 << std::endl; }\n";
+    let result = play(&mut g, one_round_only);
+    let result = result.unwrap_or_else(|e| panic!("internal error instead of WA: {e:?}"));
+    assert_eq!(result.verdict, RunVerdict::Ok);
+    assert!(!result.check.unwrap().passed);
+}
+
+#[test]
+fn cpp_returning_1_on_eof_after_the_interactor_quit_wa_is_wa() {
+    let mut g = game(48, STRICT);
+    let src = "#include <iostream>\nint main(){ std::cout << 1 << std::endl; int r; if (!(std::cin >> r)) return 1; }\n";
+    assert_interactor_wa(play(&mut g, src).unwrap());
+}
+
+#[test]
+fn a_python_solution_that_crashes_before_answering_is_rte_not_the_interactors_eof_pe() {
+    // Stock testlib exits 2 (PE) when it reads EOF, so that exit code must not beat the solution's crash.
+    let mut g = game(50, STRICT);
+    let result = play_in(&mut g, "PY3", "x = 1 // 0\n").unwrap();
+    assert_eq!(result.verdict, RunVerdict::Rte { reason: "ZeroDivisionError".into() });
+    assert!(result.check.is_none(), "{result:?}");
 }
