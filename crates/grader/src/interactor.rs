@@ -8,7 +8,7 @@
 
 use crate::checkers::CheckOutcome;
 use crate::checkers::custom::{
-    ExitReport, PartialPoints, PartialScale, checker_limits, finished_code, interpret,
+    ExitReport, PartialPoints, PartialScale, checker_limits, finished_code, helper_argv, interpret,
 };
 use crate::checkers::select::CustomKind;
 use crate::error::GradeError;
@@ -104,11 +104,11 @@ fn solution_spec(x: &Interaction) -> RunSpec {
 }
 
 fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
-    let mut argv: Vec<String> = IGNORE_SIGPIPE.map(String::from).into();
-    argv.extend(x.interactor.run.iter().cloned());
-    argv.extend(["input", "tout", "answer"].map(String::from));
     let mut limits = interactor_limits(solution);
     limits.processes = x.interactor.processes.max(1);
+    let mut argv: Vec<String> = IGNORE_SIGPIPE.map(String::from).into();
+    argv.extend(helper_argv(x.interactor, &limits));
+    argv.extend(["input", "tout", "answer"].map(String::from));
     RunSpec {
         argv,
         limits,
@@ -338,5 +338,33 @@ mod tests {
         let (mut a, mut b) = (spawn("true", &[]), spawn("sh", &["-c", "exit 2"]));
         let result = wait_both(&mut a, &mut b, Instant::now() + Duration::from_secs(60));
         assert!(matches!(result, Err(GradeError::Sandbox(_))));
+    }
+
+    #[test]
+    fn a_java_interactor_gets_a_heap_below_its_box_memory() {
+        use crate::run_case::CaseLimits;
+        let registry =
+            crate::languages::LanguageRegistry::from_toml(include_str!("../../../languages.toml")).unwrap();
+        let java = registry.get("JAVA8").unwrap();
+        let cpp = registry.get("CPP17").unwrap();
+        let interactor = crate::compile::program_for(java, Path::new("/i"), b"public class Interactor {}");
+        let solution = crate::compile::program_for(cpp, Path::new("/s"), b"");
+        let limits = CaseLimits { time_limit_s: 1.0, memory_kib: 262_144, jvm_reserve_kib: 0 };
+        let runnable = Runnable { program: &solution, limits: &limits };
+        let x = Interaction {
+            solution: &runnable,
+            interactor: &interactor,
+            input: Path::new("/x/input"),
+            answer: Path::new("/x/answer"),
+            points: 1.0,
+        };
+        let spec = interactor_spec(&x, &solution_limits(&runnable, SOLUTION_FILE_CAP));
+        assert!(spec.argv.iter().all(|a| !a.contains('{')), "unexpanded placeholder: {:?}", spec.argv);
+        let heap = crate::checkers::testing::heap_kib(&spec.argv);
+        assert!(
+            heap > 0 && heap < spec.limits.memory_kib,
+            "heap {heap} KiB in a {} KiB box",
+            spec.limits.memory_kib
+        );
     }
 }

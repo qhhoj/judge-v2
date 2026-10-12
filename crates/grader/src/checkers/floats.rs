@@ -30,8 +30,9 @@ pub fn within(expected: f64, got: f64, epsilon: f64, mode: ErrorMode) -> bool {
     }
 }
 
+/// A finite number; `inf`, `nan` and overflowing tokens are words, compared as text.
 fn parse(token: &[u8]) -> Option<f64> {
-    std::str::from_utf8(token).ok()?.parse().ok()
+    std::str::from_utf8(token).ok()?.parse().ok().filter(|v: &f64| v.is_finite())
 }
 
 impl Floats {
@@ -105,5 +106,19 @@ mod tests {
         let c = Floats { precision: u32::MAX, mode: ErrorMode::Absolute };
         assert!(!run(&c, b"1.5", b"1.0").passed);
         assert!(run(&c, b"1.0", b"1.0").passed);
+    }
+
+    #[test]
+    fn identical_non_finite_words_match() {
+        for mode in [ErrorMode::Default, ErrorMode::Absolute, ErrorMode::Relative] {
+            let c = Floats { precision: 6, mode };
+            assert!(run(&c, b"INF\n", b"INF\n").passed, "INF {mode:?}");
+            assert!(run(&c, b"-1 INF\n", b"-1 INF\n").passed, "-1 INF {mode:?}");
+            assert!(run(&c, b"inf\n", b"inf\n").passed, "inf {mode:?}");
+            assert!(run(&c, b"NaN\n", b"NaN\n").passed, "NaN {mode:?}");
+            assert!(!run(&c, b"inf\n", b"1e308\n").passed, "a word never matches a number {mode:?}");
+            assert!(!run(&c, b"1e308\n", b"inf\n").passed, "a number never matches a word {mode:?}");
+            assert!(!run(&c, b"-INF\n", b"INF\n").passed, "words compare exactly {mode:?}");
+        }
     }
 }

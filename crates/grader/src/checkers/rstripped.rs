@@ -41,4 +41,11 @@ mod tests {
         assert!(run(&filter, b"a\n\n  \nb\n", b"a\nb\n").passed);
         assert!(!run(&filter, b"a\n", b"a\nb\n").passed);
     }
+
+    #[test]
+    fn crlf_answer_matches_lf_output() {
+        let keep = RStripped { filter_new_line: false };
+        assert!(run(&keep, b"1 2\n3\n", b"1 2\r\n3\r\n").passed, "CRLF answer vs LF output");
+        assert!(run(&keep, b"1 2\r\n3\r\n", b"1 2\n3\n").passed, "CRLF output vs LF answer");
+    }
 }
