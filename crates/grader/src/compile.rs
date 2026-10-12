@@ -17,6 +17,9 @@ pub const MAX_LOG_BYTES: usize = 65536;
 pub const MAX_SNAPSHOT_BYTES: u64 = 256 << 20;
 const LOG: &str = "compile.log";
 const ERR: &str = "compile.err";
+/// Exit code when the compiler cannot be executed in the box: isolate's failed execve, or a `sh`/`env`
+/// wrapper's "not found". No compiler exits 127 over the user's source.
+const EXEC_FAILED: i32 = 127;
 
 #[derive(Debug, Clone)]
 pub struct CompileJob {
@@ -120,6 +123,7 @@ fn run_compiler(
     match classify(&meta, OutputUse { written: 0, cap: u64::MAX }) {
         RunVerdict::Ok => Ok(Ok(log)),
         RunVerdict::Internal(message) => Err(SandboxError::Isolate(message).into()),
+        RunVerdict::Ir { exit_code: EXEC_FAILED } => Err(GradeError::RuntimeMissing(argv[0].clone())),
         RunVerdict::Tle => Ok(Err(with_note(&mut log, "compilation timed out"))),
         RunVerdict::Mle => Ok(Err(with_note(&mut log, "compiler ran out of memory"))),
         _ => Ok(Err(log)),

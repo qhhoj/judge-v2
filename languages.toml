@@ -1,5 +1,6 @@
 # No SCRATCH entry: Scratch is dropped (user ruling); SCRATCH problems are refused with RETRY RUNTIME_MISSING.
 # languages.toml — one [[language]] per key. Commands run inside the isolate box with cwd /box.
+# C/C++ and Pascal compile with ONLINE_JUDGE defined (the usual `#ifndef ONLINE_JUDGE freopen` template).
 # Placeholders: {memory_kib} {memory_mib} (the run memory limit), {class} (JVM public class).
 # compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
 
@@ -7,97 +8,97 @@
 key = "C"
 name = "C (gcc, gnu99)"
 source = "main.c"
-compile = ["/usr/bin/gcc", "-std=gnu99", "-O2", "-pipe", "-o", "main", "main.c", "-lm"]
+compile = ["/usr/bin/gcc", "-std=gnu99", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.c", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/gcc", "-dumpfullversion"]
-signature = ["/usr/bin/gcc", "-std=gnu99", "-O2", "-pipe"]
+signature = ["/usr/bin/gcc", "-std=gnu99", "-O2", "-pipe", "-DONLINE_JUDGE"]
 
 [[language]]
 key = "C11"
 name = "C11 (gcc)"
 source = "main.c"
-compile = ["/usr/bin/gcc", "-std=gnu11", "-O2", "-pipe", "-o", "main", "main.c", "-lm"]
+compile = ["/usr/bin/gcc", "-std=gnu11", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.c", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/gcc", "-dumpfullversion"]
-signature = ["/usr/bin/gcc", "-std=gnu11", "-O2", "-pipe"]
+signature = ["/usr/bin/gcc", "-std=gnu11", "-O2", "-pipe", "-DONLINE_JUDGE"]
 
 [[language]]
 key = "CLANG"
 name = "C (clang)"
 source = "main.c"
-compile = ["/usr/bin/clang", "-std=gnu11", "-O2", "-pipe", "-o", "main", "main.c", "-lm"]
+compile = ["/usr/bin/clang", "-std=gnu11", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.c", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/clang", "-dumpversion"]
-signature = ["/usr/bin/clang", "-std=gnu11", "-O2", "-pipe"]
+signature = ["/usr/bin/clang", "-std=gnu11", "-O2", "-pipe", "-DONLINE_JUDGE"]
 
 [[language]]
 key = "CPP03"
 name = "C++03 (g++)"
 source = "main.cpp"
-compile = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
-signature = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe"]
+signature = ["/usr/bin/g++", "-std=gnu++03", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP11"
 name = "C++11 (g++)"
 source = "main.cpp"
-compile = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
-signature = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe"]
+signature = ["/usr/bin/g++", "-std=gnu++11", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP14"
 name = "C++14 (g++)"
 source = "main.cpp"
-compile = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
-signature = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe"]
+signature = ["/usr/bin/g++", "-std=gnu++14", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP17"
 name = "C++17 (g++)"
 source = "main.cpp"
-compile = ["/usr/bin/g++", "-std=gnu++17", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/g++", "-std=gnu++17", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
-signature = ["/usr/bin/g++", "-std=gnu++17", "-O2", "-pipe"]
+signature = ["/usr/bin/g++", "-std=gnu++17", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP20"
 name = "C++20 (g++)"
 source = "main.cpp"
-compile = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
-signature = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe"]
+signature = ["/usr/bin/g++", "-std=gnu++20", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CPP23"
 name = "C++23 (g++)"
 source = "main.cpp"
-compile = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/g++", "-dumpfullversion"]
-signature = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe"]
+signature = ["/usr/bin/g++", "-std=gnu++23", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
 key = "CLANGX"
 name = "C++17 (clang++)"
 source = "main.cpp"
-compile = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe", "-o", "main", "main.cpp", "-lm"]
+compile = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe", "-DONLINE_JUDGE", "-o", "main", "main.cpp", "-lm"]
 run = ["./main"]
 version = ["/usr/bin/clang++", "-dumpversion"]
-signature = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe"]
+signature = ["/usr/bin/clang++", "-std=gnu++17", "-O2", "-pipe", "-DONLINE_JUDGE"]
 testlib_flag = "-I/testlib"
 
 [[language]]
@@ -114,6 +115,8 @@ exception_style = "last_line"
 key = "PYPY3"
 name = "PyPy 3"
 source = "main.py"
+# A syntax error is CE, as for PY3; running main.py never reads the cached .pyc.
+compile = ["/usr/bin/pypy3", "-m", "py_compile", "main.py"]
 run = ["/usr/bin/pypy3", "main.py"]
 version = ["/usr/bin/pypy3", "--version"]
 exception_marker = "Traceback (most recent call last)"
@@ -124,7 +127,7 @@ key = "PAS"
 name = "Pascal (fpc)"
 source = "main.pas"
 # -n: skip the system fpc config (isolate does not mount etc); the unit paths fpc.cfg would add are given here.
-compile = ["/usr/bin/fpc", "-n", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/*", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/rtl", "-O2", "-XS", "-Sg", "-omain", "main.pas"]
+compile = ["/usr/bin/fpc", "-n", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/*", "-Fu/usr/lib/x86_64-linux-gnu/fpc/$fpcversion/units/$fpctarget/rtl", "-O2", "-XS", "-Sg", "-dONLINE_JUDGE", "-omain", "main.pas"]
 run = ["./main"]
 # /usr/bin/ppcx64 and fpc's own config resolve through the /etc/alternatives symlinks; the box has no /etc.
 compile_dirs = ["/etc/alternatives"]
