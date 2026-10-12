@@ -13,6 +13,7 @@ use crate::checkers::select::{CheckerChoice, CustomKind, choose};
 use crate::checkers::themis::{self, ThemisNames};
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::error::GradeError;
+use crate::file_io::SolutionFileIo;
 use crate::grade::grade_cases;
 use crate::interactor::Boxes;
 use crate::languages::{Language, LanguageKind};
@@ -180,7 +181,8 @@ fn try_judge(
         }
         Err(log) => return Ok(Some(log)),
     };
-    grade_program(env, problem, program, run)?;
+    let file_io = problem.init.file_io.as_ref().map(|io| SolutionFileIo::new(io, &source));
+    grade_program(env, problem, (program, file_io), run)?;
     Ok(None)
 }
 
@@ -325,7 +327,7 @@ fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {
 fn grade_program(
     env: &mut JudgeEnv,
     problem: &ResolvedProblem,
-    program: Program,
+    (program, file_io): (Program, Option<SolutionFileIo>),
     run: Run,
 ) -> Result<(), GradeError> {
     if let Some(spec) = &problem.init.interactive {
@@ -335,7 +337,6 @@ fn grade_program(
     let context = CaseContext { problem, check, scratch: env.scratch.clone() };
     let limits = limits_of(run.submission, &env.defaults);
     let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
-    let file_io = problem.init.file_io.clone();
     let mut judge = ProgramCases { context, boxes, program, limits, file_io };
     grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
 }

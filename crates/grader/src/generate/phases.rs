@@ -8,6 +8,7 @@ use super::pack::Budget;
 use super::plan::{GenerationPlan, PlanTest, ProgramLimits, TestSource};
 use super::programs::bundle_file;
 use super::run::{ProgramExit, ProgramRun, run_program, validator_args};
+use crate::file_io::SolutionFileIo;
 use crate::judge::JudgeEnv;
 use crate::program::Program;
 use crate::run_case::{CaseIo, CaseLimits, Runnable, run_case};
@@ -159,11 +160,9 @@ impl Generation<'_> {
             jvm_reserve_kib: self.env.defaults.jvm_reserve_kib,
         };
         let input = File::open(self.input_path(position))?;
-        let io = CaseIo {
-            input: &input,
-            output_cap: self.plan.limits.max_file_bytes,
-            file_io: self.plan.file_io.as_ref(),
-        };
+        let file_io = self.plan.file_io.as_ref().map(|io| SolutionFileIo::new(io, b""));
+        let io =
+            CaseIo { input: &input, output_cap: self.plan.limits.max_file_bytes, file_io: file_io.as_ref() };
         let runnable = Runnable { program, limits: &case_limits };
         let answer = self.answer_path(position);
         let case = run_case(&mut self.env.solution, &runnable, &io, &answer)?;

@@ -115,6 +115,31 @@ impl IsolateBox {
         Ok(file)
     }
 
+    /// Gives the box file `existing` a second name. Returns false, changing nothing, when `name` is taken.
+    pub fn link(&self, existing: &str, name: &str) -> Result<bool, SandboxError> {
+        match std::fs::hard_link(self.box_path(existing)?, self.box_path(name)?) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The box file named `name` ignoring ASCII case: `name` itself when it is there, else the first match
+    /// in name order.
+    pub fn find_ignoring_case(&self, name: &str) -> Result<Option<String>, SandboxError> {
+        let mut matches = Vec::new();
+        for entry in std::fs::read_dir(&self.dir)? {
+            let Ok(found) = entry?.file_name().into_string() else { continue };
+            if found == name {
+                return Ok(Some(found));
+            }
+            if found.eq_ignore_ascii_case(name) {
+                matches.push(found);
+            }
+        }
+        Ok(matches.into_iter().min())
+    }
+
     /// Reads at most `cap` bytes of a regular file the program left in the box. A symlink is refused.
     pub fn read_output(&self, name: &str, cap: u64) -> Result<Vec<u8>, SandboxError> {
         let mut bytes = Vec::new();

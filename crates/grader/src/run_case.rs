@@ -1,9 +1,10 @@
 //! One case of the solution in a fresh box (Review Focus 1).
 
 use crate::error::GradeError;
+use crate::file_io::SolutionFileIo;
 use crate::languages::{ExceptionStyle, Placeholders, expand};
 use crate::program::Program;
-use judge_problem::init::{FileIo, is_plain_box_name};
+use judge_problem::init::is_plain_box_name;
 use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
@@ -37,7 +38,7 @@ pub struct Runnable<'a> {
 pub struct CaseIo<'a> {
     pub input: &'a File,
     pub output_cap: u64,
-    pub file_io: Option<&'a FileIo>,
+    pub file_io: Option<&'a SolutionFileIo>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,25 +63,32 @@ pub fn read_prefix(path: &Path, bytes: u64) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
-/// Box names of the case input and output, and the stdio that connects them.
+/// Box names of the case input (and its aliases) and output, the stdio that connects them, and whether the
+/// output may be in any letter case.
 struct Layout {
     input: String,
+    aliases: Vec<String>,
     output: String,
+    output_any_case: bool,
     stdio: Stdio,
 }
 
-fn layout(program: &Program, file_io: Option<&FileIo>) -> Layout {
+fn layout(program: &Program, file_io: Option<&SolutionFileIo>) -> Layout {
     let keeps_stderr = program.jvm || program.exception_marker.is_some();
     let stderr = Some(if keeps_stderr { STDERR_FILE } else { "/dev/null" }.to_string());
     match file_io {
         Some(io) => Layout {
             input: io.input.clone(),
+            aliases: io.aliases.clone(),
             output: io.output.clone(),
+            output_any_case: true,
             stdio: Stdio { stdin: Some("/dev/null".into()), stdout: Some("/dev/null".into()), stderr },
         },
         None => Layout {
             input: "input".into(),
+            aliases: Vec::new(),
             output: "output".into(),
+            output_any_case: false,
             stdio: Stdio { stdin: Some("input".into()), stdout: Some("output".into()), stderr },
         },
     }
@@ -88,7 +96,7 @@ fn layout(program: &Program, file_io: Option<&FileIo>) -> Layout {
 
 /// A `file_io` name is data from init.yml: it must be a plain, unreserved box file name (defence in depth;
 /// `parse_init` refuses the same names).
-fn check_file_io(file_io: &FileIo) -> Result<(), GradeError> {
+fn check_file_io(file_io: &SolutionFileIo) -> Result<(), GradeError> {
     match [&file_io.input, &file_io.output].into_iter().find(|name| !is_plain_box_name(name)) {
         Some(bad) => Err(GradeError::Io(format!("file_io name {bad:?} is not a plain box file name"))),
         None => Ok(()),
@@ -121,14 +129,29 @@ fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
     }
 }
 
-/// Resets the box and puts the program and the case input in it.
-fn stage(sandbox: &mut IsolateBox, program: &Program, input: (&File, &str)) -> Result<(), GradeError> {
+/// Resets the box and puts the program and the case input in it, the input also under each alias that
+/// names no program file.
+fn stage(
+    sandbox: &mut IsolateBox,
+    program: &Program,
+    input: &File,
+    layout: &Layout,
+) -> Result<(), GradeError> {
     sandbox.reset()?;
     sandbox.put_tree(&program.dir)?;
     // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.
-    let handle = format!("/proc/self/fd/{}", input.0.as_raw_fd());
-    sandbox.put(input.1, Path::new(&handle), false)?;
+    let handle = format!("/proc/self/fd/{}", input.as_raw_fd());
+    sandbox.put(&layout.input, Path::new(&handle), false)?;
+    for alias in &layout.aliases {
+        sandbox.link(&layout.input, alias)?;
+    }
     Ok(())
+}
+
+/// The box name the output is read from: with file I/O, the program may have spelled it in any letter case.
+fn output_name(sandbox: &IsolateBox, layout_output: &str, any_case: bool) -> String {
+    let found = any_case.then(|| sandbox.find_ignoring_case(layout_output).ok().flatten()).flatten();
+    found.unwrap_or_else(|| layout_output.to_string())
 }
 
 pub fn run_case(
@@ -141,9 +164,10 @@ pub fn run_case(
     if let Some(file_io) = io.file_io {
         check_file_io(file_io)?;
     }
-    stage(sandbox, runnable.program, (io.input, &layout.input))?;
-    let output_name = layout.output.clone();
+    stage(sandbox, runnable.program, io.input, &layout)?;
+    let (box_output, any_case) = (layout.output.clone(), layout.output_any_case);
     let meta = sandbox.run(&run_spec(runnable, layout, io.output_cap))?;
+    let output_name = output_name(sandbox, &box_output, any_case);
     // One byte past the cap tells "exactly the cap" (fine) from "over it" (OLE).
     let written = sandbox.read_output(&output_name, io.output_cap + 1).unwrap_or_default();
     std::fs::write(output, &written)?;
