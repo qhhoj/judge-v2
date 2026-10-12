@@ -152,22 +152,70 @@ pub fn expand(argv: &[String], values: &Placeholders) -> Vec<String> {
         .collect()
 }
 
-static PUBLIC_CLASS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"public\s+(?:final\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)").expect("static pattern")
-});
-static MAIN_CLASS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{[^{}]*static\s+void\s+main")
+/// Comments, text blocks, strings and char literals: blanked before scanning, so their braces and words never count.
+static NOT_CODE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)/\*.*?\*/|//[^\n]*|""".*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'"#)
         .expect("static pattern")
 });
-static COMMENTS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)/\*.*?\*/|//[^\n]*").expect("static pattern"));
+static TYPE_DECL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b((?:(?:public|final|abstract|strictfp|sealed)\s+)*)(?:class|interface|enum|record)\s+([\p{L}_$][\p{L}\p{N}_$]*)")
+        .expect("static pattern")
+});
+static MAIN_METHOD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\bstatic\s+(?:(?:public|final|synchronized|strictfp)\s+)*void\s+main\s*\(")
+        .expect("static pattern")
+});
 
-/// The class a Java source declares: the first `public class`, else the first `class` with `main`.
-/// Comments are removed first, so a commented-out declaration is not picked.
+struct TopLevelType {
+    at: usize,
+    public: bool,
+    name: String,
+}
+
+/// `depths[i]`: how many braces are open before byte `i`.
+fn brace_depths(code: &str) -> Vec<i64> {
+    let mut depth = 0;
+    let mut depths = Vec::with_capacity(code.len() + 1);
+    for byte in code.bytes() {
+        depths.push(depth);
+        depth += match byte {
+            b'{' => 1,
+            b'}' => -1,
+            _ => 0,
+        };
+    }
+    depths.push(depth);
+    depths
+}
+
+/// The types declared outside every brace, in source order.
+fn top_level_types(code: &str, depths: &[i64]) -> Vec<TopLevelType> {
+    TYPE_DECL
+        .captures_iter(code)
+        .filter_map(|c| {
+            let at = c.get(0)?.start();
+            (depths[at] == 0).then(|| TopLevelType {
+                at,
+                public: c[1].contains("public"),
+                name: c[2].to_string(),
+            })
+        })
+        .collect()
+}
+
+/// The class a Java source declares: the top-level `public` type, else the top-level type whose body
+/// declares `static void main`. Comments and literals are blanked first, so a commented-out declaration
+/// is not picked; members of nested types are skipped by brace depth.
 pub fn java_main_class(source: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(source);
-    let code = COMMENTS.replace_all(&text, " ");
-    [&PUBLIC_CLASS, &MAIN_CLASS].into_iter().find_map(|re| re.captures(&code).map(|c| c[1].to_string()))
+    let code = NOT_CODE.replace_all(&text, " ");
+    let depths = brace_depths(&code);
+    let types = top_level_types(&code, &depths);
+    if let Some(public) = types.iter().find(|t| t.public) {
+        return Some(public.name.clone());
+    }
+    let mut mains = MAIN_METHOD.find_iter(&code).map(|m| m.start()).filter(|&at| depths[at] == 1);
+    mains.find_map(|at| types.iter().rev().find(|t| t.at < at).map(|t| t.name.clone()))
 }
 
 impl Language {
@@ -251,6 +299,23 @@ mod tests {
         assert_eq!(java_main_class(b"int x;"), None);
         let commented = b"// public class Old {}\n/* public class Older {} */\npublic class Real {}";
         assert_eq!(java_main_class(commented).as_deref(), Some("Real"));
+    }
+
+    #[test]
+    fn java_class_detection_skips_literals_and_nested_types() {
+        let in_literals = b"class Main {\n  static String s = \"public class Fake {\";\n  static char c = '{';\n  public static void main(String[] a) {}\n}";
+        assert_eq!(java_main_class(in_literals).as_deref(), Some("Main"));
+        let nested_main = b"class A { static class B { public static void main(String[] a) {} } }";
+        assert_eq!(java_main_class(nested_main), None, "only a top-level type's main runs as `java X`");
+        assert_eq!(java_main_class(b"interface I { static void main(String[] a) {} }").as_deref(), Some("I"));
+        let modifiers_after_static =
+            b"class S { static int f() { return 1; }\n static public void main(String[] a) {} }";
+        assert_eq!(java_main_class(modifiers_after_static).as_deref(), Some("S"));
+        assert_eq!(java_main_class("public class Bài {}".as_bytes()).as_deref(), Some("Bài"));
+    }
+
+    #[test]
+    fn java_source_names() {
         let r = shipped();
         assert_eq!(r.get("JAVA").unwrap().source_name(b"public class Q { }"), "Q.java");
         assert_eq!(r.get("JAVA").unwrap().source_name(b"nothing"), "Main.java");
