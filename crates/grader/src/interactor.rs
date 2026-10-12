@@ -32,6 +32,11 @@ const DEADLINE_SLACK: Duration = Duration::from_secs(5);
 /// isolate's own exit status for an internal error (1 is "the program failed").
 const ISOLATE_FAILURE: i32 = 2;
 const POLL: Duration = Duration::from_millis(2);
+const NO_OUTPUT: OutputUse = OutputUse { written: 0, cap: u64::MAX };
+/// isolate resets signal dispositions inside the box, so the interactor is started through a shell that
+/// ignores SIGPIPE and execs it: a last write to a solution that already exited fails with EPIPE, and the
+/// interactor still reaches its own verdict instead of dying.
+const IGNORE_SIGPIPE: [&str; 3] = ["/bin/sh", "-c", "trap '' PIPE; exec \"$0\" \"$@\""];
 
 pub struct Boxes<'a> {
     pub solution: &'a mut IsolateBox,
@@ -66,13 +71,22 @@ pub fn interactor_limits(solution: &Limits) -> Limits {
 const SIGPIPE_REASON: &str = "SIGPIPE";
 /// testlib's exit code for `_fail` (a jury error).
 const TESTLIB_FAIL_EXIT: i32 = 3;
+/// testlib's exit codes for `_wa` and `_points`: verdicts formed from what the interactor read. Its other
+/// non-zero codes (2 is also testlib's unexpected EOF, 4, 8) can be the symptom of a solution that died.
+const TESTLIB_JUDGED_EXITS: [i32; 2] = [1, 7];
 
-/// A solution that failed on its own wins over the interactor. The exception is SIGPIPE: the solution
-/// wrote to an interactor that had already finished, so the interactor's verdict is the real one.
-pub fn solution_wins(verdict: &RunVerdict) -> bool {
-    match verdict {
+/// A solution that failed on its own wins over the interactor, with two exceptions where the failure is the
+/// consequence of the interactor having finished first: SIGPIPE (it wrote to the closed pipe), and an
+/// exception or non-zero exit (EOF, `BrokenPipeError`) after the interactor quit with WA or partial points.
+/// A crash by any other signal stays the solution's own.
+pub fn solution_wins(solution: &RunVerdict, interactor: &RunVerdict) -> bool {
+    let interactor_judged =
+        matches!(interactor, RunVerdict::Ir { exit_code } if TESTLIB_JUDGED_EXITS.contains(exit_code));
+    match solution {
         RunVerdict::Ok => false,
-        RunVerdict::Rte { reason } => reason != SIGPIPE_REASON,
+        RunVerdict::Rte { reason } if reason == SIGPIPE_REASON => false,
+        RunVerdict::Rte { reason } if reason.starts_with("SIG") => true,
+        RunVerdict::Rte { .. } | RunVerdict::Ir { .. } => !interactor_judged,
         _ => true,
     }
 }
@@ -90,7 +104,8 @@ fn solution_spec(x: &Interaction) -> RunSpec {
 }
 
 fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
-    let mut argv = x.interactor.run.clone();
+    let mut argv: Vec<String> = IGNORE_SIGPIPE.map(String::from).into();
+    argv.extend(x.interactor.run.iter().cloned());
     argv.extend(["input", "tout", "answer"].map(String::from));
     let mut limits = interactor_limits(solution);
     limits.processes = x.interactor.processes.max(1);
@@ -174,12 +189,12 @@ pub fn interact(mut boxes: Boxes, x: &Interaction) -> Result<Interactive, GradeE
     let (mut interactor_child, mut solution_child) = spawn_pair(&boxes, &interactor, &solution)?;
     let deadline = Instant::now() + Duration::from_secs_f64(interactor.limits.wall_s) + DEADLINE_SLACK;
     wait_both(&mut interactor_child, &mut solution_child, deadline)?;
-    decide(&boxes, x)
+    decide(&boxes, x, &solution.limits)
 }
 
 fn solution_result(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeError> {
     let meta = boxes.solution.read_meta()?;
-    let verdict = classify(&meta, OutputUse { written: 0, cap: u64::MAX });
+    let verdict = classify(&meta, NO_OUTPUT);
     if let RunVerdict::Internal(message) = &verdict {
         return Err(SandboxError::Isolate(message.clone()).into());
     }
@@ -187,10 +202,13 @@ fn solution_result(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeE
     Ok(Interactive { verdict, time_s: meta.time_s, memory_kib: meta.cg_mem_kib, check: None })
 }
 
-fn interactor_outcome(boxes: &Boxes, points: f64) -> Result<CheckOutcome, GradeError> {
-    let meta = boxes.helper.read_meta()?;
-    let verdict = classify(&meta, OutputUse { written: 0, cap: u64::MAX });
-    let code = finished_code(&verdict, meta.exit_code, "interactor")?;
+fn interactor_outcome(
+    boxes: &Boxes,
+    verdict: &RunVerdict,
+    exit_code: Option<i32>,
+    points: f64,
+) -> Result<CheckOutcome, GradeError> {
+    let code = finished_code(verdict, exit_code, "interactor")?;
     let stderr = boxes.helper.read_output(INTERACTOR_STDERR, MAX_INTERACTOR_STDERR).unwrap_or_default();
     let report = ExitReport { code, stdout: String::new(), stderr: String::from_utf8_lossy(&stderr).into() };
     let scale = PartialScale { mode: PartialPoints::Absolute, case_points: points };
@@ -208,38 +226,89 @@ pub fn interactor_failed(verdict: &RunVerdict) -> bool {
     }
 }
 
-fn interactor_verdict(boxes: &Boxes) -> Result<RunVerdict, GradeError> {
-    Ok(classify(&boxes.helper.read_meta()?, OutputUse { written: 0, cap: u64::MAX }))
+/// A solution killed by the wall clock within its CPU limit, while the interactor used more CPU than the
+/// wall allows on top of that limit, was waiting for the interactor: jury time, not the contestant's TLE.
+/// This also catches an interactor that hangs, which the wall limit ends. Policy: a problem whose
+/// interactor needs that much CPU cannot be judged within these limits, so it is IE, not a verdict.
+fn stalled_by_interactor(solution: &Interactive, interactor_cpu_s: f64, limits: &Limits) -> bool {
+    solution.verdict == RunVerdict::Tle
+        && solution.time_s < limits.time_s
+        && interactor_cpu_s > limits.wall_s - limits.time_s
 }
 
-fn decide(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeError> {
+fn decide(boxes: &Boxes, x: &Interaction, limits: &Limits) -> Result<Interactive, GradeError> {
     let result = solution_result(boxes, x)?;
-    if solution_wins(&result.verdict) && !interactor_failed(&interactor_verdict(boxes)?) {
+    let interactor = boxes.helper.read_meta()?;
+    if stalled_by_interactor(&result, interactor.time_s, limits) {
+        let used = interactor.time_s;
+        return Err(GradeError::Checker(format!(
+            "interactor used {used:.1} s of CPU; the solution timed out waiting"
+        )));
+    }
+    let interactor_verdict = classify(&interactor, NO_OUTPUT);
+    if solution_wins(&result.verdict, &interactor_verdict) && !interactor_failed(&interactor_verdict) {
         return Ok(result);
     }
-    Ok(Interactive { check: Some(interactor_outcome(boxes, x.points)?), ..result })
+    let check = interactor_outcome(boxes, &interactor_verdict, interactor.exit_code, x.points)?;
+    Ok(Interactive { check: Some(check), ..result })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn rte(reason: &str) -> RunVerdict {
+        RunVerdict::Rte { reason: reason.into() }
+    }
+
     #[test]
-    fn who_is_to_blame_when_either_side_fails() {
-        let rte = |reason: &str| RunVerdict::Rte { reason: reason.into() };
-        // (verdict, solution's own failure wins, interactor failed by itself)
+    fn the_interactor_fails_on_fail_and_crashes() {
         let table = [
-            (RunVerdict::Tle, true, false),
-            (RunVerdict::Mle, true, false),
-            (RunVerdict::Ir { exit_code: 1 }, true, false), // testlib WA from the interactor
-            (RunVerdict::Ir { exit_code: 3 }, true, true),  // testlib FAIL
-            (rte("SIGSEGV"), true, true),
-            (rte("SIGPIPE"), false, false), // the other side hung up
-            (RunVerdict::Ok, false, false),
+            (RunVerdict::Ok, false),
+            (RunVerdict::Ir { exit_code: 1 }, false), // testlib WA
+            (RunVerdict::Ir { exit_code: 3 }, true),  // testlib FAIL
+            (rte("SIGSEGV"), true),
+            (rte("SIGPIPE"), false),  // the solution hung up
+            (RunVerdict::Tle, false), // a hang is caught by `stalled_by_interactor`
         ];
-        for (verdict, wins, failed) in table {
-            assert_eq!((solution_wins(&verdict), interactor_failed(&verdict)), (wins, failed), "{verdict:?}");
+        for (verdict, failed) in table {
+            assert_eq!(interactor_failed(&verdict), failed, "{verdict:?}");
         }
+    }
+
+    #[test]
+    fn the_solutions_own_failure_wins_unless_it_followed_the_interactors_verdict() {
+        // The interactor's testlib exit code: 0 ok, 1 WA, 2 PE (also unexpected EOF), 7 points.
+        let (ok, wa, eof, points) = (0, 1, 2, 7);
+        let interactor = |code| if code == 0 { RunVerdict::Ok } else { RunVerdict::Ir { exit_code: code } };
+        // (solution, interactor, the solution's verdict stands)
+        let table = [
+            (RunVerdict::Ok, wa, false),
+            (rte("SIGPIPE"), ok, false),
+            (rte("SIGSEGV"), eof, true), // it crashed and the interactor read EOF
+            (RunVerdict::Ir { exit_code: 1 }, eof, true),
+            (rte("SIGSEGV"), ok, true),
+            (rte("SIGSEGV"), wa, true), // a real crash, whatever the interactor made of the EOF
+            (rte("EOFError"), wa, false), // the interactor quit with WA first
+            (rte("BrokenPipeError"), points, false),
+            (RunVerdict::Ir { exit_code: 1 }, wa, false),
+            (RunVerdict::Tle, wa, true),
+            (RunVerdict::Mle, wa, true),
+        ];
+        for (solution, code, wins) in table {
+            assert_eq!(solution_wins(&solution, &interactor(code)), wins, "{solution:?} vs exit {code}");
+        }
+    }
+
+    #[test]
+    fn a_wall_timeout_is_the_interactors_when_it_used_the_waiting_time() {
+        let limits = Limits::for_solution(1.0, 1 << 18, 1, 1 << 20); // 1 s CPU, 4 s wall
+        let tle = |time_s| Interactive { verdict: RunVerdict::Tle, time_s, memory_kib: 0, check: None };
+        assert!(stalled_by_interactor(&tle(0.01), 5.0, &limits), "idle solution, busy interactor");
+        assert!(!stalled_by_interactor(&tle(0.01), 0.01, &limits), "both idle: a deadlock is the solution's");
+        assert!(!stalled_by_interactor(&tle(1.5), 5.0, &limits), "it used up its own CPU limit");
+        let ok = Interactive { verdict: RunVerdict::Ok, ..tle(0.01) };
+        assert!(!stalled_by_interactor(&ok, 5.0, &limits));
     }
 
     fn spawn(program: &str, args: &[&str]) -> Child {
