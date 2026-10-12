@@ -26,8 +26,9 @@ Pascal or Java that include testlib do not compile (the submission is an interna
 - Batches and pretests follow DMOJ: a case that is not AC skips the rest of its batch (SC), `short_circuit` skips
   every later case; a pretest run grades only `pretest_test_cases`. Each case reports `fraction x total`, where a
   batched case carries the batch total; the bridge scores a batch by its weakest case.
-- A loose-file problem (no archive) reads its case files from the data root while grading, so the upload marker
-  and then `.data-version` are read again at the end: an upload in progress or a moved stamp turns the result into
+- Grading reads from the data root after resolve (a loose-file problem its case files; any problem its checker,
+  interactor, signature and file I/O sources), so the upload marker and then `.data-version` are read again at
+  the end, for archive problems too: an upload in progress or a moved stamp turns the result into
   `RETRY DATA_UNAVAILABLE`. A compile error is rechecked only on signature problems (their entry and header).
 - An OUTPUT submission whose zip cannot be opened (not a zip, corrupt directory) is WA on every case with feedback
   "the submitted zip cannot be read"; an entry with an unsupported method, encryption or a bad checksum makes
