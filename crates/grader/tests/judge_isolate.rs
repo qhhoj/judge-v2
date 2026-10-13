@@ -320,24 +320,30 @@ int main(int argc, char* argv[]) {
     registerTestlibCmd(argc, argv);
     int want = ans.readInt(), got = ouf.readInt();
     if (got == want) quitf(_ok, "correct");
-    if (got == want + 1) quitp(0.5, "close");
+    if (got == want + 1) quitp(20, "close");
     quitf(_wa, "expected %d, found %d", want, got);
 }
 "#;
 
+/// testlib `points N` is N points of the case (the old judge's reading), or N% with the percentage flag.
 #[test]
-fn a_bridged_checker_grades_with_partial_points() {
+fn a_bridged_checker_grades_partial_points_as_case_points_or_a_percentage() {
     let mut b = bench(18);
-    let init = "checker: {name: bridged, args: {files: check.cpp, lang: CPP17, type: testlib}}\n\
-                test_cases:\n- {in: 1.in, out: 1.out, points: 50}\n- {in: 2.in, out: 2.out, points: 50}\n";
-    let mut files = APLUSB.to_vec();
-    files[0] = ("init.yml", init.as_bytes());
-    files.push(("check.cpp", CHECKER.as_bytes()));
-    b.write("bridged", &files);
     let off_by_one = "a, b = map(int, input().split())\nprint(a + b + (1 if a == 10 else 0))\n";
-    let (outcome, rec) = b.run("bridged", "PY3", off_by_one);
-    assert_eq!(outcome, Outcome::Graded);
-    assert_eq!(rec.shape(), [(Status::Ac, 50.0), (Status::Ac, 25.0)]);
+    let modes = [("points", "", 20.0), ("percent", ", treat_checker_points_as_percentage: true", 10.0)];
+    for (code, flag, partial) in modes {
+        let init = format!(
+            "checker: {{name: bridged, args: {{files: check.cpp, lang: CPP17, type: testlib{flag}}}}}\n\
+             test_cases:\n- {{in: 1.in, out: 1.out, points: 50}}\n- {{in: 2.in, out: 2.out, points: 50}}\n"
+        );
+        let mut files = APLUSB.to_vec();
+        files[0] = ("init.yml", init.as_bytes());
+        files.push(("check.cpp", CHECKER.as_bytes()));
+        b.write(code, &files);
+        let (outcome, rec) = b.run(code, "PY3", off_by_one);
+        assert_eq!(outcome, Outcome::Graded);
+        assert_eq!(rec.shape(), [(Status::Ac, 50.0), (Status::Ac, partial)], "{code}");
+    }
 }
 
 #[test]
