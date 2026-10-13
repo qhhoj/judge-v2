@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.2 (2026-10-13)
+
+### Fixes
+
+- An archive problem whose data version changes while it is graded is retried, as a loose-file problem already was: its checker, interactor, signature and file I/O sources are read from the data root after resolve, so the result could mix two versions under the old version number.
+- Tests: the end-to-end bridged-checker test asserts testlib `points N` as N case points (and N% with `treat_checker_points_as_percentage`), the reading shipped in 2.2.0; it still asserted the pre-2.2.0 fraction reading.
+- Checkers: a CRLF line break is one break (rstripped no longer sees an extra empty line per CRLF); Java checkers and interactors get their `-Xmx` filled in (the box memory minus 128 MiB) instead of a literal `{memory_mib}` the JVM rejected; the floats checkers compare `inf`/`nan` and overflowing tokens as text, so identical output matches.
+- Daemon: an Assign after a reconnect may take a slot a cancelled generation still holds (it waits for the run to end) instead of failing with SLOTS_FULL; the Final of a run the bridge aborted no longer leaves an outbox that makes the next Hello list more runs than slots.
+- Languages: C/C++ compile with `-DONLINE_JUDGE` and Pascal with `-dONLINE_JUDGE`, so `#ifndef ONLINE_JUDGE` freopen templates use stdio; PYPY3 syntax-checks with `py_compile` so a syntax error is CE, not IR; Java main-class detection scans top-level types by brace depth (a braced member before `main` or an inner `public class` no longer misnames the class); a compiler that cannot exec in the box is RETRY RUNTIME_MISSING, not CE.
+- Reported memory is the program's peak RSS, not the page cache of its output (an MLE still shows the cgroup peak).
+- Interactive problems: the interactor ignores SIGPIPE, so a last write after the solution exited is no longer IE; a solution that fails on EOF or a broken pipe after the interactor quit with WA or points gets the interactor's verdict; an interactor that runs out of its limits, or whose CPU use made the solution time out on the wall clock, is IE instead of the contestant's TLE.
+
 ## 2.3.1 (2026-10-12)
 
 ### Fixes
