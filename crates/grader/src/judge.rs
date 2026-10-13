@@ -111,11 +111,12 @@ pub fn judge_submission(
     settle(outcome, env.stamps.as_ref(), problem)
 }
 
-/// A loose-file problem reads its case files from the data root while grading. If its stamp moved (or
-/// an upload began) meanwhile, the result may mix two versions: it becomes `RETRY DATA_UNAVAILABLE`.
-/// An archive problem grades from its immutable cache entry and keeps its result.
+/// Grading reads from the data root after resolve: a loose-file problem its case files, any problem its
+/// checker, interactor, signature and file I/O sources (an archive problem only its tests come from the
+/// immutable cache entry). If the stamp moved (or an upload began) meanwhile, the result may mix two
+/// versions: it becomes `RETRY DATA_UNAVAILABLE`.
 fn settle(outcome: Outcome, stamps: &dyn StampSource, problem: &ResolvedProblem) -> Outcome {
-    if !used_loose_data(&outcome, problem) {
+    if !may_have_read_data_root(&outcome, problem) {
         return outcome;
     }
     let dir = &problem.data_dir;
@@ -131,15 +132,14 @@ fn settle(outcome: Outcome, stamps: &dyn StampSource, problem: &ResolvedProblem)
     outcome
 }
 
-/// Whether the outcome came from files read off the data root after resolve. A compile error does only for a
-/// signature problem (its entry and header); Aborted and Retry are kept as they are.
-fn used_loose_data(outcome: &Outcome, problem: &ResolvedProblem) -> bool {
-    let from_data = match outcome {
+/// Whether the outcome may come from files read off the data root after resolve, archive or not. A compile
+/// error does only for a signature problem (its entry and header); Aborted and Retry are kept as they are.
+fn may_have_read_data_root(outcome: &Outcome, problem: &ResolvedProblem) -> bool {
+    match outcome {
         Outcome::Aborted | Outcome::Retry(_) => false,
         Outcome::CompileError(_) => problem.init.signature_grader.is_some(),
         Outcome::Graded | Outcome::InternalError(_) => true,
-    };
-    from_data && problem.lease.is_none()
+    }
 }
 
 /// The submission being graded: its plan and where results go.
@@ -564,6 +564,72 @@ mod tests {
         for (outcome, read, uploading, used, want) in cases {
             assert_eq!(settled(outcome.clone(), read.clone(), uploading, used), want, "{outcome:?} {read:?}");
         }
+    }
+
+    /// An archive problem at `version` in `root/code`: its tests in t.zip, `extra` appended to init.yml.
+    fn archive_problem(root: &std::path::Path, cache: &std::path::Path, extra: &str) -> ResolvedProblem {
+        use judge_problem::{
+            archive::ZipLimits,
+            data_version::{FsStamps, WaitPolicy},
+            dir_cache::DirCache,
+        };
+        let dir = root.join("arch");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("init.yml"),
+            format!("archive: t.zip\ntest_cases:\n- {{in: 1.in, out: 1.out, points: 1}}\n{extra}"),
+        )
+        .unwrap();
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(dir.join("t.zip")).unwrap());
+        writer.start_file("1.in", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.start_file("1.out", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.finish().unwrap();
+        std::fs::write(dir.join("checker.cpp"), "// version 5\n").unwrap();
+        std::fs::write(dir.join(".data-version"), "5\n").unwrap();
+        let resolver = judge_problem::resolve::Resolver {
+            root: root.into(),
+            cache: std::sync::Arc::new(DirCache::new(cache.into(), 1 << 30)),
+            wait: WaitPolicy {
+                timeout: std::time::Duration::from_millis(200),
+                poll: std::time::Duration::from_millis(20),
+            },
+            zip: ZipLimits::default(),
+            stamps: std::sync::Arc::new(FsStamps),
+        };
+        let problem = resolver.resolve("arch", 5).unwrap();
+        assert!(problem.lease.is_some(), "graded from the archive cache entry");
+        problem
+    }
+
+    /// The uploader's version 6: a new checker source next to init.yml, then the stamp (both written atomically).
+    fn upload_version_6(problem: &ResolvedProblem) {
+        std::fs::write(problem.data_dir.join("checker.cpp"), "// version 6\n").unwrap();
+        std::fs::write(problem.data_dir.join(".data-version"), "6\n").unwrap();
+    }
+
+    #[test]
+    fn an_archive_problem_whose_helper_source_changed_during_grading_is_retried() {
+        use judge_problem::data_version::FsStamps;
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let bridged = "checker: {name: bridged, args: {files: checker.cpp, lang: CPP17, type: testlib}}\n";
+        let problem = archive_problem(root.path(), cache.path(), bridged);
+        // Resolve took version 5; the solution compiles; meanwhile version 6 lands. check_of then reads
+        // the checker source from data_dir (helper_program -> read_data_source), after the upload:
+        upload_version_6(&problem);
+        let checker = crate::artefacts::read_data_source(&problem, "checker.cpp").unwrap();
+        assert_eq!(checker.bytes, b"// version 6\n", "version 5 tests are checked by the version 6 checker");
+        // ... and the result is still stored as data version 5.
+        assert_eq!(
+            settle(Outcome::Graded, &FsStamps, &problem),
+            Outcome::Retry(RetryReason::DataUnavailable),
+            "a result graded with a checker read after the stamp moved must not be kept as version 5"
+        );
+        let missing = Outcome::InternalError("problem data i/o: checker.cpp missing".into());
+        assert_eq!(
+            settle(missing, &FsStamps, &problem),
+            Outcome::Retry(RetryReason::DataUnavailable),
+            "a checker removed by the upload is not an IE of version 5"
+        );
     }
 
     #[test]

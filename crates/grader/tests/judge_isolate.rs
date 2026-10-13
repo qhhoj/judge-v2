@@ -449,7 +449,7 @@ fn a_stamp_that_moves_while_loose_files_are_graded_is_retry_data_unavailable() {
 }
 
 #[test]
-fn an_archive_problem_keeps_its_result_when_the_stamp_moves() {
+fn an_archive_problem_whose_stamp_moves_while_graded_is_retry_data_unavailable() {
     let mut b = bench(26);
     let archive = zip_of(&APLUSB[1..]);
     let dir = b.write(
@@ -458,8 +458,15 @@ fn an_archive_problem_keeps_its_result_when_the_stamp_moves() {
     );
     restamp(&dir, 1);
     let problem = b.resolve("zipped", 1);
+    let sum = submission("CPP17", CPP_SUM.as_bytes());
+    assert_eq!(
+        b.judge(&problem, &sum, &mut Recorder::default()),
+        Outcome::Graded,
+        "an unmoved stamp keeps the result"
+    );
     let mut rec = Recorder { after_case: Some(Box::new(move |_| restamp(&dir, 2))), ..Default::default() };
-    let outcome = b.judge(&problem, &submission("CPP17", CPP_SUM.as_bytes()), &mut rec);
-    assert_eq!(outcome, Outcome::Graded, "the cache entry is immutable");
+    let outcome = b.judge(&problem, &sum, &mut rec);
+    // Its checker, interactor and signature sources come from the data root, not the cache entry.
+    assert_eq!(outcome, Outcome::Retry(RetryReason::DataUnavailable), "not kept as version 1");
     assert_eq!(rec.shape(), [(Status::Ac, 50.0), (Status::Ac, 50.0)]);
 }
