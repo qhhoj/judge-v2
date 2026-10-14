@@ -97,15 +97,32 @@ pub(crate) fn helper_argv(program: &Program, limits: &Limits) -> Vec<String> {
 }
 
 /// testlib starts its stderr message with the verdict ("ok ", "wrong answer ", "points 0.5 ", ...).
-const TESTLIB_PREFIXES: [&str; 6] =
-    ["ok ", "wrong answer ", "wrong output format ", "unexpected eof ", "FAIL ", "partially correct "];
+const TESTLIB_PREFIXES: [&str; 5] =
+    ["ok ", "wrong answer ", "wrong output format ", "unexpected eof ", "FAIL "];
 
 fn strip_testlib_prefix(line: &str) -> &str {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("points ") {
         return rest.split_once(char::is_whitespace).map_or("", |(_, message)| message.trim_start());
     }
+    if let Some(rest) = line.strip_prefix(PARTIALLY_CORRECT) {
+        return rest.split_once(')').map_or("", |(_, message)| message.trim_start());
+    }
     TESTLIB_PREFIXES.iter().find_map(|prefix| line.strip_prefix(prefix)).unwrap_or(line)
+}
+
+/// testlib's `_pc(n)` starts its stderr line with "partially correct (n) ".
+const PARTIALLY_CORRECT: &str = "partially correct (";
+/// `_pc(n)` earns n / 200 of the case (Polygon's 0..=200 scale for `_pc`).
+const PARTIALLY_CORRECT_SCALE: f64 = 200.0;
+
+/// The n of a testlib `_pc(n)` verdict. testlib built without `TESTSYS` exits with n itself (mod 256), which
+/// collides with its other codes (`_pc(0)` exits like `_ok`, `_pc(3)` like `_fail`), so the verdict is read
+/// from the stderr line and must agree with the exit code.
+fn partially_correct(report: &ExitReport) -> Option<u32> {
+    let rest = report.stderr.lines().next()?.trim_start().strip_prefix(PARTIALLY_CORRECT)?;
+    let n: u32 = rest.split_once(')')?.0.parse().ok()?;
+    (i64::from(report.code?) == i64::from(n % 256)).then_some(n)
 }
 
 fn first_number(text: &str) -> Option<f64> {
@@ -124,9 +141,9 @@ fn outcome(passed: bool, fraction: f64, report: &ExitReport, testlib: bool) -> C
     }
 }
 
-/// testlib: 0 AC, 1 WA, 2 and 4 presentation error, 8 unexpected EOF (WA), 7 partial points read through
-/// `scale`, 3 fail (IE). default: 0 AC, 1 WA, 2 a 0..1 share on stdout, anything else IE. No exit code
-/// (signal, limit) is IE.
+/// testlib: `_pc(n)` n / 200 of the case (0 is a wrong answer), else by exit code: 0 AC, 1 WA, 2 and 4
+/// presentation error, 8 unexpected EOF (WA), 7 partial points read through `scale`, 3 fail (IE).
+/// default: 0 AC, 1 WA, 2 a 0..1 share on stdout, anything else IE. No exit code (signal, limit) is IE.
 pub fn interpret(
     kind: CustomKind,
     report: &ExitReport,
@@ -140,6 +157,9 @@ pub fn interpret(
         let fraction = if testlib { scale.fraction(score) } else { score };
         Ok(outcome(true, fraction, report, testlib))
     };
+    if let Some(n) = partially_correct(report).filter(|_| testlib) {
+        return Ok(outcome(n > 0, f64::from(n) / PARTIALLY_CORRECT_SCALE, report, true));
+    }
     match (kind, report.code) {
         (_, Some(0)) => Ok(outcome(true, 1.0, report, testlib)),
         (_, Some(1)) | (CustomKind::Testlib, Some(8)) => Ok(outcome(false, 0.0, report, testlib)),
@@ -275,6 +295,39 @@ mod tests {
         assert_eq!(testlib(7, "points -3 under").unwrap().fraction, 0.0);
         assert!(testlib(7, "no number").is_err());
         assert!(testlib(7, "points NaN x").is_err());
+    }
+
+    #[test]
+    fn testlib_partially_correct_earns_n_two_hundredths() {
+        // Built without TESTSYS, testlib's `_pc(n)` exits with n mod 256.
+        let pc =
+            |n: u32, message: &str| testlib((n % 256) as i32, &format!("partially correct ({n}) {message}"));
+        let half = pc(100, "half").unwrap();
+        assert!(half.passed && (half.fraction - 0.5).abs() < 1e-9, "{half:?}");
+        assert_eq!(half.feedback, "half");
+        let full = pc(200, "top").unwrap();
+        assert!(full.passed && full.fraction == 1.0, "{full:?}");
+        assert_eq!(pc(300, "over").unwrap().fraction, 1.0, "clamped to the case");
+        let none = pc(0, "nothing").unwrap();
+        assert!(!none.passed && none.fraction == 0.0, "_pc(0) exits 0 but is no AC: {none:?}");
+        for n in [1, 2, 3, 4, 7, 8] {
+            let small = pc(n, "small").unwrap();
+            assert!(
+                small.passed && (small.fraction - f64::from(n) / 200.0).abs() < 1e-9,
+                "_pc({n}): {small:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn partially_correct_text_counts_only_with_its_own_exit_code() {
+        let wa = testlib(1, "partially correct (5) printed by hand").unwrap();
+        assert!(!wa.passed && wa.fraction == 0.0, "{wa:?}");
+        assert!(testlib(3, "partially correct (9) x").is_err(), "a FAIL exit stays IE");
+        let ok = testlib(0, "ok partially correct (3)").unwrap();
+        assert!(ok.passed && ok.fraction == 1.0, "{ok:?}");
+        let default = interpret(CustomKind::Default, &report(0, "", "partially correct (0) x"), ONE_POINT);
+        assert!(default.unwrap().passed, "only testlib checkers have _pc");
     }
 
     #[test]
