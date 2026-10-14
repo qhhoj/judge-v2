@@ -168,6 +168,54 @@ fn testlib_points_are_case_points_or_a_percentage_with_the_flag() {
     assert!((half.fraction - 0.5).abs() < 1e-9, "{half:?}");
 }
 
+/// One verdict per output token. `delta` is the pattern production checkers use: `_pc(x - 16)` is
+/// `TResult(x)`, so `quitp` takes it as the int x and writes "points x".
+const VERDICT_CHECKER: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerTestlibCmd(argc, argv);
+    std::string v = ouf.readToken();
+    if (v == "pc0") quitf(_pc(0), "none");
+    if (v == "pc100") quitf(_pc(100), "half");
+    if (v == "pc200") quitf(_pc(200), "all");
+    if (v == "quitp") quitp(0.5, "close");
+    if (v == "delta") quitp(_pc(5 - 16), "five points");
+    if (v == "ok") quitf(_ok, "fine");
+    if (v == "wa") quitf(_wa, "wrong");
+    if (v == "pe") quitf(_pe, "format");
+    quitf(_fail, "jury bug");
+}
+"#;
+
+#[test]
+fn testlib_partially_correct_and_quitp_from_a_real_checker() {
+    let mut f = fixture(11, CustomKind::Testlib, VERDICT_CHECKER);
+    let pc0 = judge_worth(&mut f, "pc0", 1.0);
+    assert!(!pc0.passed && pc0.fraction == 0.0, "_pc(0) earns nothing: {pc0:?}");
+    let pc100 = judge_worth(&mut f, "pc100", 1.0);
+    assert!(pc100.passed && (pc100.fraction - 0.5).abs() < 1e-9, "{pc100:?}");
+    assert_eq!(pc100.feedback, "half");
+    let pc200 = judge_worth(&mut f, "pc200", 1.0);
+    assert!(pc200.passed && pc200.fraction == 1.0, "{pc200:?}");
+    let quitp = judge_worth(&mut f, "quitp", 1.0);
+    assert!(quitp.passed && (quitp.fraction - 0.5).abs() < 1e-9, "{quitp:?}");
+    assert_eq!(quitp.feedback, "close");
+    let delta = judge_worth(&mut f, "delta", 100.0);
+    assert!(delta.passed && (delta.fraction - 0.05).abs() < 1e-9, "5 of 100 points: {delta:?}");
+}
+
+#[test]
+fn testlib_ok_wa_pe_and_fail_from_the_same_checker() {
+    let mut f = fixture(12, CustomKind::Testlib, VERDICT_CHECKER);
+    let ok = judge_worth(&mut f, "ok", 1.0);
+    assert!(ok.passed && ok.fraction == 1.0, "{ok:?}");
+    let wa = judge_worth(&mut f, "wa", 1.0);
+    assert!(!wa.passed && wa.fraction == 0.0 && wa.feedback == "wrong", "{wa:?}");
+    let pe = judge_worth(&mut f, "pe", 1.0);
+    assert!(!pe.passed && pe.feedback.starts_with("Presentation Error"), "{pe:?}");
+    let fail = judge(&mut f, "", "fail");
+    assert!(matches!(&fail, Err(GradeError::Checker(m)) if m.contains("exit code 3")), "{fail:?}");
+}
+
 /// Reads both directories with getline (CRLF-safe) and opens upper-case names; compares with the answer file.
 const THEMIS_ANSWER_FILE: &str = r#"#include <fstream>
 #include <iostream>
