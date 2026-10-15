@@ -4,3 +4,11 @@ commit: 68f9f300b6abebec82d2a68d8ca04394f2664fb6
 licence: MIT (assets/testlib/LICENSE), Copyright (c) 2015 Mike Mirzayanov
 fetched: https://raw.githubusercontent.com/MikeMirzayanov/testlib/0.9.41/testlib.h
 Vendored unmodified; sha256 in SHA256SUMS. Only the C++ header is vendored (no testlib.pas, no Java testlib).
+
+testlib_themis_cms.h from https://github.com/VNOI-Admin/testlib (MIT fork of MikeMirzayanov/testlib)
+commit: 3fffb7a510489e15cae0df18814c052e5416ead3
+base: testlib 0.9.37-SNAPSHOT, modified upstream with Themis/CMS checker support (registerTestlibThemis,
+registerTestlibCMS, THEMIS/CMS macros); the Mike Mirzayanov notice in the file is kept as is.
+fetched: https://raw.githubusercontent.com/VNOI-Admin/testlib/3fffb7a510489e15cae0df18814c052e5416ead3/testlib_themis_cms.h
+Vendored unmodified; sha256 in SHA256SUMS. Checkers compile without -DTHEMIS/-DCMS, so they register with
+registerTestlibCmd like testlib.h checkers.
