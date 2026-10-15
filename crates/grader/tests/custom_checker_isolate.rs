@@ -216,6 +216,36 @@ fn testlib_ok_wa_pe_and_fail_from_the_same_checker() {
     assert!(matches!(&fail, Err(GradeError::Checker(m)) if m.contains("exit code 3")), "{fail:?}");
 }
 
+/// Old checkers include the Themis/CMS testlib variant and score with `quitf(_points, "%f ...")` or `quitp`.
+const THEMIS_CMS_CHECKER: &str = r#"#include "testlib_themis_cms.h"
+int main(int argc, char* argv[]) {
+#ifdef THEMIS
+    registerTestlibThemis("a.inp", "a.out");
+#else
+    registerTestlibCmd(argc, argv);
+#endif
+    std::string v = ouf.readToken();
+    if (v == "ok") quitf(_ok, "fine");
+    if (v == "points") quitf(_points, "%f \n partial", 0.25);
+    if (v == "quitp") quitp(30, "thirty");
+    quitf(_wa, "wrong");
+}
+"#;
+
+#[test]
+fn a_checker_including_testlib_themis_cms_compiles_and_grades() {
+    let mut f = fixture(13, CustomKind::Testlib, THEMIS_CMS_CHECKER);
+    let ok = judge_worth(&mut f, "ok", 1.0);
+    assert!(ok.passed && ok.fraction == 1.0, "{ok:?}");
+    let wa = judge_worth(&mut f, "x", 1.0);
+    assert!(!wa.passed && wa.fraction == 0.0 && wa.feedback == "wrong", "{wa:?}");
+    let points = judge_worth(&mut f, "points", 1.0);
+    assert!(points.passed && (points.fraction - 0.25).abs() < 1e-9, "{points:?}");
+    f.checker.partial = PartialPoints::Percentage;
+    let quitp = judge_worth(&mut f, "quitp", 9.0);
+    assert!(quitp.passed && (quitp.fraction - 0.3).abs() < 1e-9, "{quitp:?}");
+}
+
 /// Reads both directories with getline (CRLF-safe) and opens upper-case names; compares with the answer file.
 const THEMIS_ANSWER_FILE: &str = r#"#include <fstream>
 #include <iostream>

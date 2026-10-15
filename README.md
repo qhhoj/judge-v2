@@ -15,8 +15,10 @@ joined by two pipes whose ends belong to the two isolate children only. A signat
 contestant's file with the header, links it with the entry under an unguessable name, and keeps only the binary.
 
 `assets/testlib/testlib.h` is vendored unmodified from MikeMirzayanov/testlib tag 0.9.41 (MIT, see
-`assets/testlib/LICENSE`, `VERSION`, `SHA256SUMS`). Only the C++ header is vendored: bridged checkers written in
-Pascal or Java that include testlib do not compile (the submission is an internal error).
+`assets/testlib/LICENSE`, `VERSION`, `SHA256SUMS`). `assets/testlib/testlib_themis_cms.h`, the testlib 0.9.37
+variant with Themis/CMS support that old checkers include, is vendored unmodified from VNOI-Admin/testlib, an MIT
+fork of testlib (commit in `VERSION`). Checkers compile without `-DTHEMIS`/`-DCMS`. Only C++ headers are vendored:
+bridged checkers written in Pascal or Java that include testlib do not compile (the submission is an internal error).
 
 ## Grading outcomes (`judge_submission`)
 
