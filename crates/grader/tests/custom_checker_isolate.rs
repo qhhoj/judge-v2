@@ -203,6 +203,31 @@ fn testlib_partially_correct_and_quitp_from_a_real_checker() {
     assert!(delta.passed && (delta.fraction - 0.05).abs() < 1e-9, "5 of 100 points: {delta:?}");
 }
 
+/// Debug lines on stderr before the verdict, as checkers that trace with `cerr` print them.
+const DEBUG_CHECKER: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerTestlibCmd(argc, argv);
+    std::string v = ouf.readToken();
+    std::cerr << "12 7 3" << std::endl;
+    std::cerr << "points 9 (a debug pair)" << std::endl;
+    if (v == "quitp") quitp(0.25, "quarter");
+    if (v == "pc") quitf(_pc(100), "half");
+    quitf(_wa, "wrong");
+}
+"#;
+
+#[test]
+fn testlib_verdicts_after_debug_lines_from_a_real_checker() {
+    let mut f = fixture(14, CustomKind::Testlib, DEBUG_CHECKER);
+    let quitp = judge_worth(&mut f, "quitp", 1.0);
+    assert!(quitp.passed && (quitp.fraction - 0.25).abs() < 1e-9, "{quitp:?}");
+    assert_eq!(quitp.feedback, "quarter");
+    let pc = judge_worth(&mut f, "pc", 1.0);
+    assert!(pc.passed && (pc.fraction - 0.5).abs() < 1e-9, "{pc:?}");
+    let wa = judge_worth(&mut f, "wa", 1.0);
+    assert!(!wa.passed && wa.feedback == "wrong", "{wa:?}");
+}
+
 #[test]
 fn testlib_ok_wa_pe_and_fail_from_the_same_checker() {
     let mut f = fixture(12, CustomKind::Testlib, VERDICT_CHECKER);

@@ -100,15 +100,27 @@ pub(crate) fn helper_argv(program: &Program, limits: &Limits) -> Vec<String> {
 const TESTLIB_PREFIXES: [&str; 5] =
     ["ok ", "wrong answer ", "wrong output format ", "unexpected eof ", "FAIL "];
 
-fn strip_testlib_prefix(line: &str) -> &str {
+/// The message after a testlib verdict prefix, or `None` when the line does not start with one.
+fn testlib_message(line: &str) -> Option<&str> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("points ") {
-        return rest.split_once(char::is_whitespace).map_or("", |(_, message)| message.trim_start());
+        return Some(rest.split_once(char::is_whitespace).map_or("", |(_, message)| message.trim_start()));
     }
     if let Some(rest) = line.strip_prefix(PARTIALLY_CORRECT) {
-        return rest.split_once(')').map_or("", |(_, message)| message.trim_start());
+        return Some(rest.split_once(')').map_or("", |(_, message)| message.trim_start()));
     }
-    TESTLIB_PREFIXES.iter().find_map(|prefix| line.strip_prefix(prefix)).unwrap_or(line)
+    TESTLIB_PREFIXES.iter().find_map(|prefix| line.strip_prefix(prefix))
+}
+
+fn strip_testlib_prefix(line: &str) -> &str {
+    testlib_message(line).unwrap_or(line.trim())
+}
+
+/// testlib's verdict line: the last stderr line that starts with a verdict prefix (testlib writes it when
+/// it quits, after any debug lines the checker printed), else the first line.
+fn verdict_line(stderr: &str) -> &str {
+    let verdict = stderr.lines().rev().find(|line| testlib_message(line).is_some());
+    verdict.or_else(|| stderr.lines().next()).unwrap_or("")
 }
 
 /// testlib's `_pc(n)` starts its stderr line with "partially correct (n) ".
@@ -120,7 +132,7 @@ const PARTIALLY_CORRECT_SCALE: f64 = 200.0;
 /// collides with its other codes (`_pc(0)` exits like `_ok`, `_pc(3)` like `_fail`), so the verdict is read
 /// from the stderr line and must agree with the exit code.
 fn partially_correct(report: &ExitReport) -> Option<u32> {
-    let rest = report.stderr.lines().next()?.trim_start().strip_prefix(PARTIALLY_CORRECT)?;
+    let rest = verdict_line(&report.stderr).trim_start().strip_prefix(PARTIALLY_CORRECT)?;
     let n: u32 = rest.split_once(')')?.0.parse().ok()?;
     (i64::from(report.code?) == i64::from(n % 256)).then_some(n)
 }
@@ -131,8 +143,11 @@ fn first_number(text: &str) -> Option<f64> {
 }
 
 fn outcome(passed: bool, fraction: f64, report: &ExitReport, testlib: bool) -> CheckOutcome {
-    let first_line = report.stderr.lines().next().unwrap_or("");
-    let message = if testlib { strip_testlib_prefix(first_line) } else { first_line.trim() };
+    let message = if testlib {
+        strip_testlib_prefix(verdict_line(&report.stderr))
+    } else {
+        report.stderr.lines().next().unwrap_or("").trim()
+    };
     CheckOutcome {
         passed,
         fraction: fraction.clamp(0.0, 1.0),
@@ -168,7 +183,10 @@ pub fn interpret(
             result.feedback = PRESENTATION_ERROR.to_string();
             Ok(result)
         }
-        (CustomKind::Testlib, Some(7)) => partial(&report.stderr),
+        (CustomKind::Testlib, Some(7)) => {
+            let verdict = verdict_line(&report.stderr);
+            partial(if verdict.trim_start().starts_with("points ") { verdict } else { &report.stderr })
+        }
         (CustomKind::Default, Some(2)) => partial(&report.stdout),
         (_, Some(code)) => Err(fail(&format!("failed with exit code {code}"))),
         (_, None) => Err(fail("crashed")),
@@ -295,6 +313,24 @@ mod tests {
         assert_eq!(testlib(7, "points -3 under").unwrap().fraction, 0.0);
         assert!(testlib(7, "no number").is_err());
         assert!(testlib(7, "points NaN x").is_err());
+    }
+
+    #[test]
+    fn testlib_verdicts_are_read_past_debug_lines_on_stderr() {
+        let partial = testlib(7, "dbg: n = 4\n12 7 3\npoints 0.5 half").unwrap();
+        assert!(partial.passed && (partial.fraction - 0.5).abs() < 1e-9, "{partial:?}");
+        assert_eq!(partial.feedback, "half");
+        assert!(partial.extended.starts_with("dbg: n = 4"), "the whole stderr stays in the details");
+        let pc = testlib(100, "trace\npartially correct (100) half").unwrap();
+        assert!(pc.passed && (pc.fraction - 0.5).abs() < 1e-9, "{pc:?}");
+        assert_eq!(testlib(1, "trace\nwrong answer expected 5").unwrap().feedback, "expected 5");
+        let last = testlib(7, "points 1 2 (a debug pair)\npoints 0.25 quarter").unwrap();
+        assert!((last.fraction - 0.25).abs() < 1e-9, "testlib writes its verdict last: {last:?}");
+        let pc_after_ok = testlib(50, "ok parsed n=4\npartially correct (50) quarter").unwrap();
+        assert!((pc_after_ok.fraction - 0.25).abs() < 1e-9, "{pc_after_ok:?}");
+        assert!(testlib(7, "trace only\nno verdict").is_err());
+        let unprefixed = testlib(7, "0.75 of the case\ntrace").unwrap();
+        assert!((unprefixed.fraction - 0.75).abs() < 1e-9, "no points line: the first token, as before");
     }
 
     #[test]
