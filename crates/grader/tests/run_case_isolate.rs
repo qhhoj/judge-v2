@@ -306,3 +306,20 @@ fn memory_over_the_limit_is_mle_with_or_without_an_oom_kill() {
     let under = input(&f, "alloc 4");
     assert_eq!(go_limited(&mut f, &plain(&under, 32 << 20), 16_384).verdict, RunVerdict::Ok);
 }
+
+/// Maps its stdin (a regular file) and reads one byte of every page.
+const MAP_INPUT: &str = "#include <cstdio>\n#include <sys/mman.h>\n#include <sys/stat.h>\n\
+int main(){ struct stat st; if (fstat(0, &st) != 0) return 2;\n\
+const char *p = (const char*)mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, 0, 0); if (p == MAP_FAILED) return 3;\n\
+long sum = 0; for (long i = 0; i < st.st_size; i += 4096) sum += p[i]; printf(\"%ld\", sum); }\n";
+
+#[test]
+fn mapped_files_already_in_page_cache_are_not_the_programs_memory() {
+    // The resident pages of a mapped, already cached file count in the peak RSS but are not charged to the
+    // run: a runtime's shared objects (~37 MiB of PyPy's) and, here, a 32 MiB input.
+    let Some(mut f) = fixture(43, "CPP17", MAP_INPUT) else { return };
+    let file = input(&f, &"x".repeat(32 << 20));
+    let run = go_limited(&mut f, &plain(&file, 1 << 20), 8192);
+    assert_eq!(run.verdict, RunVerdict::Ok, "32 MiB of mapped input under an 8 MiB limit");
+    assert!(run.memory_kib < 8192, "memory {} KiB", run.memory_kib);
+}

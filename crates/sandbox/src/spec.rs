@@ -63,7 +63,7 @@ pub const PAGE_CACHE_ROOM_MAX_KIB: u64 = 64 << 10;
 /// (one `--fsize` worth, at most `PAGE_CACHE_ROOM_MAX_KIB`). The kernel charges the page cache of written
 /// files to the cgroup, and dirty pages wait for writeback, so without the room a program with a small
 /// memory limit and a large output is OOM-killed while its own memory is far under the limit. The memory
-/// limit itself is checked against the program's peak RSS (`classify`).
+/// limit itself is checked against the program's own memory (`classify`, `Meta::memory_kib`).
 pub fn cgroup_memory_kib(limits: &Limits) -> u64 {
     limits.memory_kib + limits.fsize_kib.min(PAGE_CACHE_ROOM_MAX_KIB)
 }

@@ -40,14 +40,17 @@ pub fn signal_name(signal: i32) -> String {
     name.to_string()
 }
 
-/// The verdict of a run made with `limits`. MLE is a peak RSS over `limits.memory_kib`, or an OOM kill by
-/// the cgroup, whose limit has room above the memory limit for page cache (`spec::cgroup_memory_kib`).
+/// The verdict of a run made with `limits`. MLE is the program's own memory (`Meta::memory_kib`) over
+/// `limits.memory_kib`, or an OOM kill by the cgroup, whose limit has room above the memory limit for page
+/// cache (`spec::cgroup_memory_kib`). Each counter alone over-counts file pages: the cgroup peak the page
+/// cache of written output, the peak RSS the mapped files already in page cache (a runtime's shared
+/// objects: ~37 MiB of PyPy's).
 pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     let status = meta.status.as_deref();
     if status == Some("XX") {
         return RunVerdict::Internal(meta.message.clone());
     }
-    if meta.oom_killed || meta.max_rss_kib > limits.memory_kib {
+    if meta.oom_killed || meta.memory_kib() > limits.memory_kib {
         return RunVerdict::Mle;
     }
     if status == Some("TO") {
@@ -92,11 +95,14 @@ mod tests {
     }
 
     #[test]
-    fn mle_is_a_peak_rss_over_the_limit_or_an_oom_kill_not_the_cgroup_peak() {
+    fn mle_is_the_programs_own_memory_over_the_limit_or_an_oom_kill() {
         assert_eq!(verdict("exitcode:0\nmax-rss:16385\ncg-mem:17000\n", 0), RunVerdict::Mle, "over by 1 KiB");
-        assert_eq!(verdict("exitcode:0\nmax-rss:16384\n", 0), RunVerdict::Ok, "exactly the limit");
+        let at_the_limit = "exitcode:0\nmax-rss:16384\ncg-mem:17000\n";
+        assert_eq!(verdict(at_the_limit, 0), RunVerdict::Ok, "exactly the limit");
         let page_cache = "exitcode:0\nmax-rss:1800\ncg-mem:40000\n";
         assert_eq!(verdict(page_cache, 0), RunVerdict::Ok, "a cgroup peak of written-file page cache");
+        let shared_objects = "exitcode:0\nmax-rss:40000\ncg-mem:9000\n";
+        assert_eq!(verdict(shared_objects, 0), RunVerdict::Ok, "a peak RSS of mapped, already cached files");
         assert_eq!(verdict("status:SG\nexitsig:9\nmax-rss:900\ncg-oom-killed:1\n", 0), RunVerdict::Mle);
     }
 

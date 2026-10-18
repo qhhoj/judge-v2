@@ -17,9 +17,10 @@ pub struct Meta {
 }
 
 impl Meta {
-    /// The memory to report for a run. The cgroup peak also counts the page cache of files the program
-    /// wrote (its output), so it is capped by the peak RSS; an OOM kill reports the cgroup peak that hit the
-    /// limit. MLE is decided by `classify` (the peak RSS against the limit, or an OOM kill), not by this.
+    /// The program's own memory: what `classify` holds to the memory limit, and what a run reports. The
+    /// cgroup peak also counts the page cache of files the program wrote (its output), the peak RSS also
+    /// counts mapped files already in page cache (a runtime's shared objects), so it is the smaller of the
+    /// two; an OOM kill reports the cgroup peak that hit the limit.
     pub fn memory_kib(&self) -> u64 {
         if self.oom_killed || self.max_rss_kib == 0 {
             return self.cg_mem_kib;
