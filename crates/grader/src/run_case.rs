@@ -188,7 +188,7 @@ pub fn run_case(
 
 /// The memory shown for a run: the program's own (`Meta::memory_kib`), but for an MLE the larger of the
 /// cgroup peak and the peak RSS, so an MLE is never shown under the limit: one `refine` found on stderr (a
-/// JVM OutOfMemoryError, cgroup peak) or one by peak RSS alone (RSS over the limit, no OOM kill).
+/// JVM OutOfMemoryError, cgroup peak) or one by the program's own memory over the limit, no OOM kill.
 pub(crate) fn reported_memory(meta: &Meta, verdict: &RunVerdict) -> u64 {
     if *verdict == RunVerdict::Mle { meta.cg_mem_kib.max(meta.max_rss_kib) } else { meta.memory_kib() }
 }
