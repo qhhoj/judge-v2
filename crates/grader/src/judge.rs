@@ -379,7 +379,8 @@ fn grade_outputs(
             let zip = env.scratch.join("submission.zip");
             std::fs::write(&zip, &source)?;
             drop(source); // the archive is read from disk; do not hold the upload for the whole run
-            OutputSource::zip(zip)?
+            let case_names: Vec<&str> = plan.cases.iter().map(|case| case.output.as_str()).collect();
+            OutputSource::zip(zip, &case_names)?
         }
         _ => OutputSource::Text(source),
     };
