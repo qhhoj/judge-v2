@@ -118,6 +118,9 @@ source = "main.py"
 # A syntax error is CE, as for PY3; running main.py never reads the cached .pyc.
 compile = ["/usr/bin/pypy3", "-m", "py_compile", "main.py"]
 run = ["/usr/bin/pypy3", "main.py"]
+# PyPy sizes its GC nursery from the /proc/cpuinfo "cache size" (half of it): 130 MiB on a Xeon 8573C (260 MiB
+# L3), 256 KiB on an EPYC 7763 (it reports L2). A fixed nursery keeps memory and GC cost the same on every host.
+env = { PYPY_GC_NURSERY = "4M" }
 version = ["/usr/bin/pypy3", "--version"]
 exception_marker = "Traceback (most recent call last)"
 exception_style = "last_line"
