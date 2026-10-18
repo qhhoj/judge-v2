@@ -51,7 +51,8 @@ pub struct CaseRun {
     pub output_len: u64,
 }
 
-pub fn cgroup_memory(limits: &CaseLimits, jvm: bool) -> u64 {
+/// The memory limit a run is held to: the case limit, plus the JVM reserve for a JVM program.
+pub fn memory_limit_kib(limits: &CaseLimits, jvm: bool) -> u64 {
     limits.memory_kib + if jvm { limits.jvm_reserve_kib } else { 0 }
 }
 
@@ -115,7 +116,7 @@ pub(crate) fn solution_limits(runnable: &Runnable, output_cap: u64) -> Limits {
     // the output cap, so a chatty correct program is not killed or failed; stdout is still held to the cap
     // by the `written > cap` check, and stderr never decides the verdict.
     let fsize = output_cap + if keeps_stderr(program) { STDERR_ALLOWANCE } else { 0 };
-    Limits::for_solution(limits.time_limit_s, cgroup_memory(limits, program.jvm), program.processes, fsize)
+    Limits::for_solution(limits.time_limit_s, memory_limit_kib(limits, program.jvm), program.processes, fsize)
 }
 
 fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
@@ -167,13 +168,14 @@ pub fn run_case(
     }
     stage(sandbox, runnable.program, io.input, &layout)?;
     let (box_output, any_case) = (layout.output.clone(), layout.output_any_case);
-    let meta = sandbox.run(&run_spec(runnable, layout, io.output_cap))?;
+    let spec = run_spec(runnable, layout, io.output_cap);
+    let meta = sandbox.run(&spec)?;
     let output_name = output_name(sandbox, &box_output, any_case);
     // One byte past the cap tells "exactly the cap" (fine) from "over it" (OLE).
     let written = sandbox.read_output(&output_name, io.output_cap + 1).unwrap_or_default();
     std::fs::write(output, &written)?;
     let output_len = written.len() as u64;
-    let verdict = classify(&meta, OutputUse { written: output_len, cap: io.output_cap });
+    let verdict = classify(&meta, OutputUse { written: output_len, cap: io.output_cap }, &spec.limits);
     let verdict = refine(verdict, runnable.program, sandbox);
     Ok(CaseRun {
         memory_kib: reported_memory(&meta, &verdict),
@@ -184,10 +186,11 @@ pub fn run_case(
     })
 }
 
-/// The memory shown for a run: the program's own (`Meta::memory_kib`), but the cgroup peak for an MLE, so an
-/// MLE that `refine` found on stderr (a JVM OutOfMemoryError) is not shown far under the limit.
+/// The memory shown for a run: the program's own (`Meta::memory_kib`), but for an MLE the larger of the
+/// cgroup peak and the peak RSS, so an MLE is never shown under the limit: one `refine` found on stderr (a
+/// JVM OutOfMemoryError, cgroup peak) or one by peak RSS alone (RSS over the limit, no OOM kill).
 pub(crate) fn reported_memory(meta: &Meta, verdict: &RunVerdict) -> u64 {
-    if *verdict == RunVerdict::Mle { meta.cg_mem_kib } else { meta.memory_kib() }
+    if *verdict == RunVerdict::Mle { meta.cg_mem_kib.max(meta.max_rss_kib) } else { meta.memory_kib() }
 }
 
 /// The last 64 KiB of the kept stderr (where the final exception is), lossy UTF-8.
@@ -281,10 +284,13 @@ mod tests {
     const PYTHON: &str = "Traceback (most recent call last)";
 
     #[test]
-    fn an_mle_shows_the_cgroup_peak_and_other_runs_the_program_memory() {
+    fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_program_memory() {
         let meta = Meta { cg_mem_kib: 200_000, max_rss_kib: 180_000, ..Meta::default() };
         assert_eq!(reported_memory(&meta, &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
         assert_eq!(reported_memory(&meta, &RunVerdict::Ok), 180_000);
+        let rss_only = Meta { cg_mem_kib: 8_500, max_rss_kib: 9_000, ..Meta::default() };
+        assert_eq!(reported_memory(&rss_only, &RunVerdict::Mle), 9_000, "an MLE by peak RSS shows the RSS");
+        assert_eq!(reported_memory(&rss_only, &RunVerdict::Ok), 8_500);
     }
 
     #[test]

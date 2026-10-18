@@ -56,9 +56,21 @@ pub struct RunSpec {
     pub dirs: Vec<String>,
 }
 
+/// Most cgroup room a run gets above its memory limit for the page cache of the files it writes.
+pub const PAGE_CACHE_ROOM_MAX_KIB: u64 = 64 << 10;
+
+/// The cgroup memory limit of a run: its memory limit plus room for the page cache of the files it writes
+/// (one `--fsize` worth, at most `PAGE_CACHE_ROOM_MAX_KIB`). The kernel charges the page cache of written
+/// files to the cgroup, and dirty pages wait for writeback, so without the room a program with a small
+/// memory limit and a large output is OOM-killed while its own memory is far under the limit. The memory
+/// limit itself is checked against the program's peak RSS (`classify`).
+pub fn cgroup_memory_kib(limits: &Limits) -> u64 {
+    limits.memory_kib + limits.fsize_kib.min(PAGE_CACHE_ROOM_MAX_KIB)
+}
+
 fn limit_args(limits: &Limits) -> Vec<String> {
     vec![
-        format!("--cg-mem={}", limits.memory_kib),
+        format!("--cg-mem={}", cgroup_memory_kib(limits)),
         format!("--time={}", limits.time_s),
         format!("--extra-time={}", limits.extra_time_s),
         format!("--wall-time={}", limits.wall_s),
@@ -121,5 +133,14 @@ mod tests {
         assert!(!args.iter().any(|a| a.starts_with("--stdin") || a.starts_with("--stdout")));
         let run = args.iter().position(|a| a == "--run").unwrap();
         assert_eq!(&args[run + 1..], ["--", "./main"], "the command comes last, after `--`");
+    }
+
+    #[test]
+    fn the_cgroup_gets_page_cache_room_of_one_fsize_up_to_a_cap() {
+        let small = Limits::for_solution(1.0, 8192, 1, 4 << 20);
+        let args = isolate_args(0, &RunSpec { limits: small.clone(), ..spec() }, Path::new("/m"));
+        assert!(has(&args, &format!("--cg-mem={}", 8192 + small.fsize_kib)), "{args:?}");
+        let huge = Limits::for_solution(1.0, 8192, 1, 1 << 30);
+        assert_eq!(cgroup_memory_kib(&huge), 8192 + PAGE_CACHE_ROOM_MAX_KIB);
     }
 }

@@ -263,3 +263,46 @@ fn reported_memory_is_the_program_not_the_page_cache_of_its_output() {
     assert_eq!(run.verdict, RunVerdict::Ok);
     assert!(run.memory_kib < 12 * 1024, "memory {} KiB includes the 20 MiB output", run.memory_kib);
 }
+
+fn go_limited(f: &mut Fixture, io: &CaseIo, memory_kib: u64) -> CaseRun {
+    let limits = CaseLimits { memory_kib, ..LIMITS };
+    let runnable = Runnable { program: &f.program, limits: &limits };
+    run_case(&mut f.sandbox, &runnable, io, &f.scratch.join("out")).unwrap()
+}
+
+/// `n` MiB written to stdout in 64 KiB writes, or `n` MiB allocated and touched with `alloc`.
+const WRITE_OR_ALLOC: &str = "#include <cstdio>\n#include <cstdlib>\n#include <cstring>\nstatic char block[1 << 16];\n\
+int main(){ char how[8]; int n; if (scanf(\"%7s %d\", how, &n) != 2) return 2;\n\
+if (how[0] == 'a') { char *p = (char*)malloc((size_t)n << 20); memset(p, 1, (size_t)n << 20); printf(\"%d\", p[n]); return 0; }\n\
+memset(block, 'x', sizeof block); for (long i = 0; i < (long)n << 4; i++) fwrite(block, 1, sizeof block, stdout); }\n";
+
+#[test]
+fn a_small_memory_limit_with_a_large_output_is_not_mle() {
+    // The page cache of the output is charged to the cgroup; without room for it this run was OOM-killed
+    // now and then (writeback timing), so it runs a few times.
+    let Some(mut f) = fixture(41, "CPP17", WRITE_OR_ALLOC) else { return };
+    for _ in 0..5 {
+        let file = input(&f, "write 48");
+        let run = go_limited(&mut f, &plain(&file, 64 << 20), 8192);
+        assert_eq!(run.verdict, RunVerdict::Ok, "48 MiB written under an 8 MiB limit");
+        assert_eq!(run.output_len, 48 << 20);
+        assert!(run.memory_kib < 8192, "memory {} KiB", run.memory_kib);
+    }
+}
+
+#[test]
+fn memory_over_the_limit_is_mle_with_or_without_an_oom_kill() {
+    let Some(mut f) = fixture(42, "CPP17", WRITE_OR_ALLOC) else { return };
+    let over = input(&f, "alloc 24");
+    let run = go_limited(&mut f, &plain(&over, 32 << 20), 8192);
+    assert_eq!(
+        run.verdict,
+        RunVerdict::Mle,
+        "24 MiB touched under an 8 MiB limit, inside the page-cache room"
+    );
+    assert!(run.memory_kib > 8192, "an MLE is not shown under the limit: {} KiB", run.memory_kib);
+    let far_over = input(&f, "alloc 512");
+    assert_eq!(go_limited(&mut f, &plain(&far_over, 32 << 20), 8192).verdict, RunVerdict::Mle);
+    let under = input(&f, "alloc 4");
+    assert_eq!(go_limited(&mut f, &plain(&under, 32 << 20), 16_384).verdict, RunVerdict::Ok);
+}

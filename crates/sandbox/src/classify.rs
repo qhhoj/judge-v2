@@ -1,6 +1,7 @@
 //! isolate meta → run verdict (spec §2 "Verdict from isolate meta", Review Focus 2).
 
 use crate::meta::Meta;
+use crate::spec::Limits;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunVerdict {
@@ -39,12 +40,14 @@ pub fn signal_name(signal: i32) -> String {
     name.to_string()
 }
 
-pub fn classify(meta: &Meta, output: OutputUse) -> RunVerdict {
+/// The verdict of a run made with `limits`. MLE is a peak RSS over `limits.memory_kib`, or an OOM kill by
+/// the cgroup, whose limit has room above the memory limit for page cache (`spec::cgroup_memory_kib`).
+pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     let status = meta.status.as_deref();
     if status == Some("XX") {
         return RunVerdict::Internal(meta.message.clone());
     }
-    if meta.oom_killed {
+    if meta.oom_killed || meta.max_rss_kib > limits.memory_kib {
         return RunVerdict::Mle;
     }
     if status == Some("TO") {
@@ -66,7 +69,8 @@ mod tests {
     use crate::meta::parse_meta;
 
     fn verdict(meta: &str, written: u64) -> RunVerdict {
-        classify(&parse_meta(meta).unwrap(), OutputUse { written, cap: 4096 })
+        let limits = Limits::for_solution(1.0, 16_384, 1, 4096);
+        classify(&parse_meta(meta).unwrap(), OutputUse { written, cap: 4096 }, &limits)
     }
 
     #[test]
@@ -85,6 +89,15 @@ mod tests {
         assert_eq!(verdict("status:RE\nexitcode:120\n", 4097), RunVerdict::Ole);
         assert_eq!(verdict("exitcode:0\n", 4096), RunVerdict::Ok, "exactly the cap is allowed");
         assert_eq!(verdict("status:SG\nexitsig:25\n", 100), RunVerdict::Ole);
+    }
+
+    #[test]
+    fn mle_is_a_peak_rss_over_the_limit_or_an_oom_kill_not_the_cgroup_peak() {
+        assert_eq!(verdict("exitcode:0\nmax-rss:16385\ncg-mem:17000\n", 0), RunVerdict::Mle, "over by 1 KiB");
+        assert_eq!(verdict("exitcode:0\nmax-rss:16384\n", 0), RunVerdict::Ok, "exactly the limit");
+        let page_cache = "exitcode:0\nmax-rss:1800\ncg-mem:40000\n";
+        assert_eq!(verdict(page_cache, 0), RunVerdict::Ok, "a cgroup peak of written-file page cache");
+        assert_eq!(verdict("status:SG\nexitsig:9\nmax-rss:900\ncg-oom-killed:1\n", 0), RunVerdict::Mle);
     }
 
     #[test]

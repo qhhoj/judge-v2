@@ -189,12 +189,12 @@ pub fn interact(mut boxes: Boxes, x: &Interaction) -> Result<Interactive, GradeE
     let (mut interactor_child, mut solution_child) = spawn_pair(&boxes, &interactor, &solution)?;
     let deadline = Instant::now() + Duration::from_secs_f64(interactor.limits.wall_s) + DEADLINE_SLACK;
     wait_both(&mut interactor_child, &mut solution_child, deadline)?;
-    decide(&boxes, x, &solution.limits)
+    decide(&boxes, x, &solution.limits, &interactor.limits)
 }
 
-fn solution_result(boxes: &Boxes, x: &Interaction) -> Result<Interactive, GradeError> {
+fn solution_result(boxes: &Boxes, x: &Interaction, limits: &Limits) -> Result<Interactive, GradeError> {
     let meta = boxes.solution.read_meta()?;
-    let verdict = classify(&meta, NO_OUTPUT);
+    let verdict = classify(&meta, NO_OUTPUT, limits);
     if let RunVerdict::Internal(message) = &verdict {
         return Err(SandboxError::Isolate(message.clone()).into());
     }
@@ -237,8 +237,13 @@ fn stalled_by_interactor(solution: &Interactive, interactor_cpu_s: f64, limits: 
         && interactor_cpu_s > limits.wall_s - limits.time_s
 }
 
-fn decide(boxes: &Boxes, x: &Interaction, limits: &Limits) -> Result<Interactive, GradeError> {
-    let result = solution_result(boxes, x)?;
+fn decide(
+    boxes: &Boxes,
+    x: &Interaction,
+    limits: &Limits,
+    interactor_limits: &Limits,
+) -> Result<Interactive, GradeError> {
+    let result = solution_result(boxes, x, limits)?;
     let interactor = boxes.helper.read_meta()?;
     if stalled_by_interactor(&result, interactor.time_s, limits) {
         let used = interactor.time_s;
@@ -246,7 +251,7 @@ fn decide(boxes: &Boxes, x: &Interaction, limits: &Limits) -> Result<Interactive
             "interactor used {used:.1} s of CPU; the solution timed out waiting"
         )));
     }
-    let interactor_verdict = classify(&interactor, NO_OUTPUT);
+    let interactor_verdict = classify(&interactor, NO_OUTPUT, interactor_limits);
     if solution_wins(&result.verdict, &interactor_verdict) && !interactor_failed(&interactor_verdict) {
         return Ok(result);
     }
