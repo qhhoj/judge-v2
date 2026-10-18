@@ -42,6 +42,8 @@ pub fn signal_name(signal: i32) -> String {
 
 /// The verdict of a run made with `limits`. MLE is a peak RSS over `limits.memory_kib`, or an OOM kill by
 /// the cgroup, whose limit has room above the memory limit for page cache (`spec::cgroup_memory_kib`).
+/// Output over the cap is OLE even when the run then timed out: the JVM ignores SIGXFSZ and `PrintStream`
+/// swallows the write error, so a Java or Kotlin print loop runs on to the time limit once its output is cut.
 pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     let status = meta.status.as_deref();
     if status == Some("XX") {
@@ -50,11 +52,11 @@ pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     if meta.oom_killed || meta.max_rss_kib > limits.memory_kib {
         return RunVerdict::Mle;
     }
-    if status == Some("TO") {
-        return RunVerdict::Tle;
-    }
     if output.written > output.cap || meta.exit_signal == Some(SIGXFSZ) {
         return RunVerdict::Ole;
+    }
+    if status == Some("TO") {
+        return RunVerdict::Tle;
     }
     match status {
         Some("SG") => RunVerdict::Rte { reason: signal_name(meta.exit_signal.unwrap_or(0)) },
@@ -101,8 +103,11 @@ mod tests {
     }
 
     #[test]
-    fn memory_and_time_win_over_output() {
-        assert_eq!(verdict("status:TO\n", 5000), RunVerdict::Tle);
+    fn memory_wins_over_output_and_output_over_time() {
+        // A JVM print loop (isolate 2.6, JDK 25): output cut at --fsize, no SIGXFSZ, killed at the time limit
+        let jvm_flood = "status:TO\nmessage:Time limit exceeded\nkilled:1\ntime:1.078\ntime-wall:0.908\n";
+        assert_eq!(verdict(jvm_flood, 4097), RunVerdict::Ole);
+        assert_eq!(verdict("status:TO\nkilled:1\n", 4096), RunVerdict::Tle, "exactly the cap is not over it");
         assert_eq!(verdict("status:SG\nexitsig:9\ncg-oom-killed:1\n", 5000), RunVerdict::Mle);
     }
 }
