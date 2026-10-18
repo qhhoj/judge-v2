@@ -344,6 +344,68 @@ fn a_themis_checker_without_file_io_is_laid_out_by_its_source_literals() {
     assert_eq!(judge_case(&mut f, "2 3\n", "", "").fraction, 0.0, "no output is score 0");
 }
 
+/// Joins the directories and names without a separator and reads the answer and the output as `.ans`.
+const THEMIS_NO_SEPARATOR_ANS: &str = r#"#include <fstream>
+#include <iostream>
+#include <string>
+int main() {
+    std::string test, work;
+    std::getline(std::cin, test);
+    std::getline(std::cin, work);
+    std::ifstream in(test + "polygon.inp"), ans(test + "polygon.ans"), out(work + "polygon.ans");
+    long long a, b, want, got;
+    if (!(in >> a >> b) || !(ans >> want)) return 3;
+    if (!(out >> got)) { std::cout << "Thieu output\n0\n"; return 0; }
+    std::cout << (got == want ? "1" : "Sai\n0") << "\n";
+}
+"#;
+
+/// Names its files `name ".INP"` / `name ".OUT"` with `#define name "/Path"`: no whole-name literal.
+const THEMIS_DEFINED_NAME: &str = r#"#include <fstream>
+#include <iostream>
+#include <string>
+#define name "/Path"
+int main() {
+    std::string test, work;
+    std::getline(std::cin, test);
+    std::getline(std::cin, work);
+    std::ifstream in(test + name ".INP"), ans(test + name ".OUT"), out(work + name ".OUT");
+    long long a, b, want, got;
+    if (!(in >> a >> b) || !(ans >> want)) return 3;
+    if (!(out >> got)) { std::cout << "Thieu output\n0\n"; return 0; }
+    std::cout << (got == want ? "1" : "Sai\n0") << "\n";
+}
+"#;
+
+fn judge_named(f: &mut Fixture, case_files: (&str, &str), answer: &str, output: &str) -> CheckOutcome {
+    let at = |name: &str| -> std::path::PathBuf { Path::new(&f.scratch).join(name) };
+    for (name, text) in [("in", "2 3\n"), ("ans", answer), ("out", output)] {
+        std::fs::write(at(name), text).unwrap();
+    }
+    let io = CheckInput { input: &at("in"), output: &at("out"), answer: &at("ans"), points: 1.0 };
+    f.checker.check_case(&mut f.sandbox, &io, case_files).unwrap()
+}
+
+#[test]
+fn a_themis_checker_finds_the_case_files_under_their_own_names_without_a_separator() {
+    let mut f = themis(15, THEMIS_NO_SEPARATOR_ANS, None);
+    let case = ("01/polygon.inp", "01/polygon.ans");
+    let ac = judge_named(&mut f, case, "5\n", "5\n");
+    assert!(ac.passed && ac.fraction == 1.0, "{ac:?}");
+    let wa = judge_named(&mut f, case, "5\n", "4\n");
+    assert!(!wa.passed && wa.feedback == "Sai", "{wa:?}");
+}
+
+#[test]
+fn a_themis_checker_with_a_defined_name_and_no_file_io_finds_the_case_files() {
+    let mut f = themis(16, THEMIS_DEFINED_NAME, None);
+    let case = ("Test01/Path.inp", "Test01/Path.out");
+    let ac = judge_named(&mut f, case, "5\n", "5\n");
+    assert!(ac.passed && ac.fraction == 1.0, "{ac:?}");
+    let missing = judge_named(&mut f, case, "5\n", "");
+    assert!(!missing.passed && missing.feedback == "Thieu output", "{missing:?}");
+}
+
 /// A default-kind Java checker (backend maps `.java` checkers to JAVA8): exit 0 when the tokens match.
 const JAVA_CHECKER: &str = r#"import java.nio.file.*;
 public class Checker {

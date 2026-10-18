@@ -237,10 +237,41 @@ impl CustomChecker {
     /// Runs in the worker's helper box. The three paths are daemon-owned files (a scratch copy or a
     /// `/proc/self/fd/N` link of a checked handle); they are copied in, never mounted.
     pub fn check(&self, sandbox: &mut IsolateBox, io: &CheckInput) -> Result<CheckOutcome, GradeError> {
+        self.check_laid_out(sandbox, io, &self.themis_names)
+    }
+
+    /// `check` for a case of the problem: a themis checker also finds the case files under the case's own
+    /// input and answer file names (`case_files`, paths in the problem data).
+    pub fn check_case(
+        &self,
+        sandbox: &mut IsolateBox,
+        io: &CheckInput,
+        case_files: (&str, &str),
+    ) -> Result<CheckOutcome, GradeError> {
+        let names = match self.kind {
+            CustomKind::Themis => self.themis_names.with_case(case_files.0, case_files.1),
+            _ => ThemisNames::default(),
+        };
+        self.check_laid_out(sandbox, io, &names)
+    }
+
+    fn check_laid_out(
+        &self,
+        sandbox: &mut IsolateBox,
+        io: &CheckInput,
+        themis_names: &ThemisNames,
+    ) -> Result<CheckOutcome, GradeError> {
         sandbox.reset()?;
         sandbox.put_tree(&self.program.dir)?;
         if self.kind == CustomKind::Themis {
-            themis::stage(sandbox.dir(), &self.themis_names, (io.input, io.output, io.answer))?;
+            if themis_names.is_empty() {
+                return Err(GradeError::Checker(
+                    "a themis checker needs names for the case files: the problem's file I/O names, \
+                     `.inp`/`.out`/`.ans` names in its source, or plain case file names"
+                        .into(),
+                ));
+            }
+            themis::stage(sandbox.dir(), themis_names, (io.input, io.output, io.answer))?;
             sandbox.put_bytes(themis::PATHS_FILE, themis::paths_text().as_bytes())?;
         } else {
             sandbox.put("input", io.input, false)?;

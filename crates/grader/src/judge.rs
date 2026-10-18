@@ -301,17 +301,11 @@ fn check_of(
     }
 }
 
-/// A themis checker opens the case files by name: the problem's file I/O names and its own source's literals.
+/// A themis checker opens the case files by name: the problem's file I/O names and its own source's literals
+/// (and, per case, the case's own file names: `CustomChecker::check_case`).
 fn themis_names(problem: &ResolvedProblem, source: &str) -> Result<ThemisNames, GradeError> {
     let bytes = read_data_source(problem, source)?.bytes;
-    let names = themis::names_for(problem.init.file_io.as_ref(), &bytes);
-    if names.is_empty() {
-        return Err(GradeError::Checker(
-            "a themis checker needs the problem's file I/O names, or `.inp`/`.out` names in its source"
-                .into(),
-        ));
-    }
-    Ok(names)
+    Ok(themis::names_for(problem.init.file_io.as_ref(), &bytes))
 }
 
 fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {
