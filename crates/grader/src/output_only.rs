@@ -1,7 +1,7 @@
 //! Submissions that are outputs, not programs (spec §5 TEXT and OUTPUT).
 
 use crate::error::GradeError;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,11 +12,30 @@ pub const MAX_OUTPUT_ENTRIES: usize = 10_000;
 
 /// The zip, opened once per submission, with its file entries indexed: by full path (`sub/1.out`) and by
 /// last segment (`1.out`, the first entry of that name). Entries with an absolute or `..` path are not
-/// indexed. Nothing is extracted, so names are only map keys.
+/// indexed. Nothing is extracted, so names are only map keys. `relayout` is how the zip's folders sit
+/// against the case names (`ZipIndex::align`), `None` when the names are used as they are.
 pub struct ZipIndex {
     archive: Mutex<zip::ZipArchive<File>>,
     pub by_path: HashMap<String, usize>,
     by_last: HashMap<String, usize>,
+    relayout: Option<Relayout>,
+}
+
+/// How the zip's folders sit against the case names, for the whole submission: drop `drop` leading
+/// segments of a case name, then put `root` in front (`B/Test01/B.out` → `Test01/B.out` with drop 1,
+/// → `out/Test01/B.out` with root `out` as well).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Relayout {
+    drop: usize,
+    root: String,
+}
+
+impl Relayout {
+    fn apply(&self, name: &str) -> Option<String> {
+        let segments: Vec<&str> = name.split('/').collect();
+        let kept = segments.get(self.drop..).filter(|kept| !kept.is_empty())?.join("/");
+        Some(if self.root.is_empty() { kept } else { format!("{}/{kept}", self.root) })
+    }
 }
 
 pub enum OutputSource {
@@ -39,8 +58,12 @@ fn last_segment(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+/// Roots tried for a relayout: none, and the first folders of the entries (a few, `__MACOSX` aside).
+const MAX_RELAYOUT_ROOTS: usize = 8;
+
 impl OutputSource {
-    pub fn zip(path: PathBuf) -> Result<OutputSource, GradeError> {
+    /// The OUTPUT zip at `path`, lined up with the problem's case `out` names (`ZipIndex::align`).
+    pub fn zip(path: PathBuf, case_names: &[&str]) -> Result<OutputSource, GradeError> {
         let mut archive = zip::ZipArchive::new(File::open(&path)?).map_err(zip_error)?;
         if archive.len() > MAX_OUTPUT_ENTRIES {
             return Err(GradeError::Io(format!("output zip has more than {MAX_OUTPUT_ENTRIES} entries")));
@@ -52,17 +75,81 @@ impl OutputSource {
             by_last.entry(last_segment(&clean).to_string()).or_insert(index);
             by_path.entry(clean).or_insert(index);
         }
-        Ok(OutputSource::Zip(ZipIndex { archive: Mutex::new(archive), by_path, by_last }))
+        let mut zip = ZipIndex { archive: Mutex::new(archive), by_path, by_last, relayout: None };
+        zip.align(case_names);
+        Ok(OutputSource::Zip(zip))
     }
 }
 
 impl ZipIndex {
-    /// The entry for a case's `out` name: the same relative path, or for a flat name (`1.out`) the first
-    /// entry of that name anywhere in the zip. A nested name never falls back to another directory's file.
+    /// The entry for a case's `out` name: the same relative path, or under the zip's relayout (when there is
+    /// one) that path moved instead; and for a flat name (`1.out`) the first entry of that name anywhere in
+    /// the zip. A nested name never falls back to another directory's file.
     fn find(&self, wanted: &str) -> Option<usize> {
         let clean = clean_path(wanted)?;
+        let found = match &self.relayout {
+            Some(relayout) => relayout.apply(&clean).and_then(|name| self.by_path.get(&name)),
+            None => self.by_path.get(&clean),
+        };
         // `by_last` is keyed by bare names, so a nested `clean` can only match through `by_path`.
-        self.by_path.get(&clean).or_else(|| self.by_last.get(&clean)).copied()
+        found.or_else(|| self.by_last.get(&clean)).copied()
+    }
+
+    /// Lines the zip up with the case names once, for every case: outer folders the contestant dropped,
+    /// added or renamed. The relayout taken is the one that finds the most (distinct) case names, more than
+    /// the names as they are and more than any other relayout; one that would give two case names the same
+    /// entry is never taken, so no case reads another's output.
+    fn align(&mut self, case_names: &[&str]) {
+        let names: Vec<String> = case_names
+            .iter()
+            .filter_map(|name| clean_path(name))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let Some(depth) = names.iter().map(|name| name.split('/').count()).min() else { return };
+        let (mut best, mut tied) = (self.hits(&names, &Relayout::default()).unwrap_or(0), false);
+        for relayout in self.relayouts(depth) {
+            match self.hits(&names, &relayout) {
+                Some(hits) if hits > best => (best, tied, self.relayout) = (hits, false, Some(relayout)),
+                Some(hits) if hits == best && self.relayout.is_some() => tied = true,
+                _ => {}
+            }
+        }
+        if tied {
+            self.relayout = None;
+        }
+    }
+
+    /// Every relayout but the identity: drop 0..depth leading segments, with no root or one of the roots.
+    fn relayouts(&self, depth: usize) -> Vec<Relayout> {
+        let mut roots = vec![String::new()];
+        roots.extend(self.roots());
+        let all = roots
+            .into_iter()
+            .flat_map(|root| (0..depth).map(move |drop| Relayout { drop, root: root.clone() }));
+        all.filter(|relayout| *relayout != Relayout::default()).collect()
+    }
+
+    /// How many case names the relayout finds; None when two of them land on the same name.
+    fn hits(&self, names: &[String], relayout: &Relayout) -> Option<usize> {
+        let moved: Vec<String> = names.iter().map(|name| relayout.apply(name)).collect::<Option<_>>()?;
+        let distinct: HashSet<&String> = moved.iter().collect();
+        (distinct.len() == moved.len())
+            .then(|| moved.iter().filter(|name| self.by_path.contains_key(*name)).count())
+    }
+
+    /// The first folders of the entries (`mine` for `mine/a/1.out`), at most `MAX_RELAYOUT_ROOTS`.
+    fn roots(&self) -> Vec<String> {
+        let mut roots: Vec<&str> =
+            self.by_path.keys().filter_map(|path| path.split_once('/')).map(|(first, _)| first).collect();
+        roots.sort_unstable();
+        roots.dedup();
+        roots
+            .into_iter()
+            .filter(|root| *root != "__MACOSX")
+            .take(MAX_RELAYOUT_ROOTS)
+            .map(String::from)
+            .collect()
     }
 }
 
@@ -133,7 +220,7 @@ mod tests {
     #[test]
     fn zip_entries_match_by_name_and_missing_is_empty() {
         let zip = zip_of(&[("1.out", b"a"), ("dir/2.out", b"bb")]);
-        let source = OutputSource::zip(zip.path().into()).unwrap();
+        let source = OutputSource::zip(zip.path().into(), &[]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("o");
         assert_eq!(output_for_case(&source, "1.out", &dest, 100).unwrap(), 1);
@@ -146,7 +233,7 @@ mod tests {
     #[test]
     fn the_first_entry_of_a_name_wins_and_directories_do_not_count() {
         let zip = zip_of(&[("a/1.out", b"first"), ("b/1.out", b"second"), ("sub/", b"")]);
-        let source = OutputSource::zip(zip.path().into()).unwrap();
+        let source = OutputSource::zip(zip.path().into(), &[]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("o");
         output_for_case(&source, "1.out", &dest, 100).unwrap();
@@ -157,7 +244,7 @@ mod tests {
     #[test]
     fn nested_case_names_match_their_own_path_only() {
         let zip = zip_of(&[("a/1.out", b"A"), ("b/1.out", b"B"), ("flat.out", b"F"), ("../evil.out", b"E")]);
-        let source = OutputSource::zip(zip.path().into()).unwrap();
+        let source = OutputSource::zip(zip.path().into(), &[]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("o");
         let read = |name: &str| {
@@ -171,6 +258,66 @@ mod tests {
         assert_eq!(read("1.out"), b"A", "a flat name takes the first entry of that name");
         assert_eq!(read("evil.out"), b"", "a traversal entry is never indexed");
         assert_eq!(read("../evil.out"), b"");
+    }
+
+    fn aligned_read(entries: &[(&str, &[u8])], cases: &[&str]) -> Vec<Vec<u8>> {
+        let zip = zip_of(entries);
+        let source = OutputSource::zip(zip.path().into(), cases).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("o");
+        let read = |name: &&str| {
+            output_for_case(&source, name, &dest, 100).unwrap();
+            std::fs::read(&dest).unwrap()
+        };
+        cases.iter().map(read).collect()
+    }
+
+    #[test]
+    fn a_zip_with_outer_folders_dropped_added_or_renamed_is_lined_up_with_the_cases() {
+        let cases = ["B/Test00/B.out", "B/Test01/B.out"];
+        let dropped: &[(&str, &[u8])] = &[("Test00/B.out", b"0"), ("Test01/B.out", b"1")];
+        assert_eq!(aligned_read(dropped, &cases), [b"0", b"1"]);
+        let added: &[(&str, &[u8])] = &[("mine/B/Test00/B.out", b"0"), ("mine/B/Test01/B.out", b"1")];
+        assert_eq!(aligned_read(added, &cases), [b"0", b"1"]);
+        let renamed: &[(&str, &[u8])] = &[("out/Test00/B.out", b"0"), ("out/Test01/B.out", b"1")];
+        assert_eq!(aligned_read(renamed, &cases), [b"0", b"1"]);
+        let flat: &[(&str, &[u8])] = &[("01.a", b"x"), ("02.a", b"y")];
+        assert_eq!(aligned_read(flat, &["tests/01.a", "tests/02.a"]), [b"x", b"y"]);
+    }
+
+    #[test]
+    fn a_relayout_never_gives_a_case_another_case_s_output() {
+        let one_file: &[(&str, &[u8])] = &[("B.out", b"only")];
+        let empty: [&[u8]; 2] = [b"", b""];
+        assert_eq!(
+            aligned_read(one_file, &["B/Test00/B.out", "B/Test01/B.out"]),
+            empty,
+            "two cases, one file"
+        );
+        let part: &[(&str, &[u8])] = &[("sub1/1/out", b"11"), ("sub1/2/out", b"12")];
+        let got = aligned_read(part, &["sub1/1/out", "sub1/2/out", "sub2/1/out"]);
+        assert_eq!(got, [&b"11"[..], b"12", b""], "a missing subtask stays empty");
+        let lone: &[(&str, &[u8])] = &[("a/1.out", b"A")];
+        assert_eq!(aligned_read(lone, &["a/1.out", "c/1.out"]), [&b"A"[..], b""]);
+        let mixed: &[(&str, &[u8])] = &[("a/1.out", b"A"), ("1.out", b"B")];
+        assert_eq!(
+            aligned_read(mixed, &["x/a/1.out", "a/1.out"]),
+            [b"A", b"B"],
+            "one relayout for all, one entry each"
+        );
+    }
+
+    #[test]
+    fn a_pretest_reusing_a_test_file_and_stray_folders_do_not_stop_the_relayout() {
+        let cases = ["B/Test00/B.out", "B/Test01/B.out", "B/Test00/B.out"];
+        let dropped: &[(&str, &[u8])] = &[("Test00/B.out", b"0"), ("Test01/B.out", b"1")];
+        assert_eq!(aligned_read(dropped, &cases), [b"0", b"1", b"0"]);
+        let finder: &[(&str, &[u8])] =
+            &[("mine/B/Test00/B.out", b"0"), ("mine/B/Test01/B.out", b"1"), ("__MACOSX/mine/._B.out", b"m")];
+        assert_eq!(aligned_read(finder, &cases[..2]), [b"0", b"1"]);
+        let readme: &[(&str, &[u8])] =
+            &[("README.txt", b"r"), ("out/Test00/B.out", b"0"), ("out/Test01/B.out", b"1")];
+        assert_eq!(aligned_read(readme, &cases[..2]), [b"0", b"1"]);
     }
 
     /// One stored (uncompressed) entry `1.out`, so its bytes can be patched in place.
@@ -188,7 +335,7 @@ mod tests {
     fn answer_of(bytes: &[u8], dest: &Path) -> Result<u64, GradeError> {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), bytes).unwrap();
-        output_for_case(&OutputSource::zip(file.path().into()).unwrap(), "1.out", dest, 100)
+        output_for_case(&OutputSource::zip(file.path().into(), &[]).unwrap(), "1.out", dest, 100)
     }
 
     fn position(haystack: &[u8], needle: &[u8]) -> usize {
@@ -223,9 +370,9 @@ mod tests {
     fn a_zip_with_too_many_entries_is_refused_and_one_index_serves_every_case() {
         let names: Vec<String> = (0..=MAX_OUTPUT_ENTRIES).map(|i| format!("{i}.out")).collect();
         let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b"x"[..])).collect();
-        assert!(matches!(OutputSource::zip(zip_of(&entries).path().into()), Err(GradeError::Io(_))));
+        assert!(matches!(OutputSource::zip(zip_of(&entries).path().into(), &[]), Err(GradeError::Io(_))));
         let ok = zip_of(&entries[..MAX_OUTPUT_ENTRIES]);
-        let source = OutputSource::zip(ok.path().into()).unwrap();
+        let source = OutputSource::zip(ok.path().into(), &[]).unwrap();
         let OutputSource::Zip(index) = &source else { panic!("zip expected") };
         assert_eq!(index.by_path.len(), MAX_OUTPUT_ENTRIES);
         let dir = tempfile::tempdir().unwrap();
