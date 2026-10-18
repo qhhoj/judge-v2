@@ -9,6 +9,7 @@ pub struct Meta {
     pub exit_signal: Option<i32>,
     pub time_s: f64,
     pub wall_s: f64,
+    /// The cgroup's `memory.peak`; 0 when isolate did not report it (no `memory.peak` before kernel 5.19).
     pub cg_mem_kib: u64,
     /// Peak resident set of the largest process; 0 when isolate did not report it.
     pub max_rss_kib: u64,
@@ -17,14 +18,17 @@ pub struct Meta {
 }
 
 impl Meta {
-    /// The memory to report for a run. The cgroup peak also counts the page cache of files the program
-    /// wrote (its output), so it is capped by the peak RSS; an OOM kill reports the cgroup peak that hit the
-    /// limit. MLE is decided by `classify` (the peak RSS against the limit, or an OOM kill), not by this.
+    /// The program's own memory: what `classify` holds to the memory limit, and what a run reports. The
+    /// cgroup peak also counts the page cache of files the program wrote (its output), the peak RSS also
+    /// counts mapped files already in page cache (a runtime's shared objects), so it is the smaller of the
+    /// two; an OOM kill reports the cgroup peak that hit the limit. When isolate reported only one of them,
+    /// it is that one (`packaging/check-host.sh` fails a host without `memory.peak`).
     pub fn memory_kib(&self) -> u64 {
-        if self.oom_killed || self.max_rss_kib == 0 {
-            return self.cg_mem_kib;
+        let (cgroup, rss) = (self.cg_mem_kib, self.max_rss_kib);
+        if cgroup == 0 || rss == 0 {
+            return cgroup.max(rss);
         }
-        self.cg_mem_kib.min(self.max_rss_kib)
+        if self.oom_killed { cgroup } else { cgroup.min(rss) }
     }
 }
 
@@ -86,7 +90,18 @@ mod tests {
             "20 MiB of written output is not the program"
         );
         assert_eq!(memory("max-rss:14616\ncg-mem:8192\n"), 8192);
-        assert_eq!(memory("cg-mem:8192\n"), 8192, "no max-rss: the cgroup peak");
+        assert_eq!(memory("max-rss:56196\ncg-mem:19644\n"), 19644, "PyPy's libpypy pages are not its own");
         assert_eq!(memory("max-rss:3000\ncg-mem:65536\ncg-oom-killed:1\n"), 65536);
+    }
+
+    #[test]
+    fn memory_is_the_one_counter_isolate_reported_when_the_other_is_missing() {
+        let memory = |text: &str| parse_meta(text).unwrap().memory_kib();
+        assert_eq!(memory("cg-mem:8192\n"), 8192, "no max-rss: the cgroup peak");
+        assert_eq!(memory("max-rss:14616\n"), 14616, "no cg-mem (kernel before 5.19): the peak RSS");
+        assert_eq!(memory("max-rss:14616\ncg-mem:0\n"), 14616, "cg-mem 0 is no reading");
+        assert_eq!(memory("max-rss:0\ncg-mem:8192\n"), 8192, "max-rss 0 is no reading");
+        assert_eq!(memory("max-rss:14616\ncg-oom-killed:1\n"), 14616, "an OOM kill without cg-mem");
+        assert_eq!(memory("exitcode:0\n"), 0);
     }
 }
