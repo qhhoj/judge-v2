@@ -231,3 +231,29 @@ fn a_python_solution_that_crashes_before_answering_is_rte_not_the_interactors_eo
     assert_eq!(result.verdict, RunVerdict::Rte { reason: "ZeroDivisionError".into() });
     assert!(result.check.is_none(), "{result:?}");
 }
+
+/// An interactor that traces to stderr before its verdict, as interactors debugged with `cerr` do.
+const DEBUG_LINES: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+    int secret = inf.readInt();
+    int guess = ouf.readInt();
+    std::cerr << "12 7 3" << std::endl;
+    std::cerr << "points 9 (a debug pair)" << std::endl;
+    std::cout << "=" << std::endl;
+    if (guess == secret) quitf(_pc(100), "half");
+    quitp(0.25, "quarter");
+}
+"#;
+
+const GUESS_ONCE: &str = "#include <iostream>\n#include <string>\nint main(){ std::cout << {} << std::endl; std::string r; std::cin >> r; }\n";
+
+#[test]
+fn interactor_verdicts_are_read_past_its_debug_lines() {
+    let mut g = game(52, DEBUG_LINES);
+    let quarter = play(&mut g, &GUESS_ONCE.replace("{}", "1")).unwrap().check.unwrap();
+    assert!(quarter.passed && (quarter.fraction - 0.25).abs() < 1e-9, "{quarter:?}");
+    assert_eq!(quarter.feedback, "quarter");
+    let half = play(&mut g, &GUESS_ONCE.replace("{}", "377")).unwrap().check.unwrap();
+    assert!(half.passed && (half.fraction - 0.5).abs() < 1e-9, "_pc(100) after debug lines: {half:?}");
+}
