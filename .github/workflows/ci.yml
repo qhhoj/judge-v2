@@ -54,6 +54,8 @@ jobs:
           cargo run --locked -q -p judge-proto --example check_shape -- "$RUNNER_TEMP/released.shape.json"
       - name: the systemd unit keeps its directives
         run: bash packaging/check-unit.sh
+      - name: check-host.sh fails each broken host setting
+        run: bash packaging/check-host.test.sh
   # By hand only (see the header): needs sudo, systemd and cgroup v2 delegation.
   isolate-suite:
     if: github.event_name == 'workflow_dispatch'

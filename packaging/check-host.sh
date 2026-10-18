@@ -43,6 +43,14 @@ setting() { sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\"\{0,1\}\([^\"#[:
 fs_type_of() {
   awk -v p="$1" '{ m = $2; if ((p == m || index(p, (m == "/" ? "/" : m "/")) == 1) && length(m) > best) { best = length(m); t = $3 } } END { print t }' "$R/proc/self/mounts"
 }
+# isolate's cgroup parent: cg_root, or for `auto:FILE` the path isolate's cg keeper wrote to FILE.
+isolate_cgroup() {
+  local cg_root; cg_root="$(setting "$ISOLATE_CONF" cg_root)"
+  case "$cg_root" in auto:*) head -n 1 "$R${cg_root#auto:}" 2>/dev/null ;; *) echo "$cg_root" ;; esac
+}
+# isolate reports a run's cgroup memory (cg-mem) only from memory.peak (kernel 5.19+). Without it the memory
+# limit is held to the peak RSS alone, which counts a runtime's shared objects (PyPy's ~37 MiB) as the program's.
+memory_peak_readable() { local cg; cg="$(isolate_cgroup)"; [ -n "$cg" ] && [ -r "$R$cg/memory.peak" ]; }
 box_root_local() {
   local box_root; box_root="$(setting "$ISOLATE_CONF" box_root)"; [ -n "$box_root" ] || return 1
   local type; type="$(fs_type_of "$box_root")"
@@ -103,6 +111,7 @@ check "config is root 644" config_root_644
 check "user qhhoj-judge exists" user_exists
 check "/usr/local/bin/isolate is setuid root" isolate_setuid_root
 check "isolate box_root is on a local filesystem" box_root_local
+check "isolate cgroup has memory.peak (kernel 5.19+; without it runs report no cg-mem)" memory_peak_readable
 check "isolate num_boxes >= box_base + 2*slots" enough_boxes
 if [ "${CHECK_SKIP_COMMANDS:-0}" != 1 ] || [ -n "${CHECK_FIXTURES:-}" ]; then
   check "isolate-check-environment clean except the ASLR waiver" isolate_env_clean

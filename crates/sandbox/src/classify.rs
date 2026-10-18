@@ -49,6 +49,9 @@ pub fn signal_name(signal: i32) -> String {
 ///
 /// Output over the cap is OLE even when the run then timed out: the JVM ignores SIGXFSZ and `PrintStream`
 /// swallows the write error, so a Java or Kotlin print loop runs on to the time limit once its output is cut.
+///
+/// A run killed at the time limit is TLE (or OLE), not MLE, unless the cgroup OOM-killed it: on a TO isolate's
+/// max-rss is its own proxy's (~820 KiB), so `Meta::memory_kib` stays under the limit.
 pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     let status = meta.status.as_deref();
     if status == Some("XX") {
@@ -112,11 +115,20 @@ mod tests {
     }
 
     #[test]
+    fn the_memory_limit_holds_when_isolate_reports_only_one_counter() {
+        // isolate prints cg-mem only from a readable, non-zero memory.peak (kernel 5.19+)
+        assert_eq!(verdict("exitcode:0\nmax-rss:16385\n", 0), RunVerdict::Mle, "no cg-mem: the peak RSS");
+        assert_eq!(verdict("exitcode:0\nmax-rss:16384\n", 0), RunVerdict::Ok, "no cg-mem, exactly the limit");
+        assert_eq!(verdict("exitcode:0\ncg-mem:16385\n", 0), RunVerdict::Mle, "no max-rss: the cgroup peak");
+    }
+
+    #[test]
     fn memory_wins_over_output_and_output_over_time() {
-        // A JVM print loop (isolate 2.6): output cut at --fsize, no SIGXFSZ, killed at the time limit
-        let jvm_flood = "status:TO\nmessage:Time limit exceeded\nkilled:1\ntime:1.078\ntime-wall:0.908\n";
+        // A JVM print loop (isolate 2.6): output cut at --fsize, no SIGXFSZ, killed at the time limit. The
+        // max-rss of a TO is isolate's proxy's, so a cgroup peak 8x the memory limit is still not MLE.
+        let jvm_flood = "time:1.078\ntime-wall:0.908\nmax-rss:824\ncg-mem:131072\nkilled:1\nstatus:TO\nmessage:Time limit exceeded\n";
         assert_eq!(verdict(jvm_flood, 4097), RunVerdict::Ole);
-        assert_eq!(verdict("status:TO\nkilled:1\n", 4096), RunVerdict::Tle, "exactly the cap is not over it");
+        assert_eq!(verdict(jvm_flood, 4096), RunVerdict::Tle, "exactly the cap is not over it");
         assert_eq!(verdict("status:SG\nexitsig:9\ncg-oom-killed:1\n", 5000), RunVerdict::Mle);
     }
 }
