@@ -130,11 +130,14 @@ impl ZipIndex {
         all.filter(|relayout| *relayout != Relayout::default()).collect()
     }
 
-    /// How many case names the relayout finds; None when two of them land on the same name.
+    /// How many case names the relayout finds; None when two of them land on the same name, or one lands on
+    /// another case's own name (`x/a/1.out` moved onto case `a/1.out`'s file).
     fn hits(&self, names: &[String], relayout: &Relayout) -> Option<usize> {
         let moved: Vec<String> = names.iter().map(|name| relayout.apply(name)).collect::<Option<_>>()?;
         let distinct: HashSet<&String> = moved.iter().collect();
-        (distinct.len() == moved.len())
+        let own: HashSet<&String> = names.iter().collect();
+        let onto_another = names.iter().zip(&moved).any(|(name, to)| to != name && own.contains(to));
+        (distinct.len() == moved.len() && !onto_another)
             .then(|| moved.iter().filter(|name| self.by_path.contains_key(*name)).count())
     }
 
@@ -302,8 +305,8 @@ mod tests {
         let mixed: &[(&str, &[u8])] = &[("a/1.out", b"A"), ("1.out", b"B")];
         assert_eq!(
             aligned_read(mixed, &["x/a/1.out", "a/1.out"]),
-            [b"A", b"B"],
-            "one relayout for all, one entry each"
+            [&b""[..], b"A"],
+            "a case is never moved onto another case's own name"
         );
     }
 
