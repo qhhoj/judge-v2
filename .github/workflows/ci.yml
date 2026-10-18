@@ -74,6 +74,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcap-dev libseccomp-dev libsystemd-dev pkg-config asciidoc-base unzip \
             gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat binutils
+      - name: host CPU (PyPy sizes its GC nursery from the cache size it reads)
+        run: |
+          grep -m2 -E '^(model name|cache size)' /proc/cpuinfo
+          PYPYLOG=gc-hardware:- pypy3 -c pass
       - name: Kotlin (upstream release, pinned by sha256)
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlinc.zip" https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip
