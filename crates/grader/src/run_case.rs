@@ -186,10 +186,11 @@ pub fn run_case(
     })
 }
 
-/// The memory shown for a run: the program's own (`Meta::memory_kib`), but the cgroup peak for an MLE, so an
-/// MLE that `refine` found on stderr (a JVM OutOfMemoryError) is not shown far under the limit.
+/// The memory shown for a run: the program's own (`Meta::memory_kib`), but for an MLE the larger of the
+/// cgroup peak and the peak RSS, so an MLE is never shown under the limit: one `refine` found on stderr (a
+/// JVM OutOfMemoryError, cgroup peak) or one by peak RSS alone (RSS over the limit, no OOM kill).
 pub(crate) fn reported_memory(meta: &Meta, verdict: &RunVerdict) -> u64 {
-    if *verdict == RunVerdict::Mle { meta.cg_mem_kib } else { meta.memory_kib() }
+    if *verdict == RunVerdict::Mle { meta.cg_mem_kib.max(meta.max_rss_kib) } else { meta.memory_kib() }
 }
 
 /// The last 64 KiB of the kept stderr (where the final exception is), lossy UTF-8.
@@ -283,10 +284,13 @@ mod tests {
     const PYTHON: &str = "Traceback (most recent call last)";
 
     #[test]
-    fn an_mle_shows_the_cgroup_peak_and_other_runs_the_program_memory() {
+    fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_program_memory() {
         let meta = Meta { cg_mem_kib: 200_000, max_rss_kib: 180_000, ..Meta::default() };
         assert_eq!(reported_memory(&meta, &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
         assert_eq!(reported_memory(&meta, &RunVerdict::Ok), 180_000);
+        let rss_only = Meta { cg_mem_kib: 8_500, max_rss_kib: 9_000, ..Meta::default() };
+        assert_eq!(reported_memory(&rss_only, &RunVerdict::Mle), 9_000, "an MLE by peak RSS shows the RSS");
+        assert_eq!(reported_memory(&rss_only, &RunVerdict::Ok), 8_500);
     }
 
     #[test]

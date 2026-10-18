@@ -300,6 +300,7 @@ fn memory_over_the_limit_is_mle_with_or_without_an_oom_kill() {
         RunVerdict::Mle,
         "24 MiB touched under an 8 MiB limit, inside the page-cache room"
     );
+    assert!(run.memory_kib > 8192, "an MLE is not shown under the limit: {} KiB", run.memory_kib);
     let far_over = input(&f, "alloc 512");
     assert_eq!(go_limited(&mut f, &plain(&far_over, 32 << 20), 8192).verdict, RunVerdict::Mle);
     let under = input(&f, "alloc 4");
