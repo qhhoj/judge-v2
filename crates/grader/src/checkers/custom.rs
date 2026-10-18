@@ -247,8 +247,9 @@ impl CustomChecker {
             sandbox.put("output", io.output, false)?;
             sandbox.put("answer", io.answer, false)?;
         }
-        let meta = sandbox.run(&self.spec())?;
-        let verdict = classify(&meta, OutputUse { written: 0, cap: u64::MAX });
+        let spec = self.spec();
+        let meta = sandbox.run(&spec)?;
+        let verdict = classify(&meta, OutputUse { written: 0, cap: u64::MAX }, &spec.limits);
         let code = finished_code(&verdict, meta.exit_code, "checker")?;
         if self.kind == CustomKind::Themis {
             return Ok(themis::interpret(code, &read_text(sandbox, STDOUT))?);

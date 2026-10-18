@@ -120,7 +120,7 @@ fn run_compiler(
     let mut log = read_log(sandbox, LOG);
     log.extend(read_log(sandbox, ERR));
     let mut log = clip_log(&log);
-    match classify(&meta, OutputUse { written: 0, cap: u64::MAX }) {
+    match classify(&meta, OutputUse { written: 0, cap: u64::MAX }, &spec.limits) {
         RunVerdict::Ok => Ok(Ok(log)),
         RunVerdict::Internal(message) => Err(SandboxError::Isolate(message).into()),
         RunVerdict::Ir { exit_code: EXEC_FAILED } => Err(GradeError::RuntimeMissing(argv[0].clone())),

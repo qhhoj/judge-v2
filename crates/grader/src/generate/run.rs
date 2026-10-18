@@ -109,12 +109,13 @@ fn collect_stderr(sandbox: &IsolateBox) -> String {
 
 pub fn run_program(sandbox: &mut IsolateBox, run: &ProgramRun) -> Result<ProgramExit, GradeError> {
     stage(sandbox, run)?;
-    let meta = sandbox.run(&spec_of(run))?;
+    let spec = spec_of(run);
+    let meta = sandbox.run(&spec)?;
     let written = match run.stdout_to {
         Some(dest) => collect_stdout(sandbox, dest, run.output_cap)?,
         None => 0,
     };
-    let verdict = classify(&meta, OutputUse { written, cap: run.output_cap });
+    let verdict = classify(&meta, OutputUse { written, cap: run.output_cap }, &spec.limits);
     Ok(ProgramExit { verdict, stderr: collect_stderr(sandbox) })
 }
 
