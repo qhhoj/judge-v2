@@ -65,18 +65,18 @@ pub fn fd_path(file: &File) -> PathBuf {
     PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
 
-/// A case's input and answer, opened once, and what the case is worth.
-struct CaseFiles {
+/// A case's input and answer, opened once, and the case (its file names and what it is worth).
+struct CaseFiles<'c> {
     input: File,
     answer: File,
-    points: f64,
+    case: &'c PlannedCase,
 }
 
-fn open_case(problem: &ResolvedProblem, case: &PlannedCase) -> Result<CaseFiles, GradeError> {
+fn open_case<'c>(problem: &ResolvedProblem, case: &'c PlannedCase) -> Result<CaseFiles<'c>, GradeError> {
     Ok(CaseFiles {
         input: problem.open_case_file(&case.input)?,
         answer: problem.open_case_file(&case.output)?,
-        points: case.total,
+        case,
     })
 }
 
@@ -99,10 +99,11 @@ impl CaseContext<'_> {
         output: &Path,
     ) -> Result<CheckOutcome, GradeError> {
         let (input, answer) = (fd_path(&files.input), fd_path(&files.answer));
-        let io = CheckInput { input: &input, output, answer: &answer, points: files.points };
+        let (case, points) = (files.case, files.case.total);
+        let io = CheckInput { input: &input, output, answer: &answer, points };
         match &self.check {
             Check::Builtin(checker) => Ok(checker.check(&io)?),
-            Check::Custom(custom) => custom.check(helper, &io),
+            Check::Custom(custom) => custom.check_case(helper, &io, (&case.input, &case.output)),
         }
     }
 }

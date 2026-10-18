@@ -36,11 +36,30 @@ impl ThemisNames {
         self.inputs.is_empty() || self.outputs.is_empty()
     }
 
+    /// These names plus the case's own input and answer file names (their last segment), in every letter
+    /// case: the old judge laid the case out under them, whatever their extension (`polygon.ans`). A case
+    /// name that is also a name of the other file (`in/1.txt` and `out/1.txt`) is left out: one box file
+    /// cannot hold both.
+    pub fn with_case(&self, input: &str, answer: &str) -> ThemisNames {
+        let cases = |path: &str| -> BTreeSet<String> {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            letter_cases(name).into_iter().filter(|name| is_plain_box_name(name)).collect()
+        };
+        let (case_inputs, case_answers) = (cases(input), cases(answer));
+        let mut names = self.clone();
+        let clash = |name: &String, other: &BTreeSet<String>, other_case: &BTreeSet<String>| {
+            other.contains(name) || other_case.contains(name)
+        };
+        names.inputs.extend(case_inputs.iter().filter(|n| !clash(n, &self.outputs, &case_answers)).cloned());
+        names.outputs.extend(case_answers.iter().filter(|n| !clash(n, &self.inputs, &case_inputs)).cloned());
+        names
+    }
+
     fn add(&mut self, name: &str) {
         let Some((_, ext)) = name.rsplit_once('.') else { return };
         let set = match ext.to_ascii_lowercase().as_str() {
             "inp" => &mut self.inputs,
-            "out" => &mut self.outputs,
+            "out" | "ans" => &mut self.outputs,
             _ => return,
         };
         // Teachers mix cases (`Path.inp` set as file I/O, `Path.INP` opened by the checker).
@@ -48,14 +67,15 @@ impl ThemisNames {
     }
 }
 
-/// `"...name.inp"` / `"...name.out"` literals of a source, the part after the last `/` or `\`.
+/// `"...name.inp"` / `"...name.out"` / `"...name.ans"` literals of a source, the part after the last `/` or `\`.
 fn literal_names(source: &[u8]) -> Vec<String> {
     let text = String::from_utf8_lossy(source);
     let mut names = Vec::new();
     for literal in text.split('"').skip(1).step_by(2) {
         let name = literal.rsplit(['/', '\\']).next().unwrap_or(literal);
         let lower = name.to_ascii_lowercase();
-        if (lower.ends_with(".inp") || lower.ends_with(".out")) && !names.iter().any(|n| n == name) {
+        let named = [".inp", ".out", ".ans"].iter().any(|ext| lower.ends_with(ext));
+        if named && !names.iter().any(|n| n == name) {
             names.push(name.to_string());
         }
         if names.len() >= MAX_LITERAL_NAMES {
@@ -78,14 +98,24 @@ pub fn names_for(file_io: Option<&FileIo>, source: &[u8]) -> ThemisNames {
     names
 }
 
-/// The checker's stdin: the two directories, absolute inside the box, without a trailing slash.
+/// The checker's stdin: the two directories, absolute inside the box, with a trailing slash, as the old
+/// judge gave them: checkers join `dir + "name.inp"` without a separator (`dir + "/name.inp"` still works).
 pub fn paths_text() -> String {
-    format!("/box/{TEST_DIR}\n/box/{WORK_DIR}\n")
+    format!("/box/{TEST_DIR}/\n/box/{WORK_DIR}/\n")
 }
 
 fn readable_copy(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::copy(from, to)?;
     std::fs::set_permissions(to, std::fs::Permissions::from_mode(0o644))
+}
+
+/// `file` under every name in `dir`: one copy, the other names hard links to it.
+fn lay_out(file: &Path, dir: &Path, names: &BTreeSet<String>) -> std::io::Result<()> {
+    let mut names = names.iter();
+    let Some(first) = names.next() else { return Ok(()) };
+    let first = dir.join(first);
+    readable_copy(file, &first)?;
+    names.try_for_each(|name| std::fs::hard_link(&first, dir.join(name)))
 }
 
 fn new_dir(path: &Path) -> std::io::Result<()> {
@@ -101,14 +131,9 @@ pub fn stage(dir: &Path, names: &ThemisNames, files: (&Path, &Path, &Path)) -> s
     let (test, work) = (dir.join(TEST_DIR), dir.join(WORK_DIR));
     new_dir(&test)?;
     new_dir(&work)?;
-    for name in &names.inputs {
-        readable_copy(input, &test.join(name))?;
-    }
-    for name in &names.outputs {
-        readable_copy(answer, &test.join(name))?;
-        readable_copy(output, &work.join(name))?;
-    }
-    Ok(())
+    lay_out(input, &test, &names.inputs)?;
+    lay_out(answer, &test, &names.outputs)?;
+    lay_out(output, &work, &names.outputs)
 }
 
 /// The checker's report: exit 0 and a score on the last non-empty stdout line, else a checker error.
@@ -159,6 +184,21 @@ mod tests {
         assert!(names.inputs.contains("chiendich2701.inp") && names.inputs.contains("CHIENDICH2701.INP"));
         assert!(names.outputs.contains("chiendich2701.out"));
         assert!(!names.outputs.iter().chain(&names.inputs).any(|name| name.contains("txt")));
+    }
+
+    #[test]
+    fn the_case_file_names_are_added_whatever_their_extension() {
+        let names = names_for(None, br#"#define name "/Path"  open(dir + name ".INP")"#);
+        assert!(names.is_empty(), "\".INP\" alone names no file");
+        let names = names.with_case("Test01/Path.inp", "Test01/Path.out");
+        assert!(names.inputs.contains("Path.INP") && names.outputs.contains("Path.OUT"), "{names:?}");
+        let names = ThemisNames::default().with_case("01/polygon.inp", "01/polygon.ans");
+        assert!(names.inputs.contains("polygon.inp") && names.outputs.contains("polygon.ans"), "{names:?}");
+        assert!(!names.inputs.contains("polygon.ans"), "the answer is not laid out as the input");
+        let clash = ThemisNames::default().with_case("in/1.txt", "out/1.txt");
+        assert!(clash.inputs.is_empty() && clash.outputs.is_empty(), "{clash:?}");
+        let literal = names_for(None, br#"open(TEST_FOLDER + "polygon.ans")"#);
+        assert!(literal.outputs.contains("polygon.ans") && literal.outputs.contains("POLYGON.ANS"));
     }
 
     #[test]
