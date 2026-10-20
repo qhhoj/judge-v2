@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.5 (2026-10-18)
+
+### Fixes
+
+- `check-host.sh` fails a host whose isolate cgroup has no `memory.peak` (kernel before 5.19). There isolate reports no cgroup memory, and the memory limit is held to the peak RSS alone, which counts a runtime's shared objects as the program's.
+- Tests: an isolate test runs a real testlib interactor that traces to stderr before `quitp` and `_pc(n)`, and checks its verdict is still read.
+- Memory limit: the cgroup gets room above the memory limit for the page cache of the files a run writes (one `--fsize` worth, at most 64 MiB), and MLE is the program's own memory over the limit, or an OOM kill at the raised cgroup limit. The program's own memory is the smaller of the cgroup peak, which also counts the page cache of written output, and the peak RSS, which also counts mapped files already in page cache (PyPy's ~37 MiB libpypy), or the one isolate reported when it reported only one. A run killed at the time limit is not MLE unless the cgroup OOM-killed it: on a timeout isolate reports its own proxy's peak RSS. Before this, the page cache of a large output counted against a small memory limit, so a run could be OOM-killed and shown as MLE while the program itself used 2 MiB. Reported memory is the program's own; an MLE shows the larger of the cgroup peak and the peak RSS, so it is never shown under the limit.
+- Output limit: a run whose output went over the limit is OLE even when it then ran out of time. The JVM ignores SIGXFSZ and `System.out` and `PrintWriter` swallow the write error, so a Java or Kotlin program printing in a loop ran on after its output was cut at the limit and was shown as TLE. A run is judged MLE first, then OLE, then TLE.
+- Output-only: an OUTPUT zip whose outer folders were dropped, added or renamed against the case `out` names is lined up once per submission, so its files are found instead of every case getting an empty output (WA). A layout that would give two cases one file is never used.
+- Checkers: a testlib checker that prints debug lines to stderr before quitting is read from its verdict line (`points N`, `partially correct (n)`, `ok`, `wrong answer`, ...): `quitp` after debug output was IE, or took a number from the debug text as the score.
+- Themis checkers: the two directories on the checker's stdin end with `/`, as the old judge gave them, so `dir + "name.inp"` without a separator opens the right file. Each case's files are also laid out under the case's own input and answer file names, in every letter case and with any extension, and `.ans` literals in the checker source name the answer and output. Before this, a checker that names its files `name ".INP"` with no file I/O set was IE on every submission, and `dir + "polygon.inp"` or a `.ans` answer found no files. Extra names are hard links, not copies.
+
 ## 2.3.4 (2026-10-15)
 
 ### Fixes
