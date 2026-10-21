@@ -22,7 +22,9 @@ pub enum CustomKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomSpec {
-    pub source: String,
+    /// The source first, then the headers it includes (a package's own `testlib.h` among them): all are
+    /// compiled side by side, so `#include "x.h"` finds them before the vendored `/testlib`.
+    pub files: Vec<String>,
     pub lang: String,
     pub kind: CustomKind,
     pub partial: PartialPoints,
@@ -61,6 +63,19 @@ fn floats(args: &Mapping, default: ErrorMode) -> Result<CheckerChoice, CheckErro
     Ok(CheckerChoice::Builtin(Box::new(checker)))
 }
 
+/// `files`: one name, or a list whose first name is the source.
+fn custom_files(args: &Mapping) -> Result<Vec<String>, CheckError> {
+    let bad = || CheckError("bridged checker `files` must be a name or a non-empty list of names".into());
+    match args.get("files") {
+        None => Err(CheckError("bridged checker needs `files`".into())),
+        Some(Value::String(name)) => Ok(vec![name.clone()]),
+        Some(Value::Sequence(items)) if !items.is_empty() => {
+            items.iter().map(|item| item.as_str().map(str::to_string).ok_or_else(bad)).collect()
+        }
+        Some(_) => Err(bad()),
+    }
+}
+
 fn custom(args: &Mapping) -> Result<CheckerChoice, CheckError> {
     let missing = |key: &str| CheckError(format!("bridged checker needs `{key}`"));
     let kind = match arg_str(args, "type").unwrap_or("testlib") {
@@ -69,7 +84,7 @@ fn custom(args: &Mapping) -> Result<CheckerChoice, CheckError> {
         "themis" => CustomKind::Themis,
         other => return Err(CheckError(format!("unsupported custom checker type {other:?}"))),
     };
-    let source = arg_str(args, "files").ok_or_else(|| missing("files"))?.to_string();
+    let files = custom_files(args)?;
     let lang = arg_str(args, "lang").ok_or_else(|| missing("lang"))?.to_string();
     let partial = match args.get("treat_checker_points_as_percentage") {
         None | Some(Value::Bool(false)) => PartialPoints::Absolute,
@@ -80,7 +95,7 @@ fn custom(args: &Mapping) -> Result<CheckerChoice, CheckError> {
             )));
         }
     };
-    Ok(CheckerChoice::Custom(CustomSpec { source, lang, kind, partial }))
+    Ok(CheckerChoice::Custom(CustomSpec { files, lang, kind, partial }))
 }
 
 fn identical(args: &Mapping, unicode: bool) -> CheckerChoice {
@@ -215,10 +230,14 @@ mod tests {
         let choice =
             choose(&spec("{name: bridged, args: {type: default, lang: PAS, files: chk.pas}}"), false);
         let Ok(CheckerChoice::Custom(custom)) = choice else { panic!("expected a custom spec") };
-        assert_eq!((custom.source.as_str(), custom.lang.as_str()), ("chk.pas", "PAS"));
+        assert_eq!((custom.files, custom.lang.as_str()), (vec!["chk.pas".to_string()], "PAS"));
         assert_eq!(custom.kind, CustomKind::Default);
         let testlib = choose(&spec("{name: bridged, args: {lang: CPP17, files: c.cpp}}"), false);
         assert!(matches!(testlib, Ok(CheckerChoice::Custom(CustomSpec { kind: CustomKind::Testlib, .. }))));
+        let with_headers =
+            choose(&spec("{name: bridged, args: {lang: CPP17, files: [c.cpp, testlib.h, limits.h]}}"), false);
+        let Ok(CheckerChoice::Custom(custom)) = with_headers else { panic!("expected a custom spec") };
+        assert_eq!(custom.files, ["c.cpp", "testlib.h", "limits.h"]);
     }
 
     #[test]
@@ -247,6 +266,18 @@ mod tests {
         assert!(broken("{name: floats, args: {error_mode: sideways}}"));
         assert!(broken("{name: floats, args: {precision: -1}}"));
         assert!(broken("{name: floats, args: {precision: 99999999999}}"));
+    }
+
+    #[test]
+    fn bridged_files_are_a_name_or_a_non_empty_list_of_names() {
+        let broken = |files: &str| {
+            choose(&spec(&format!("{{name: bridged, args: {{lang: CPP17, files: {files}}}}}")), false)
+                .is_err()
+        };
+        assert!(broken("[]"));
+        assert!(broken("[c.cpp, 3]"));
+        assert!(broken("{a: b}"));
+        assert!(!broken("[c.cpp]"));
     }
 
     #[test]

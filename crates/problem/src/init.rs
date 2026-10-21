@@ -97,6 +97,11 @@ pub struct InteractiveSpec {
     #[serde(rename = "type")]
     pub kind: String,
     pub lang: String,
+    /// Polygon's checker of an interactive problem: run on the interactor's `tout` once the interactor
+    /// accepts, and its verdict decides the case. Absent, the interactor alone decides (every legacy
+    /// problem; their top-level and per-case checkers are never run).
+    #[serde(default)]
+    pub checker: Option<CheckerSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,11 +151,19 @@ impl InitYaml {
         self.unsupported_custom_checker()
     }
 
+    /// The problem-wide checker and the interactive problem's own checker.
     fn unsupported_custom_checker(&self) -> Option<String> {
-        let checker = self.checker.as_ref().filter(|c| c.name() == "bridged")?;
-        let kind = checker.args().get("type").and_then(Value::as_str).unwrap_or("testlib");
-        (!GRADED_CUSTOM_CHECKERS.contains(&kind)).then(|| format!("checker.{kind}"))
+        let interactive = self.interactive.as_ref().and_then(|spec| spec.checker.as_ref());
+        [self.checker.as_ref(), interactive].into_iter().flatten().find_map(unsupported_custom_kind)
     }
+}
+
+fn unsupported_custom_kind(checker: &CheckerSpec) -> Option<String> {
+    if checker.name() != "bridged" {
+        return None;
+    }
+    let kind = checker.args().get("type").and_then(Value::as_str).unwrap_or("testlib");
+    (!GRADED_CUSTOM_CHECKERS.contains(&kind)).then(|| format!("checker.{kind}"))
 }
 
 /// serde reports an unknown field as "unknown field `name`, expected ...".
@@ -239,6 +252,25 @@ mod tests {
             parse_init("test_cases: []\ninteractive: {files: [i.cpp, h.h], type: testlib, lang: CPP17}\n")
                 .unwrap();
         assert_eq!(many.interactive.unwrap().files.first(), Some("i.cpp"));
+    }
+
+    #[test]
+    fn an_interactive_checker_is_parsed_and_its_custom_type_is_gated() {
+        let interactive = |checker: &str| {
+            parse_init(&format!(
+                "test_cases: []\ninteractive: {{files: i.cpp, type: testlib, lang: CPP17, checker: {checker}}}\n"
+            ))
+            .unwrap()
+        };
+        let named = interactive("{name: bridged, args: {files: [c.cpp, testlib.h], lang: CPP17}}");
+        let checker = named.interactive.as_ref().and_then(|spec| spec.checker.as_ref()).unwrap();
+        assert_eq!(checker.name(), "bridged");
+        assert_eq!(named.unsupported_feature(), None);
+        let cms = interactive("{name: bridged, args: {files: c.cpp, lang: CPP17, type: cms}}");
+        assert_eq!(cms.unsupported_feature().as_deref(), Some("checker.cms"));
+        let legacy =
+            parse_init("test_cases: []\ninteractive: {files: i.cpp, type: testlib, lang: CPP17}\n").unwrap();
+        assert!(legacy.interactive.unwrap().checker.is_none(), "no key, no checker");
     }
 
     #[test]

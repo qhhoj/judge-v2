@@ -13,6 +13,11 @@ max(10 s, 2 x TL) CPU and 1 GiB with one process; the interactor's wall is the s
 compiled once per content hash (`artefacts`) with `/testlib` mounted read-only. The interactor and the solution are
 joined by two pipes whose ends belong to the two isolate children only. A signature problem compiles the
 contestant's file with the header, links it with the entry under an unguessable name, and keeps only the binary.
+An interactive problem is judged by its interactor alone unless `interactive.checker` names a checker (feature
+`interactive.checker`): then, once the interactor accepts a case, that checker reads the interactor's `tout` as
+the output and decides the case. The top-level and per-case checkers of an interactive problem are never run. A
+bridged checker's `files` may be a list: the source first, then headers compiled beside it (a package's own
+`testlib.h` among them, found before the vendored one).
 
 `assets/testlib/testlib.h` is vendored unmodified from MikeMirzayanov/testlib tag 0.9.41 (MIT, see
 `assets/testlib/LICENSE`, `VERSION`, `SHA256SUMS`). `assets/testlib/testlib_themis_cms.h`, the testlib 0.9.37

@@ -293,6 +293,88 @@ fn interactive_problems_are_judged_by_the_interactor() {
     assert!(matches!(outcome, Outcome::CompileError(_)), "TEXT cannot play: {outcome:?}");
 }
 
+/// The guessing game, but the interactor only reports the guess count on `tout`; the answer file holds the
+/// budget the problem's checker enforces.
+const COUNTING_INTERACTOR: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+    int secret = inf.readInt(), asked = 0;
+    while (true) {
+        int guess = ouf.readInt();
+        if (++asked > 40) quitf(_wa, "too many guesses");
+        if (guess == secret) {
+            std::cout << "=" << std::endl;
+            tout << asked << std::endl;
+            quitf(_ok, "found in %d", asked);
+        }
+        std::cout << (guess < secret ? "<" : ">") << std::endl;
+    }
+}
+"#;
+
+/// Includes the package's own testlib.h and a header shipped beside it, not the judge's vendored copy.
+const BUDGET_CHECKER: &str = r#"#include "testlib.h"
+#include "budget.h"
+#ifndef PACKAGE_TESTLIB
+#error "compiled against the vendored testlib, not the package's"
+#endif
+int main(int argc, char* argv[]) {
+    registerTestlibCmd(argc, argv);
+    int budget = ans.readInt(), asked = ouf.readInt();
+    if (!within(asked, budget)) quitf(_wa, "%d guesses, budget %d", asked, budget);
+    quitf(_ok, "%d guesses", asked);
+}
+"#;
+
+/// Secret 377 (10 guesses by binary search, budget 10) and secret 1 (9 guesses, budget 3). `checker` is the
+/// `interactive` entry's tail; the top-level `standard` checker, which the backend always writes, must be ignored.
+fn counting_problem(b: &Bench, code: &str, checker: &str) {
+    let init = format!(
+        "checker: standard\ninteractive: {{files: count.cpp, type: testlib, lang: CPP17{checker}}}\n\
+         test_cases:\n- {{in: 1.in, out: 1.out, points: 60}}\n- {{in: 2.in, out: 2.out, points: 40}}\n"
+    );
+    let vendored = std::fs::read(common::testlib_dir().join("testlib.h")).unwrap();
+    let package_testlib = [b"#define PACKAGE_TESTLIB 1\n".as_slice(), &vendored].concat();
+    let files: [(&str, &[u8]); 9] = [
+        ("init.yml", init.as_bytes()),
+        ("count.cpp", COUNTING_INTERACTOR.as_bytes()),
+        ("check.cpp", BUDGET_CHECKER.as_bytes()),
+        ("testlib.h", &package_testlib),
+        ("budget.h", b"inline bool within(int asked, int budget) { return asked <= budget; }\n"),
+        ("1.in", b"377\n"),
+        ("1.out", b"10\n"),
+        ("2.in", b"1\n"),
+        ("2.out", b"3\n"),
+    ];
+    b.write(code, &files);
+}
+
+#[test]
+fn an_interactive_checker_reads_tout_once_the_interactor_accepts() {
+    let mut b = bench(84);
+    let checker = ", checker: {name: bridged, args: {files: [check.cpp, testlib.h, budget.h], lang: CPP17, type: testlib}}";
+    counting_problem(&b, "counted", checker);
+    let (outcome, rec) = b.run("counted", "CPP17", BINARY_SEARCH);
+    assert_eq!(outcome, Outcome::Graded);
+    assert_eq!(rec.shape(), [(Status::Ac, 60.0), (Status::Wa, 0.0)], "the interactor accepted both");
+    assert_eq!(rec.cases[0].feedback, "10 guesses");
+    assert_eq!(rec.cases[1].feedback, "9 guesses, budget 3");
+    let always_one = "#include <iostream>\n#include <string>\nint main(){ std::string r; while (true) { std::cout << 1 << std::endl; if (!(std::cin >> r)) return 0; } }\n";
+    let (_, rec) = b.run("counted", "CPP17", always_one);
+    assert_eq!(rec.cases[0].status, Status::Wa);
+    assert_eq!(rec.cases[0].feedback, "too many guesses", "a rejecting interactor is not overruled");
+}
+
+#[test]
+fn an_interactive_problem_without_its_own_checker_is_judged_by_the_interactor_alone() {
+    let mut b = bench(86);
+    counting_problem(&b, "uncounted", "");
+    let (outcome, rec) = b.run("uncounted", "CPP17", BINARY_SEARCH);
+    assert_eq!(outcome, Outcome::Graded);
+    assert_eq!(rec.shape(), [(Status::Ac, 60.0), (Status::Ac, 40.0)], "no checker reads the budget");
+    assert_eq!(rec.cases[1].feedback, "found in 9");
+}
+
 const SIGNATURE_INIT: &str = "test_cases:\n- {in: 1.in, out: 1.out, points: 1}\nsignature_grader: {entry: grader.cpp, header: sol.h}\n";
 const SIGNATURE_GRADER: &str = "#include <cstdio>\n#include \"sol.h\"\nint main(){long long a,b;std::scanf(\"%lld %lld\",&a,&b);std::printf(\"%lld\\n\",add(a,b));}\n";
 
