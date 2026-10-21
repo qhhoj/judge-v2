@@ -8,7 +8,7 @@ use crate::checkers::{CheckInput, CheckOutcome, Checker};
 use crate::error::GradeError;
 use crate::file_io::SolutionFileIo;
 use crate::grade::{CaseJudge, CaseVerdict};
-use crate::interactor::{Boxes, Interaction, interact};
+use crate::interactor::{Boxes, Interaction, interact, save_tout};
 use crate::output_only::{OutputSource, output_for_case};
 use crate::program::Program;
 use crate::run_case::{CaseIo, CaseLimits, Runnable, read_prefix, run_case};
@@ -138,6 +138,27 @@ pub struct InteractiveCases<'a> {
     pub program: Program,
     pub interactor: Program,
     pub limits: CaseLimits,
+    /// The problem's `interactive.checker`: it reads the interactor's `tout` as the output once the
+    /// interactor accepts. None: the interactor's verdict stands (every legacy interactive problem).
+    pub checker: Option<CaseContext<'a>>,
+}
+
+impl InteractiveCases<'_> {
+    /// The interactor's verdict, or, when it fully accepted and the problem names a checker, the checker's
+    /// verdict on `tout`. A rejection or partial points from the interactor stand without the checker.
+    fn verdict_after(
+        &mut self,
+        files: &CaseFiles,
+        interactor: CheckOutcome,
+    ) -> Result<CheckOutcome, GradeError> {
+        let Some(context) = &self.checker else { return Ok(interactor) };
+        if !(interactor.passed && interactor.fraction >= 1.0) {
+            return Ok(interactor);
+        }
+        let output = context.output_path();
+        save_tout(self.boxes.helper, &output)?;
+        context.check(self.boxes.helper, files, &output)
+    }
 }
 
 impl CaseJudge for InteractiveCases<'_> {
@@ -154,9 +175,11 @@ impl CaseJudge for InteractiveCases<'_> {
         };
         let boxes = Boxes { solution: &mut *self.boxes.solution, helper: &mut *self.boxes.helper };
         let result = interact(boxes, &x)?;
-        // The interactor's verdict, when `interact` kept it, decides: also for a solution killed by SIGPIPE
-        // after the interactor had finished. The solution's stdout is a pipe, so there is no output prefix.
+        // The interactor's verdict (then the checker's, `verdict_after`), when `interact` kept it, decides:
+        // also for a solution killed by SIGPIPE after the interactor had finished. The solution's stdout is a
+        // pipe, so there is no output prefix.
         if let Some(outcome) = result.check {
+            let outcome = self.verdict_after(&files, outcome)?;
             return Ok(checked(outcome, result.time_s, result.memory_kib, String::new()));
         }
         let failed = failed_run(&result.verdict, result.time_s, result.memory_kib)?;

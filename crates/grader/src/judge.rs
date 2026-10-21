@@ -284,9 +284,10 @@ fn check_of(
     match choose(spec, unicode)? {
         CheckerChoice::Builtin(checker) => Ok(Check::Builtin(checker)),
         CheckerChoice::Custom(custom) => {
-            let program = helper_program(env, problem, &custom.lang, &[&custom.source])?;
+            let files: Vec<&str> = custom.files.iter().map(String::as_str).collect();
+            let program = helper_program(env, problem, &custom.lang, &files)?;
             let themis_names = match custom.kind {
-                CustomKind::Themis => themis_names(problem, &custom.source)?,
+                CustomKind::Themis => themis_names(problem, files[0])?,
                 _ => ThemisNames::default(),
             };
             let partial = custom.partial;
@@ -316,8 +317,8 @@ fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {
     }
 }
 
-/// An interactive problem never compiles a checker, even if init.yml also names one: the interactor
-/// gives the verdict, so the branch returns before `check_of` (preflight M13).
+/// An interactive problem compiles only the checker its `interactive.checker` names: the top-level and
+/// per-case checkers of a legacy interactive problem are never compiled or run (preflight M13).
 fn grade_program(
     env: &mut JudgeEnv,
     problem: &ResolvedProblem,
@@ -342,6 +343,7 @@ fn interactor_files(files: &FilesSpec) -> Vec<&str> {
     }
 }
 
+/// The interactor plays every case; `interactive.checker`, when named, is compiled before the first case.
 fn grade_interactive(
     env: &mut JudgeEnv,
     problem: &ResolvedProblem,
@@ -349,9 +351,13 @@ fn grade_interactive(
     run: Run,
 ) -> Result<(), GradeError> {
     let interactor = helper_program(env, problem, &spec.lang, &interactor_files(&spec.files))?;
+    let time_limit_s = run.submission.time_limit_s;
+    let check =
+        spec.checker.as_ref().map(|checker| check_of(env, problem, checker, time_limit_s)).transpose()?;
+    let checker = check.map(|check| CaseContext { problem, check, scratch: env.scratch.clone() });
     let limits = limits_of(run.submission, &env.defaults);
     let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
-    let mut judge = InteractiveCases { problem, boxes, program, interactor, limits };
+    let mut judge = InteractiveCases { problem, boxes, program, interactor, limits, checker };
     grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
 }
 

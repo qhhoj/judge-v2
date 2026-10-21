@@ -26,6 +26,9 @@ use std::time::{Duration, Instant};
 /// stdout of the solution is a pipe, not a file, so this only sizes `--fsize` for its other files.
 const SOLUTION_FILE_CAP: u64 = 64 << 20;
 const INTERACTOR_STDERR: &str = ".stderr";
+/// testlib's `tout`: what the interactor wrote for the checker (Polygon's interactive checker reads it as the
+/// contestant's output).
+const TOUT: &str = "tout";
 const MAX_INTERACTOR_STDERR: u64 = 64 << 10;
 /// Host-side margin past the interactor's own wall limit before the isolate processes are killed.
 const DEADLINE_SLACK: Duration = Duration::from_secs(5);
@@ -108,7 +111,7 @@ fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
     limits.processes = x.interactor.processes.max(1);
     let mut argv: Vec<String> = IGNORE_SIGPIPE.map(String::from).into();
     argv.extend(helper_argv(x.interactor, &limits));
-    argv.extend(["input", "tout", "answer"].map(String::from));
+    argv.extend(["input", TOUT, "answer"].map(String::from));
     RunSpec {
         argv,
         limits,
@@ -215,6 +218,15 @@ fn interactor_outcome(
     let scale = PartialScale { mode: PartialPoints::Absolute, case_points: points };
     interpret(CustomKind::Testlib, &report, scale)
         .map_err(|e| GradeError::Checker(format!("interactor: {}", e.0)))
+}
+
+/// Copies the interactor's `tout` out of the helper box to `into`, before a checker run resets the box. An
+/// interactor that left none is a problem fault (IE), not a sandbox failure to retry.
+pub fn save_tout(helper: &IsolateBox, into: &Path) -> Result<(), GradeError> {
+    let missing = |_| GradeError::Checker(format!("the interactor left no `{TOUT}` file for the checker"));
+    let mut tout = helper.open_output(TOUT).map_err(missing)?;
+    std::io::copy(&mut tout, &mut std::fs::File::create(into)?)?;
+    Ok(())
 }
 
 /// The interactor itself failed: testlib's `_fail` (exit 3) or a crash other than a broken pipe. The case is
