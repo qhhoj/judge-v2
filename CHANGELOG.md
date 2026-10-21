@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.6 (2026-10-21)
+
+### Fixes
+
+- An interactive problem's `interactive.checker` runs on the interactor's `tout` once the interactor accepts; a bridged checker's `files` may list headers (and the package's testlib.h) compiled beside it.
+
 ## 2.3.5 (2026-10-18)
 
 ### Fixes
