@@ -54,6 +54,11 @@ fn clean_path(name: &str) -> Option<String> {
     (!parts.is_empty() && !escapes).then(|| parts.join("/"))
 }
 
+/// How many case names a relayout's entries (`ZipIndex::entries`) find.
+fn hit_count(entries: &[Option<usize>]) -> usize {
+    entries.iter().flatten().count()
+}
+
 fn last_segment(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -97,8 +102,9 @@ impl ZipIndex {
 
     /// Lines the zip up with the case names once, for every case: outer folders the contestant dropped,
     /// added or renamed. The relayout taken is the one that finds the most (distinct) case names, more than
-    /// the names as they are and more than any other relayout; one that would give two case names the same
-    /// entry is never taken, so no case reads another's output.
+    /// the names as they are and more than any other relayout (relayouts that find the same entries for every
+    /// case are one layout, not a tie); one that would give two case names the same entry is never taken, so
+    /// no case reads another's output.
     fn align(&mut self, case_names: &[&str]) {
         let names: Vec<String> = case_names
             .iter()
@@ -107,12 +113,15 @@ impl ZipIndex {
             .into_iter()
             .collect();
         let Some(depth) = names.iter().map(|name| name.split('/').count()).min() else { return };
-        let (mut best, mut tied) = (self.hits(&names, &Relayout::default()).unwrap_or(0), false);
+        let mut best = self.entries(&names, &Relayout::default()).map_or(0, |found| hit_count(&found));
+        let (mut best_entries, mut tied) = (Vec::new(), false);
         for relayout in self.relayouts(depth) {
-            match self.hits(&names, &relayout) {
-                Some(hits) if hits > best => (best, tied, self.relayout) = (hits, false, Some(relayout)),
-                Some(hits) if hits == best && self.relayout.is_some() => tied = true,
-                _ => {}
+            let Some(found) = self.entries(&names, &relayout) else { continue };
+            let hits = hit_count(&found);
+            if hits > best {
+                (best, best_entries, tied, self.relayout) = (hits, found, false, Some(relayout));
+            } else if hits == best && self.relayout.is_some() && found != best_entries {
+                tied = true;
             }
         }
         if tied {
@@ -130,15 +139,15 @@ impl ZipIndex {
         all.filter(|relayout| *relayout != Relayout::default()).collect()
     }
 
-    /// How many case names the relayout finds; None when two of them land on the same name, or one lands on
-    /// another case's own name (`x/a/1.out` moved onto case `a/1.out`'s file).
-    fn hits(&self, names: &[String], relayout: &Relayout) -> Option<usize> {
+    /// The entry the relayout finds for each case name, in order; None when two of them land on the same
+    /// name, or one lands on another case's own name (`x/a/1.out` moved onto case `a/1.out`'s file).
+    fn entries(&self, names: &[String], relayout: &Relayout) -> Option<Vec<Option<usize>>> {
         let moved: Vec<String> = names.iter().map(|name| relayout.apply(name)).collect::<Option<_>>()?;
         let distinct: HashSet<&String> = moved.iter().collect();
         let own: HashSet<&String> = names.iter().collect();
         let onto_another = names.iter().zip(&moved).any(|(name, to)| to != name && own.contains(to));
         (distinct.len() == moved.len() && !onto_another)
-            .then(|| moved.iter().filter(|name| self.by_path.contains_key(*name)).count())
+            .then(|| moved.iter().map(|name| self.by_path.get(name).copied()).collect())
     }
 
     /// The first folders of the entries (`mine` for `mine/a/1.out`), at most `MAX_RELAYOUT_ROOTS`.
@@ -286,6 +295,20 @@ mod tests {
         assert_eq!(aligned_read(renamed, &cases), [b"0", b"1"]);
         let flat: &[(&str, &[u8])] = &[("01.a", b"x"), ("02.a", b"y")];
         assert_eq!(aligned_read(flat, &["tests/01.a", "tests/02.a"]), [b"x", b"y"]);
+    }
+
+    #[test]
+    fn relayouts_that_find_the_same_entries_are_one_layout_not_a_tie() {
+        let inner: &[(&str, &[u8])] = &[("out/1.a", b"x"), ("out/2.a", b"y")];
+        assert_eq!(aligned_read(inner, &["tests/out/1.a", "tests/out/2.a"]), [b"x", b"y"]);
+        let single: &[(&str, &[u8])] = &[("Test00/B.out", b"0")];
+        assert_eq!(aligned_read(single, &["B/Test00/B.out"]), [b"0"]);
+    }
+
+    #[test]
+    fn relayouts_that_find_different_entries_equally_well_are_a_tie() {
+        let two_roots: &[(&str, &[u8])] = &[("x/1.out", b"X"), ("y/1.out", b"Y")];
+        assert_eq!(aligned_read(two_roots, &["a/1.out"]), [b""], "x/ or y/: neither is taken");
     }
 
     #[test]
