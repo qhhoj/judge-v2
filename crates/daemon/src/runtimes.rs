@@ -1,9 +1,10 @@
 //! Which registered languages this host can run (a broken runtime is dropped at start, so its
 //! submissions get `RETRY RUNTIME_MISSING`), and their versions (`Hello.runtimes`, artefact build ids).
 
-use judge_grader::languages::LanguageRegistry;
+use judge_grader::languages::{Language, LanguageRegistry};
 use std::collections::HashMap;
 use std::io::Read;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -81,12 +82,29 @@ pub fn detect_versions(registry: &LanguageRegistry) -> HashMap<String, String> {
     registry.keys().into_iter().filter_map(detect).collect()
 }
 
-/// Drops (and logs) every language without a detected version.
-pub fn available(mut registry: LanguageRegistry, versions: &HashMap<String, String>) -> LanguageRegistry {
-    for key in registry.keys().into_iter().filter(|key| !versions.contains_key(*key)) {
-        tracing::warn!(lang = key, "runtime not found; language not advertised");
+/// The first directory the language binds into the box that is not on this host (isolate would refuse it).
+fn missing_dir(language: &Language) -> Option<&str> {
+    let mut dirs = language.dirs.iter().chain(&language.compile_dirs).map(String::as_str);
+    dirs.find(|dir| !Path::new(dir).is_dir())
+}
+
+/// Whether the host can run `language`: a detected version and every bound directory present (logged otherwise).
+fn runnable(language: &Language, versions: &HashMap<String, String>) -> bool {
+    let lang = language.key.as_str();
+    if !versions.contains_key(lang) {
+        tracing::warn!(lang, "runtime not found; language not advertised");
+        return false;
     }
-    registry.retain(|language| versions.contains_key(&language.key));
+    if let Some(dir) = missing_dir(language) {
+        tracing::warn!(lang, dir, "directory to bind is missing; language not advertised");
+        return false;
+    }
+    true
+}
+
+/// Drops (and logs) every language without a detected version or with a missing bound directory.
+pub fn available(mut registry: LanguageRegistry, versions: &HashMap<String, String>) -> LanguageRegistry {
+    registry.retain(|language| runnable(language, versions));
     registry
 }
 
@@ -98,7 +116,10 @@ mod tests {
         [[language]]\nkey='FAILS'\nname='f'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1.0; exit 3']\n\
         [[language]]\nkey='NOPE'\nname='n'\nsource='a'\nrun=['x']\nversion=['/nonexistent/bin']\n\
         [[language]]\nkey='CHATTY'\nname='c'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','head -c 300000 /dev/zero >&2; echo 9.1']\n\
-        [[language]]\nkey='TEXT'\nname='t'\nsource='a'\nkind='text'\nrun=[]\nversion=[]\n";
+        [[language]]\nkey='TEXT'\nname='t'\nsource='a'\nkind='text'\nrun=[]\nversion=[]\n\
+        [[language]]\nkey='BOUND'\nname='b'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1']\ndirs=['/usr']\ncompile_dirs=['/bin']\n\
+        [[language]]\nkey='NO_DIR'\nname='d'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1']\ndirs=['/nonexistent/etc']\n\
+        [[language]]\nkey='NO_COMPILE_DIR'\nname='e'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1']\ncompile_dirs=['/nonexistent/etc']\n";
 
     #[test]
     fn versions_are_first_lines_and_missing_runtimes_drop_out() {
@@ -114,6 +135,10 @@ mod tests {
             "a full stderr pipe does not block"
         );
         let kept = available(registry, &versions);
-        assert_eq!(kept.keys(), ["CHATTY", "SH", "TEXT"]);
+        assert_eq!(
+            kept.keys(),
+            ["BOUND", "CHATTY", "SH", "TEXT"],
+            "a missing bound directory drops the language"
+        );
     }
 }

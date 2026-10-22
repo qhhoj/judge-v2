@@ -97,12 +97,47 @@ pub struct LanguageRegistry {
     by_key: BTreeMap<String, Language>,
 }
 
+/// Placeholder in `dirs` and `compile_dirs` for the installed default JDK's `/etc` directory.
+pub const JDK_ETC_PLACEHOLDER: &str = "{jdk_etc}";
+/// The distro's default-jdk link (Debian/Ubuntu): its target names the JDK major.
+pub const DEFAULT_JAVA: &str = "/usr/lib/jvm/default-java";
+
+static HOST_JDK_ETC: LazyLock<Option<String>> = LazyLock::new(|| jdk_etc_dir(Path::new(DEFAULT_JAVA)));
+
+/// `/etc/java-NN-openjdk` for the JDK `default_java` resolves to (`java-NN-openjdk-<arch>`): where the
+/// JDK's conf/ and lib/security/ symlinks point. None when the link is missing or names no OpenJDK.
+pub fn jdk_etc_dir(default_java: &Path) -> Option<String> {
+    let jdk = std::fs::canonicalize(default_java).ok()?;
+    let name = jdk.file_name()?.to_str()?;
+    let mut parts = name.split('-');
+    let (java, major, openjdk) = (parts.next()?, parts.next()?, parts.next()?);
+    let is_major = !major.is_empty() && major.bytes().all(|b| b.is_ascii_digit());
+    (java == "java" && is_major && openjdk == "openjdk").then(|| format!("/etc/java-{major}-openjdk"))
+}
+
+impl Language {
+    /// Replaces `{jdk_etc}` in the bound directories; without a JDK it stays, and the daemon drops the
+    /// language because that directory does not exist.
+    fn resolve_dirs(&mut self, jdk_etc: Option<&str>) {
+        let Some(jdk_etc) = jdk_etc else { return };
+        for dir in self.dirs.iter_mut().chain(self.compile_dirs.iter_mut()) {
+            *dir = dir.replace(JDK_ETC_PLACEHOLDER, jdk_etc);
+        }
+    }
+}
+
 impl LanguageRegistry {
+    /// Parses `languages.toml`, resolving `{jdk_etc}` against this host's default JDK.
     pub fn from_toml(text: &str) -> Result<Self, GradeError> {
+        Self::from_toml_with(text, HOST_JDK_ETC.as_deref())
+    }
+
+    fn from_toml_with(text: &str, jdk_etc: Option<&str>) -> Result<Self, GradeError> {
         let file: LanguageFile =
             toml::from_str(text).map_err(|e| GradeError::Io(format!("languages.toml: {e}")))?;
         let mut by_key = BTreeMap::new();
-        for language in file.language {
+        for mut language in file.language {
+            language.resolve_dirs(jdk_etc);
             if language.kind == LanguageKind::Program && language.run.is_empty() {
                 return Err(GradeError::Io(format!("language {} has no run command", language.key)));
             }
@@ -308,6 +343,32 @@ mod tests {
         let no_run = "[[language]]\nkey='A'\nname='a'\nsource='a'\nrun=[]\nversion=[]\n";
         assert!(LanguageRegistry::from_toml(no_run).is_err());
         assert!(LanguageRegistry::from_toml(&format!("{MINIMAL}colour='red'\n")).is_err(), "unknown key");
+    }
+
+    #[test]
+    fn jdk_etc_resolves_at_load_and_stays_without_a_jdk() {
+        let text = format!("{MINIMAL}dirs=['{{jdk_etc}}']\ncompile_dirs=['/x', '{{jdk_etc}}/security']\n");
+        let resolved = LanguageRegistry::from_toml_with(&text, Some("/etc/java-17-openjdk")).unwrap();
+        let language = resolved.get("A").unwrap();
+        assert_eq!(language.dirs, ["/etc/java-17-openjdk"]);
+        assert_eq!(language.compile_dirs, ["/x", "/etc/java-17-openjdk/security"]);
+        let unresolved = LanguageRegistry::from_toml_with(&text, None).unwrap();
+        assert_eq!(unresolved.get("A").unwrap().dirs, ["{jdk_etc}"]);
+    }
+
+    #[test]
+    fn jdk_etc_dir_follows_the_default_java_chain_to_its_major() {
+        let jvm = tempfile::tempdir().unwrap();
+        let link =
+            |target: &str, name: &str| std::os::unix::fs::symlink(target, jvm.path().join(name)).unwrap();
+        std::fs::create_dir(jvm.path().join("java-17-openjdk-amd64")).unwrap();
+        link("java-17-openjdk-amd64", "java-1.17.0-openjdk-amd64");
+        link("java-1.17.0-openjdk-amd64", "default-java");
+        assert_eq!(jdk_etc_dir(&jvm.path().join("default-java")).as_deref(), Some("/etc/java-17-openjdk"));
+        std::fs::create_dir(jvm.path().join("temurin-21-jdk")).unwrap();
+        link("temurin-21-jdk", "other-java");
+        assert_eq!(jdk_etc_dir(&jvm.path().join("other-java")), None, "not a distro OpenJDK");
+        assert_eq!(jdk_etc_dir(&jvm.path().join("missing")), None);
     }
 
     #[test]

@@ -219,7 +219,7 @@ fn copy_file(from: &Path, to: &Path, budget: &mut u64) -> Result<bool, GradeErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::languages::LanguageRegistry;
+    use crate::languages::{DEFAULT_JAVA, JDK_ETC_PLACEHOLDER, LanguageRegistry, jdk_etc_dir};
 
     fn registry() -> LanguageRegistry {
         LanguageRegistry::from_toml(include_str!("../../../languages.toml")).unwrap()
@@ -239,17 +239,18 @@ mod tests {
             };
             isolate_args(0, &spec, Path::new("/m"))
                 .into_iter()
-                .filter(|a| a.starts_with("--dir=/")) // host dirs, not the fixed `--dir=dev/shm=`
+                .filter(|a| a.starts_with("--dir=") && a != "--dir=dev/shm=") // host dirs only
                 .collect::<Vec<_>>()
         };
         let pas = CompileJob::for_language(r.get("PAS").unwrap(), b"begin end.");
         assert_eq!(flags(pas.dirs), ["--dir=/etc/alternatives"]);
+        let jdk_etc = jdk_etc_dir(Path::new(DEFAULT_JAVA)).unwrap_or_else(|| JDK_ETC_PLACEHOLDER.into());
         for key in ["JAVA", "JAVA8", "KOTLIN"] {
             let language = r.get(key).unwrap();
             let compile = CompileJob::for_language(language, b"class A {}");
             let run = program_for(language, Path::new("/p"), b"class A {}");
-            assert_eq!(flags(compile.dirs), ["--dir=/etc/java-21-openjdk"], "{key} compile");
-            assert_eq!(flags(run.dirs), ["--dir=/etc/java-21-openjdk"], "{key} run");
+            assert_eq!(flags(compile.dirs), [format!("--dir={jdk_etc}")], "{key} compile");
+            assert_eq!(flags(run.dirs), [format!("--dir={jdk_etc}")], "{key} run");
         }
         assert!(CompileJob::for_language(r.get("CPP17").unwrap(), b"").dirs.is_empty());
     }
