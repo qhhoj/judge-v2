@@ -5,7 +5,7 @@ use crate::meta::{Meta, parse_meta};
 use crate::spec::{RunSpec, isolate_args};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -113,6 +113,13 @@ impl IsolateBox {
             return Err(SandboxError::BadName(name.to_string()));
         }
         Ok(file)
+    }
+
+    /// Bytes of disk the regular box file `name` holds: its allocated blocks, not its length, so the holes
+    /// of a sparse file count nothing. 0 for a missing file or a symlink.
+    pub fn allocated_bytes(&self, name: &str) -> u64 {
+        let blocks = self.open_output(name).and_then(|file| Ok(file.metadata()?.blocks()));
+        blocks.map_or(0, |blocks| blocks * 512)
     }
 
     /// Gives the box file `existing` a second name. Returns false, changing nothing, when `name` is taken.

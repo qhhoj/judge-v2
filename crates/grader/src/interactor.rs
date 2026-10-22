@@ -14,7 +14,9 @@ use crate::checkers::select::CustomKind;
 use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
-use crate::run_case::{Runnable, STDERR_FILE, keeps_stderr, refine, reported_memory, solution_limits};
+use crate::run_case::{
+    Runnable, STDERR_FILE, keeps_stderr, own_files_kib, refine, reported_memory, solution_limits,
+};
 use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::error::SandboxError;
@@ -35,7 +37,6 @@ const DEADLINE_SLACK: Duration = Duration::from_secs(5);
 /// isolate's own exit status for an internal error (1 is "the program failed").
 const ISOLATE_FAILURE: i32 = 2;
 const POLL: Duration = Duration::from_millis(2);
-const NO_OUTPUT: OutputUse = OutputUse { written: 0, cap: u64::MAX };
 /// isolate resets signal dispositions inside the box, so the interactor is started through a shell that
 /// ignores SIGPIPE and execs it: a last write to a solution that already exited fails with EPIPE, and the
 /// interactor still reaches its own verdict instead of dying.
@@ -199,12 +200,14 @@ pub fn interact(mut boxes: Boxes, x: &Interaction) -> Result<Interactive, GradeE
 
 fn solution_result(boxes: &Boxes, x: &Interaction, limits: &Limits) -> Result<Interactive, GradeError> {
     let meta = boxes.solution.read_meta()?;
-    let verdict = classify(&meta, NO_OUTPUT, limits);
+    // The solution's stdin and stdout are pipes: its own files are its kept stderr alone.
+    let own_files = Some(own_files_kib(boxes.solution, x.solution.program, 0, None));
+    let verdict = classify(&meta, OutputUse { own_files_kib: own_files, ..OutputUse::UNMEASURED }, limits);
     if let RunVerdict::Internal(message) = &verdict {
         return Err(SandboxError::Isolate(message.clone()).into());
     }
     let verdict = refine(verdict, x.solution.program, boxes.solution);
-    let memory_kib = reported_memory(&meta, &verdict);
+    let memory_kib = reported_memory(&meta, own_files, &verdict);
     Ok(Interactive { verdict, time_s: meta.time_s, memory_kib, check: None })
 }
 
@@ -264,7 +267,7 @@ fn decide(
             "interactor used {used:.1} s of CPU; the solution timed out waiting"
         )));
     }
-    let interactor_verdict = classify(&interactor, NO_OUTPUT, interactor_limits);
+    let interactor_verdict = classify(&interactor, OutputUse::UNMEASURED, interactor_limits);
     if solution_wins(&result.verdict, &interactor_verdict) && !interactor_failed(&interactor_verdict) {
         return Ok(result);
     }

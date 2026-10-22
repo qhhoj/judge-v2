@@ -27,10 +27,7 @@ fn reset_clears_sticky_oom_and_peak_memory() {
     let meta = tempfile::tempdir().unwrap();
     let mut b = IsolateBox::open(&config(meta.path()), box_id(1), None).unwrap();
     let hog = b.run(&spec(&["/usr/bin/python3", "-c", "a = bytearray(50_000_000)"], 8192)).unwrap();
-    assert_eq!(
-        classify(&hog, OutputUse { written: 0, cap: 1 << 20 }, &spec(&[], 8192).limits),
-        RunVerdict::Mle
-    );
+    assert_eq!(classify(&hog, OutputUse::UNMEASURED, &spec(&[], 8192).limits), RunVerdict::Mle);
     b.reset().unwrap();
     let clean = b.run(&spec(&["/bin/true"], 65_536)).unwrap();
     assert!(!clean.oom_killed, "a reset box must not report the previous OOM");

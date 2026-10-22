@@ -126,7 +126,7 @@ fn run_compiler(
     let mut log = read_log(sandbox, LOG);
     log.extend(read_log(sandbox, ERR));
     let mut log = clip_log(&log);
-    match classify(&meta, OutputUse { written: 0, cap: u64::MAX }, &spec.limits) {
+    match classify(&meta, OutputUse::UNMEASURED, &spec.limits) {
         RunVerdict::Ok => Ok(Ok(log)),
         RunVerdict::Internal(message) => Err(SandboxError::Isolate(message).into()),
         RunVerdict::Ir { exit_code: EXEC_FAILED } => Err(GradeError::RuntimeMissing(argv[0].clone())),
@@ -236,7 +236,7 @@ mod tests {
             };
             isolate_args(0, &spec, Path::new("/m"))
                 .into_iter()
-                .filter(|a| a.starts_with("--dir="))
+                .filter(|a| a.starts_with("--dir=/")) // host dirs, not the fixed `--dir=dev/shm=`
                 .collect::<Vec<_>>()
         };
         let pas = CompileJob::for_language(r.get("PAS").unwrap(), b"begin end.");
