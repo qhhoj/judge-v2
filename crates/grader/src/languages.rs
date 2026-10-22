@@ -218,6 +218,21 @@ pub fn java_main_class(source: &[u8]) -> Option<String> {
     mains.find_map(|at| types.iter().rev().find(|t| t.at < at).map(|t| t.name.clone()))
 }
 
+static PACKAGE_DECL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bpackage\s+[\p{L}_$][\p{L}\p{N}_$.\s]*;").expect("static pattern"));
+/// Linux NAME_MAX: the longest file name the box can hold, in bytes.
+const MAX_FILE_NAME_BYTES: usize = 255;
+const PACKAGE_REFUSAL: &str = "the main class must be in the default package: remove the `package` line";
+const LONG_NAME_REFUSAL: &str = "the class name is too long for its source file name (255 bytes at most)";
+
+/// True when the source declares a package outside every brace (comments and literals blanked first).
+fn declares_package(source: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(source);
+    let code = NOT_CODE.replace_all(&text, " ");
+    let depths = brace_depths(&code);
+    PACKAGE_DECL.find_iter(&code).any(|m| depths[m.start()] == 0)
+}
+
 impl Language {
     pub fn source_name(&self, source: &[u8]) -> String {
         if !self.source.contains("{class}") {
@@ -225,6 +240,19 @@ impl Language {
         }
         let class = java_main_class(source).unwrap_or_else(|| "Main".into());
         self.source.replace("{class}", &class)
+    }
+
+    /// The compile-error log for a source named after its class that the box cannot hold or run as
+    /// `java {class}`: a `package` line (the class is run from the default package) or a class name too
+    /// long for a file name.
+    pub fn class_source_refusal(&self, source: &[u8]) -> Option<String> {
+        if !self.source.contains("{class}") {
+            return None;
+        }
+        if declares_package(source) {
+            return Some(PACKAGE_REFUSAL.into());
+        }
+        (self.source_name(source).len() > MAX_FILE_NAME_BYTES).then(|| LONG_NAME_REFUSAL.into())
     }
 }
 
@@ -320,6 +348,45 @@ mod tests {
         assert_eq!(r.get("JAVA").unwrap().source_name(b"public class Q { }"), "Q.java");
         assert_eq!(r.get("JAVA").unwrap().source_name(b"nothing"), "Main.java");
         assert_eq!(r.get("CPP17").unwrap().source_name(b"int main(){}"), "main.cpp");
+    }
+
+    #[test]
+    fn java_sources_with_a_package_line_are_refused() {
+        let java = shipped().get("JAVA").unwrap().clone();
+        for source in ["package solution;\npublic class Main {}", "/* x */ package a.b . c ;\nclass Main {}"]
+        {
+            let refusal = java.class_source_refusal(source.as_bytes());
+            assert!(refusal.is_some_and(|log| log.contains("package")), "{source:?}");
+        }
+        for source in [
+            "// package solution;\npublic class Main {}",
+            "public class Main { String s = \"package x;\"; }",
+            "public class Main { int my_package; }",
+        ] {
+            assert_eq!(java.class_source_refusal(source.as_bytes()), None, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn java_class_names_are_refused_only_past_the_file_name_limit() {
+        let r = shipped();
+        let java = r.get("JAVA").unwrap();
+        let class_of = |name: &str| format!("public class {name} {{}}");
+        let longest = class_of(&"A".repeat(250)); // A…A.java is 255 bytes
+        assert_eq!(java.class_source_refusal(longest.as_bytes()), None);
+        let too_long = class_of(&"A".repeat(251));
+        assert!(java.class_source_refusal(too_long.as_bytes()).is_some_and(|log| log.contains("too long")));
+        let multibyte = class_of(&"à".repeat(126)); // 252 bytes of name
+        assert!(java.class_source_refusal(multibyte.as_bytes()).is_some());
+        assert!(r.get("JAVA8").unwrap().class_source_refusal(too_long.as_bytes()).is_some());
+    }
+
+    #[test]
+    fn sources_not_named_after_their_class_are_never_refused() {
+        let r = shipped();
+        let kotlin = b"package solution\nfun main() {}";
+        assert_eq!(r.get("KOTLIN").unwrap().class_source_refusal(kotlin), None);
+        assert_eq!(r.get("CPP17").unwrap().class_source_refusal(b"int package; int main(){}"), None);
     }
 
     #[test]

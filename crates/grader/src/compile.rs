@@ -29,6 +29,8 @@ pub struct CompileJob {
     pub dirs: Vec<String>,
     /// Only these box files go into the program snapshot (None: everything but the logs).
     pub keep: Option<Vec<String>>,
+    /// A compile error decided from the source alone: `build` returns it without touching the box.
+    pub refusal: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +62,7 @@ impl CompileJob {
             limits,
             dirs: language.compile_dirs.clone(),
             keep: None,
+            refusal: language.class_source_refusal(source),
         }
     }
 }
@@ -81,6 +84,9 @@ pub fn program_for(language: &Language, dir: &Path, source: &[u8]) -> Program {
 }
 
 pub fn build(sandbox: &mut IsolateBox, job: &CompileJob, into: &Path) -> Result<BuildOutcome, GradeError> {
+    if let Some(log) = &job.refusal {
+        return Ok(BuildOutcome::CompileError { log: log.clone() });
+    }
     sandbox.reset()?;
     for file in &job.files {
         sandbox.put_bytes(&file.name, &file.bytes)?;
@@ -243,6 +249,15 @@ mod tests {
             assert_eq!(flags(run.dirs), ["--dir=/etc/java-21-openjdk"], "{key} run");
         }
         assert!(CompileJob::for_language(r.get("CPP17").unwrap(), b"").dirs.is_empty());
+    }
+
+    #[test]
+    fn a_java_job_carries_the_refusal_of_its_source() {
+        let r = registry();
+        let java = r.get("JAVA").unwrap();
+        let packaged = CompileJob::for_language(java, b"package p;\npublic class Main {}");
+        assert!(packaged.refusal.is_some_and(|log| log.contains("package")));
+        assert_eq!(CompileJob::for_language(java, b"public class Main {}").refusal, None);
     }
 
     #[test]

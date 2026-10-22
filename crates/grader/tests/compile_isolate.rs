@@ -55,3 +55,31 @@ fn a_compiler_that_plants_a_symlink_does_not_leak_it_into_the_snapshot() {
     assert!(out.path().join("real").exists());
     assert!(!out.path().join("main").exists(), "a symlink must not be copied or followed");
 }
+
+/// JAVA with a stand-in compiler that always succeeds, so only a refusal gives a compile error.
+fn java_outcome(offset: u32, source: &str) -> BuildOutcome {
+    let mut language = registry().get("JAVA").unwrap().clone();
+    language.compile = Some(["/bin/sh", "-c", "true"].map(String::from).to_vec());
+    language.compile_dirs.clear();
+    let (meta, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let job = CompileJob::for_language(&language, source.as_bytes());
+    build(&mut sandbox(offset, meta.path()), &job, out.path()).unwrap()
+}
+
+#[test]
+fn a_java_package_line_is_a_compile_error_not_a_runtime_failure() {
+    let source = "package solution;\npublic class Main { public static void main(String[] a) {} }\n";
+    match java_outcome(6, source) {
+        BuildOutcome::CompileError { log } => assert!(log.contains("package"), "{log}"),
+        other => panic!("expected CE, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_java_class_name_too_long_for_a_file_name_is_a_compile_error_not_a_sandbox_failure() {
+    let source = format!("public class {} {{}}\n", "A".repeat(251));
+    match java_outcome(7, &source) {
+        BuildOutcome::CompileError { log } => assert!(log.contains("too long"), "{log}"),
+        other => panic!("expected CE, got {other:?}"),
+    }
+}
