@@ -102,6 +102,10 @@ pub struct InteractiveSpec {
     /// problem; their top-level and per-case checkers are never run).
     #[serde(default)]
     pub checker: Option<CheckerSpec>,
+    /// The interactor's testlib `points N` is N percent of the case, as a bridged checker's flag of the same
+    /// name (Polygon's percentage flag). Absent, N is points of the case.
+    #[serde(default)]
+    pub treat_checker_points_as_percentage: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -271,6 +275,21 @@ mod tests {
         let legacy =
             parse_init("test_cases: []\ninteractive: {files: i.cpp, type: testlib, lang: CPP17}\n").unwrap();
         assert!(legacy.interactive.unwrap().checker.is_none(), "no key, no checker");
+    }
+
+    #[test]
+    fn the_interactors_percentage_flag_is_optional_and_boolean() {
+        let interactive = |tail: &str| {
+            parse_init(&format!(
+                "test_cases: []\ninteractive: {{files: i.cpp, type: testlib, lang: CPP17{tail}}}\n"
+            ))
+        };
+        let flag =
+            |tail: &str| interactive(tail).unwrap().interactive.unwrap().treat_checker_points_as_percentage;
+        assert!(flag(", treat_checker_points_as_percentage: true"));
+        assert!(!flag(", treat_checker_points_as_percentage: false"));
+        assert!(!flag(""), "absent, points stay absolute");
+        assert!(interactive(", treat_checker_points_as_percentage: 50").is_err());
     }
 
     #[test]

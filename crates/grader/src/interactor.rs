@@ -53,6 +53,8 @@ pub struct Interaction<'a> {
     pub answer: &'a Path,
     /// What the case is worth: testlib's `points N` is N points of it, as for checkers.
     pub points: f64,
+    /// Whether `points N` is N percent of the case instead.
+    pub partial: PartialPoints,
 }
 
 #[derive(Debug)]
@@ -210,12 +212,11 @@ fn interactor_outcome(
     boxes: &Boxes,
     verdict: &RunVerdict,
     exit_code: Option<i32>,
-    points: f64,
+    scale: PartialScale,
 ) -> Result<CheckOutcome, GradeError> {
     let code = finished_code(verdict, exit_code, "interactor")?;
     let stderr = boxes.helper.read_output(INTERACTOR_STDERR, MAX_INTERACTOR_STDERR).unwrap_or_default();
     let report = ExitReport { code, stdout: String::new(), stderr: String::from_utf8_lossy(&stderr).into() };
-    let scale = PartialScale { mode: PartialPoints::Absolute, case_points: points };
     interpret(CustomKind::Testlib, &report, scale)
         .map_err(|e| GradeError::Checker(format!("interactor: {}", e.0)))
 }
@@ -267,7 +268,8 @@ fn decide(
     if solution_wins(&result.verdict, &interactor_verdict) && !interactor_failed(&interactor_verdict) {
         return Ok(result);
     }
-    let check = interactor_outcome(boxes, &interactor_verdict, interactor.exit_code, x.points)?;
+    let scale = PartialScale { mode: x.partial, case_points: x.points };
+    let check = interactor_outcome(boxes, &interactor_verdict, interactor.exit_code, scale)?;
     Ok(Interactive { check: Some(check), ..result })
 }
 
@@ -375,6 +377,7 @@ mod tests {
             input: Path::new("/x/input"),
             answer: Path::new("/x/answer"),
             points: 1.0,
+            partial: PartialPoints::Absolute,
         };
         let spec = interactor_spec(&x, &solution_limits(&runnable, SOLUTION_FILE_CAP));
         assert!(spec.argv.iter().all(|a| !a.contains('{')), "unexpanded placeholder: {:?}", spec.argv);
