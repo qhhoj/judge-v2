@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.7 (2026-10-23)
+
+### Fixes
+
+- Boxes can be pinned by isolate cpuset lines (`qhhoj-judge isolate-cpus`) and given a per-box disk quota (`[isolate] disk_quota`, a headroom over the files each box is given and the output its run may write); both are off until the host is set up (DEPLOY.md), with a warning at start.
+- CI installs protoc 29.3 by a direct, sha256-pinned release download instead of arduino/setup-protoc, whose GitHub API lookup failed jobs intermittently. No runtime change.
+- A Java source with a `package` line, or with a class name too long for its `<class>.java` file name (over 255 bytes), is a compile error with a message saying why, instead of a run-time failure on every case or a sandbox-failure retry ending in IE.
+- Memory limit: the program's own memory is the cgroup peak less the page cache of its own input, output and kept stderr (output files counted by allocated blocks), never under the peak RSS and never over the cgroup peak. Before this it was the smaller of the two counters, so 60 MiB of heap plus 22 MiB written to `/dev/shm` (or a memfd) and read back unmapped showed 62 MiB and passed a 64 MiB limit. A timed-out run, and compilers and jury programs, keep the smaller counter. Runs no longer get a writable `/dev/shm`.
+- An OUTPUT zip whose relayouts all find the same entries (`out/1.a` for case `tests/out/1.a`, or one nested case) is lined up instead of treated as a tie and read as empty.
+- Checkers and interactors: testlib `points N` (and a default checker's exit 2 share) with N of 0 or less is a wrong answer. It was AC with 0 points: counted as accepted, and it did not stop a batch, a short-circuit run, or a full run at a failed pretest. An interactor's `points N` is N percent of the case when `interactive` sets `treat_checker_points_as_percentage: true` (optional, default false; feature `interactive.percentage`); before, it was always N points of the case.
+
 ## 2.3.6 (2026-10-21)
 
 ### Fixes
