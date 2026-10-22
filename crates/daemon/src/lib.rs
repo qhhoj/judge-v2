@@ -4,6 +4,7 @@ pub mod backoff;
 pub mod batcher;
 pub mod config;
 pub mod cores;
+pub mod cpuset;
 pub mod drain;
 pub mod gates;
 pub mod generation;

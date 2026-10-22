@@ -3,10 +3,10 @@
 use crate::error::GradeError;
 use crate::languages::{Language, Placeholders, expand, java_main_class};
 use crate::program::{Program, SourceFile};
-use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::error::SandboxError;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
+use judge_sandbox::{IsolateBox, Room};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -87,7 +87,10 @@ pub fn build(sandbox: &mut IsolateBox, job: &CompileJob, into: &Path) -> Result<
     if let Some(log) = &job.refusal {
         return Ok(BuildOutcome::CompileError { log: log.clone() });
     }
-    sandbox.reset()?;
+    // The disk quota also holds the sources and a compiler output up to the snapshot limit.
+    let sources =
+        job.files.iter().fold(Room::default(), |room, file| room.plus_file(file.bytes.len() as u64));
+    sandbox.reset_with_room(sources.plus_file(MAX_SNAPSHOT_BYTES))?;
     for file in &job.files {
         sandbox.put_bytes(&file.name, &file.bytes)?;
     }

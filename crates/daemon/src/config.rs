@@ -1,5 +1,6 @@
 //! `/etc/qhhoj-judge/config.toml` (spec §7 "Config").
 
+use judge_problem::plan::MAX_OUTPUT_LIMIT;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -54,16 +55,42 @@ impl Default for Reconnect {
     }
 }
 
+/// A per-box disk quota (isolate `--quota`, `kib` in 1 KiB blocks), as headroom: each box's quota is this
+/// plus the files the judge puts in it and the output the run may write.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiskQuotaConfig {
+    pub headroom_kib: u32,
+    pub headroom_inodes: u32,
+}
+
+/// Smallest headroom: a run's stderr or another file up to the largest output limit, plus 64 MiB for a
+/// compiler's temporary files. Less would fail a legal run with EDQUOT.
+pub const MIN_HEADROOM_KIB: u64 = (MAX_OUTPUT_LIMIT + (64 << 20)) / 1024;
+/// Fewest headroom inodes: a compile's temporary files and a JVM program's class files.
+pub const MIN_HEADROOM_INODES: u32 = 256;
+/// isolate refuses numbers above a C `int`.
+const ISOLATE_MAX_NUMBER: u32 = i32::MAX as u32;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct IsolatePaths {
     pub bin: PathBuf,
     pub taskset: PathBuf,
+    /// isolate's own config, read at start to see whether its `box<id>.cpus` lines pin the boxes.
+    pub config: PathBuf,
+    /// Off when absent. Needs user quotas on isolate's box root (DEPLOY.md).
+    pub disk_quota: Option<DiskQuotaConfig>,
 }
 
 impl Default for IsolatePaths {
     fn default() -> Self {
-        IsolatePaths { bin: "/usr/local/bin/isolate".into(), taskset: "/usr/bin/taskset".into() }
+        IsolatePaths {
+            bin: "/usr/local/bin/isolate".into(),
+            taskset: "/usr/bin/taskset".into(),
+            config: "/usr/local/etc/isolate".into(),
+            disk_quota: None,
+        }
     }
 }
 
@@ -137,7 +164,22 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
     if config.control_dir.is_some() && !is_loopback_url(&config.bridge_url) {
         return Err(invalid("control_dir is for local test stacks only"));
     }
-    Ok(())
+    validate_disk_quota(config.isolate.disk_quota)
+}
+
+fn validate_disk_quota(quota: Option<DiskQuotaConfig>) -> Result<(), ConfigError> {
+    match quota {
+        Some(q) if u64::from(q.headroom_kib) < MIN_HEADROOM_KIB => {
+            Err(invalid(format!("isolate.disk_quota.headroom_kib must be at least {MIN_HEADROOM_KIB}")))
+        }
+        Some(q) if q.headroom_inodes < MIN_HEADROOM_INODES => {
+            Err(invalid(format!("isolate.disk_quota.headroom_inodes must be at least {MIN_HEADROOM_INODES}")))
+        }
+        Some(q) if q.headroom_kib.max(q.headroom_inodes) > ISOLATE_MAX_NUMBER => {
+            Err(invalid(format!("isolate.disk_quota values must be at most {ISOLATE_MAX_NUMBER}")))
+        }
+        _ => Ok(()),
+    }
 }
 
 pub fn parse(text: &str) -> Result<Config, ConfigError> {
@@ -224,6 +266,21 @@ mod tests {
         assert_eq!(c.read_key_in(Some(dir.path())).unwrap(), "secret");
         std::fs::write(dir.path().join("judge-key"), "  \n").unwrap();
         assert!(c.read_key_in(Some(dir.path())).is_err());
+    }
+
+    #[test]
+    fn a_disk_quota_headroom_too_small_for_the_largest_legal_output_is_refused() {
+        let with = |kib: u64, inodes: u32| {
+            format!("{MIN}[isolate]\ndisk_quota = {{ headroom_kib = {kib}, headroom_inodes = {inodes} }}\n")
+        };
+        assert!(parse(MIN).unwrap().isolate.disk_quota.is_none(), "off by default");
+        let ok = parse(&with(MIN_HEADROOM_KIB, 1024)).unwrap().isolate.disk_quota.unwrap();
+        assert_eq!((u64::from(ok.headroom_kib), ok.headroom_inodes), (MIN_HEADROOM_KIB, 1024));
+        assert!(parse(&with(MIN_HEADROOM_KIB - 1, 1024)).is_err());
+        assert!(parse(&with(MIN_HEADROOM_KIB, MIN_HEADROOM_INODES - 1)).is_err());
+        assert!(parse(&with(1 << 31, 1024)).is_err(), "isolate takes no number above a C int");
+        let old = format!("{MIN}[isolate]\ndisk_quota = {{ kib = 524288, inodes = 1024 }}\n");
+        assert!(parse(&old).is_err(), "a total quota is not taken for headroom");
     }
 
     #[test]

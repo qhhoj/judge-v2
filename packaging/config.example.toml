@@ -30,3 +30,5 @@ max_ms = 30000
 [isolate]
 bin = "/usr/local/bin/isolate"
 taskset = "/usr/bin/taskset"
+config = "/usr/local/etc/isolate"                  # read at start: box<id>.cpus lines pin boxes by cpuset
+# disk_quota = { headroom_kib = 262144, headroom_inodes = 1024 }  # per box, beyond staged files; DEPLOY.md

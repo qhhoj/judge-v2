@@ -1,15 +1,15 @@
 #![cfg(feature = "isolate")]
 mod common;
 
-use common::{language_or_skip, registry, sandbox};
+use common::{box_id, language_or_skip, registry, sandbox};
 use judge_grader::compile::{CompileJob, build, program_for};
 use judge_grader::file_io::SolutionFileIo;
 use judge_grader::languages::Language;
 use judge_grader::program::Program;
 use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
 use judge_problem::init::FileIo;
-use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::RunVerdict;
+use judge_sandbox::{DiskQuota, IsolateBox, SandboxConfig, disk_quota_works};
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -364,4 +364,36 @@ fn the_page_cache_of_an_input_the_program_reads_is_not_its_memory() {
     let run = go_limited(&mut f, &plain(&file, 1 << 20), 32_768);
     assert_eq!(run.verdict, RunVerdict::Ok, "40 MiB of input read under a 32 MiB limit");
     assert!(run.memory_kib < 8192, "memory {} KiB", run.memory_kib);
+}
+
+/// The box for a run with a disk quota of `headroom_kib` over what the judge stages, or None (skip) when
+/// isolate's box root has no user quotas.
+fn quota_box(offset: u32, meta: &std::path::Path, headroom_kib: u32) -> Option<(SandboxConfig, IsolateBox)> {
+    let quota = DiskQuota { headroom_kib, headroom_inodes: 256 };
+    let config = SandboxConfig { meta_dir: meta.into(), disk_quota: Some(quota), ..SandboxConfig::default() };
+    if !disk_quota_works(&config, box_id(offset)).unwrap() {
+        eprintln!("skip: isolate's box root has no user quotas on this host");
+        return None;
+    }
+    let sandbox = IsolateBox::open(&config, box_id(offset), None).unwrap();
+    Some((config, sandbox))
+}
+
+/// isolate charges the staged input to the box's disk quota: an input over the headroom still gives the
+/// correct, full output.
+#[test]
+fn a_case_input_over_the_disk_quota_headroom_is_judged_in_full() {
+    let src = "import sys\nsys.stdout.buffer.write(sys.stdin.buffer.read())\n";
+    let Some(mut f) = fixture(44, "PY3", src) else { return };
+    let meta = tempfile::tempdir().unwrap();
+    let Some((config, quota_sandbox)) = quota_box(45, meta.path(), 8192) else { return };
+    f.sandbox = quota_sandbox;
+    let text = "7".repeat(12 << 20);
+    let file = input(&f, &text);
+    let (run, out) = go(&mut f, &plain(&file, 12 << 20), "out");
+    let output_len = std::fs::metadata(&out).unwrap().len();
+    drop(f);
+    let no_limit = DiskQuota { headroom_kib: i32::MAX as u32, headroom_inodes: i32::MAX as u32 };
+    disk_quota_works(&SandboxConfig { disk_quota: Some(no_limit), ..config }, box_id(45)).unwrap();
+    assert_eq!((run.verdict, output_len), (RunVerdict::Ok, 12 << 20));
 }

@@ -1,7 +1,7 @@
 #![cfg(feature = "isolate")]
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
-use judge_sandbox::{IsolateBox, SandboxConfig, SandboxError};
+use judge_sandbox::{DiskQuota, IsolateBox, Room, SandboxConfig, SandboxError, disk_quota_works};
 
 fn box_id(offset: u32) -> u32 {
     let base: u32 = std::env::var("JUDGE_TEST_BOX_BASE").ok().and_then(|v| v.parse().ok()).unwrap_or(500);
@@ -130,4 +130,85 @@ fn the_command_line_of_a_used_box_is_refused() {
     let mut b = IsolateBox::open(&config(meta.path()), box_id(2), None).unwrap();
     b.run(&spec(&["/bin/true"], 65_536)).unwrap();
     assert!(matches!(b.command(&spec(&["/bin/true"], 65_536)), Err(SandboxError::Dirty)));
+}
+
+/// Bytes of the files in `dir`.
+fn bytes_in(dir: &std::path::Path) -> u64 {
+    std::fs::read_dir(dir).unwrap().flatten().map(|e| e.metadata().unwrap().len()).sum()
+}
+
+/// isolate keeps a box uid's last quota on the filesystem, so the test lifts it again for later users of the box.
+const NO_LIMIT: DiskQuota = DiskQuota { headroom_kib: i32::MAX as u32, headroom_inodes: i32::MAX as u32 };
+
+#[test]
+fn a_run_writing_many_files_stays_inside_the_disk_quota() {
+    let meta = tempfile::tempdir().unwrap();
+    let quota = DiskQuota { headroom_kib: 4096, headroom_inodes: 64 };
+    let config = SandboxConfig { disk_quota: Some(quota), ..config(meta.path()) };
+    if !disk_quota_works(&config, box_id(90)).unwrap() {
+        eprintln!("skip: isolate's box root has no user quotas on this host");
+        return;
+    }
+    let mut b = IsolateBox::open(&config, box_id(90), None).unwrap();
+    // 16 files of 1 MiB each in /box, every one under --fsize: only the quota stops the total.
+    let flood =
+        "for i in range(16):\n  try: open(f'f{i}', 'wb').write(b'x' * (1 << 20))\n  except OSError: pass";
+    b.run(&spec(&["/usr/bin/python3", "-c", flood], 65_536)).unwrap();
+    let written = bytes_in(b.dir());
+    drop(b);
+    disk_quota_works(&SandboxConfig { disk_quota: Some(NO_LIMIT), ..config }, box_id(90)).unwrap();
+    assert!(written <= u64::from(quota.headroom_kib) * 1024, "{written} bytes under the box");
+}
+
+#[test]
+fn an_input_larger_than_the_headroom_is_echoed_in_full() {
+    let meta = tempfile::tempdir().unwrap();
+    let config = SandboxConfig {
+        disk_quota: Some(DiskQuota { headroom_kib: 4096, headroom_inodes: 64 }),
+        ..config(meta.path())
+    };
+    if !disk_quota_works(&config, box_id(91)).unwrap() {
+        eprintln!("skip: isolate's box root has no user quotas on this host");
+        return;
+    }
+    let host = tempfile::tempdir().unwrap();
+    let input = host.path().join("input");
+    let len = 6u64 << 20;
+    std::fs::write(&input, vec![b'7'; len as usize]).unwrap();
+    let mut b = IsolateBox::open(&config, box_id(91), None).unwrap();
+    // isolate charges the staged input to the box uid at --run; the room keeps it off the headroom.
+    b.reset_with_room(Room::for_files(&[&input]).unwrap().plus_file(len)).unwrap();
+    b.put("input", &input, false).unwrap();
+    let mut cat = spec(&["/bin/cat", "input"], 65_536);
+    cat.limits = Limits::for_solution(1.0, 65_536, 1, len);
+    let meta = b.run(&cat).unwrap();
+    let echoed = b.read_output("output", len + 1).unwrap().len() as u64;
+    drop(b);
+    disk_quota_works(&SandboxConfig { disk_quota: Some(NO_LIMIT), ..config }, box_id(91)).unwrap();
+    assert_eq!((meta.exit_code, echoed), (Some(0), len));
+}
+
+/// The `cpus` isolate's config gives box `id`, when it gives one.
+fn configured_cpus(id: u32) -> Option<String> {
+    let config = std::fs::read_to_string("/usr/local/etc/isolate").ok()?;
+    let key = format!("box{id}.cpus");
+    config
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .find(|(k, _)| k.trim() == key)
+        .map(|(_, v)| v.trim().into())
+}
+
+#[test]
+fn a_box_pinned_by_cpuset_cannot_move_to_another_core() {
+    let Some(core) = configured_cpus(box_id(11)).and_then(|c| c.parse::<u32>().ok()) else {
+        eprintln!("skip: isolate's config pins box {} to no single core", box_id(11));
+        return;
+    };
+    let meta = tempfile::tempdir().unwrap();
+    let mut b = IsolateBox::open(&config(meta.path()), box_id(11), Some(core)).unwrap();
+    let escape =
+        "import os\nos.sched_setaffinity(0, range(os.cpu_count()))\nprint(*sorted(os.sched_getaffinity(0)))";
+    b.run(&spec(&["/usr/bin/python3", "-c", escape], 65_536)).unwrap();
+    assert_eq!(b.read_output("output", 100).unwrap(), format!("{core}\n").into_bytes());
 }

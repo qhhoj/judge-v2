@@ -2,6 +2,7 @@
 
 use crate::error::SandboxError;
 use crate::meta::{Meta, parse_meta};
+use crate::room::Room;
 use crate::spec::{RunSpec, isolate_args};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
@@ -9,11 +10,33 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// A disk quota on everything in a box (isolate `--quota`, in 1 KiB blocks); `--fsize` caps one file only.
+/// isolate sets it on the box uid at `--init`, and at `--run` charges every file in `/box` to that uid, the
+/// judge's own too. So each reset gets the headroom here plus the `Room` its caller stages and expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskQuota {
+    pub headroom_kib: u32,
+    pub headroom_inodes: u32,
+}
+
+/// isolate refuses numbers above a C `int`.
+const ISOLATE_MAX_NUMBER: u64 = i32::MAX as u64;
+
+impl DiskQuota {
+    /// isolate's `--quota` for a box that also holds `room`.
+    fn arg(&self, room: Room) -> String {
+        let total = |headroom: u32, more: u64| more.saturating_add(headroom.into()).min(ISOLATE_MAX_NUMBER);
+        format!("--quota={},{}", total(self.headroom_kib, room.kib), total(self.headroom_inodes, room.inodes))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SandboxConfig {
     pub isolate_bin: PathBuf,
     pub taskset_bin: PathBuf,
     pub meta_dir: PathBuf,
+    /// `None`: no quota (isolate's box root needs user quotas for one).
+    pub disk_quota: Option<DiskQuota>,
 }
 
 impl Default for SandboxConfig {
@@ -22,6 +45,7 @@ impl Default for SandboxConfig {
             isolate_bin: "/usr/local/bin/isolate".into(),
             taskset_bin: "/usr/bin/taskset".into(),
             meta_dir: "/var/cache/qhhoj-judge/meta".into(),
+            disk_quota: None,
         }
     }
 }
@@ -34,8 +58,14 @@ pub struct IsolateBox {
     dirty: bool,
 }
 
-fn isolate(config: &SandboxConfig, id: u32, action: &str) -> Result<String, SandboxError> {
-    let out = Command::new(&config.isolate_bin).args(["--cg", &format!("-b{id}"), action]).output()?;
+/// isolate's error when the box root cannot take a quota: "quotas have not been enabled", or `quotactl` failed.
+const NO_DISK_QUOTA: &str = "Cannot set disk quota";
+
+fn isolate(config: &SandboxConfig, id: u32, args: &[String]) -> Result<String, SandboxError> {
+    let out = Command::new(&config.isolate_bin)
+        .args(["--cg".to_string(), format!("-b{id}")])
+        .args(args)
+        .output()?;
     if !out.status.success() {
         return Err(SandboxError::Isolate(String::from_utf8_lossy(&out.stderr).trim().to_string()));
     }
@@ -44,21 +74,42 @@ fn isolate(config: &SandboxConfig, id: u32, action: &str) -> Result<String, Sand
 
 /// Cleans a box this process may have left behind (daemon start, after a crash).
 pub fn cleanup_box(config: &SandboxConfig, id: u32) -> Result<(), SandboxError> {
-    isolate(config, id, "--cleanup").map(|_| ())
+    isolate(config, id, &["--cleanup".into()]).map(|_| ())
+}
+
+/// A fresh box, with a disk quota of the config's headroom plus `room`. Returns the box's `/box` directory.
+fn init_box(config: &SandboxConfig, id: u32, room: Room) -> Result<PathBuf, SandboxError> {
+    let mut args: Vec<String> = config.disk_quota.iter().map(|q| q.arg(room)).collect();
+    args.push("--init".into());
+    Ok(Path::new(&isolate(config, id, &args)?).join("box"))
+}
+
+/// False when isolate cannot set `config.disk_quota` under its box root (no user quotas there).
+/// Opens box `id` with the quota and cleans it again.
+pub fn disk_quota_works(config: &SandboxConfig, id: u32) -> Result<bool, SandboxError> {
+    match IsolateBox::open(config, id, None) {
+        Ok(_) => Ok(true),
+        Err(SandboxError::Isolate(message)) if message.contains(NO_DISK_QUOTA) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 impl IsolateBox {
     pub fn open(config: &SandboxConfig, id: u32, core: Option<u32>) -> Result<Self, SandboxError> {
         std::fs::create_dir_all(&config.meta_dir)?;
         cleanup_box(config, id)?;
-        let root = isolate(config, id, "--init")?;
-        Ok(IsolateBox { config: config.clone(), id, core, dir: Path::new(&root).join("box"), dirty: false })
+        let dir = init_box(config, id, Room::default())?;
+        Ok(IsolateBox { config: config.clone(), id, core, dir, dirty: false })
     }
 
     pub fn reset(&mut self) -> Result<(), SandboxError> {
+        self.reset_with_room(Room::default())
+    }
+
+    /// A fresh box whose disk quota also holds `room`: the files about to be put in and what the run may write.
+    pub fn reset_with_room(&mut self, room: Room) -> Result<(), SandboxError> {
         cleanup_box(&self.config, self.id)?;
-        let root = isolate(&self.config, self.id, "--init")?;
-        self.dir = Path::new(&root).join("box");
+        self.dir = init_box(&self.config, self.id, room)?;
         self.dirty = false;
         Ok(())
     }
@@ -237,5 +288,105 @@ fn make_dir(target: &Path) -> Result<(), SandboxError> {
         Ok(meta) if meta.is_dir() => Ok(()),
         Ok(_) => Err(SandboxError::BadName(target.display().to_string())),
         Err(_) => Ok(std::fs::create_dir(target)?),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stand-in for isolate that logs each call to `calls` and answers `--init` with a box root.
+    /// With a `no-quota` file beside it, an `--init` that sets a quota fails as on a box root without quotas.
+    const FAKE_ISOLATE: &str = r#"#!/bin/sh
+d=$(dirname "$0")
+echo "$*" >> "$d/calls"
+case "$*" in *--quota=*) if [ -e "$d/no-quota" ]; then
+  echo "Cannot set disk quota: quotas have not been enabled for this filesystem" >&2; exit 2; fi ;; esac
+case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
+"#;
+
+    /// Held by each test that writes a fake isolate and runs it: a child another test thread forks while
+    /// the script is still open for writing keeps that fd until it execs, and running the script then fails
+    /// with ETXTBSY.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn fake_isolate(dir: &Path, quota: Option<DiskQuota>) -> SandboxConfig {
+        let bin = dir.join("isolate");
+        std::fs::write(&bin, FAKE_ISOLATE).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        SandboxConfig {
+            isolate_bin: bin,
+            meta_dir: dir.join("meta"),
+            disk_quota: quota,
+            ..Default::default()
+        }
+    }
+
+    const HEADROOM: DiskQuota = DiskQuota { headroom_kib: 196_608, headroom_inodes: 1024 };
+
+    fn calls(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("calls")).unwrap().lines().map(String::from).collect()
+    }
+
+    #[test]
+    fn every_init_sets_the_disk_quota_and_no_other_call_does() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let config = fake_isolate(dir.path(), Some(HEADROOM));
+        let mut b = IsolateBox::open(&config, 7, None).unwrap();
+        b.reset().unwrap();
+        drop(b);
+        let calls = calls(dir.path());
+        let inits: Vec<_> = calls.iter().filter(|c| c.ends_with("--init")).collect();
+        assert_eq!(inits, ["--cg -b7 --quota=196608,1024 --init"; 2], "{calls:?}");
+        assert_eq!(calls.iter().filter(|c| c.contains("--quota")).count(), 2, "{calls:?}");
+    }
+
+    #[test]
+    fn a_reset_with_room_gets_the_headroom_plus_the_room() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
+        b.reset_with_room(Room { kib: 153_600, inodes: 3 }).unwrap();
+        b.reset().unwrap();
+        let inits: Vec<_> = calls(dir.path()).into_iter().filter(|c| c.ends_with("--init")).collect();
+        assert_eq!(inits[1], "--cg -b7 --quota=350208,1027 --init");
+        assert_eq!(inits[2], "--cg -b7 --quota=196608,1024 --init", "the room is for one reset only");
+    }
+
+    #[test]
+    fn a_quota_past_what_isolate_takes_is_clamped() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
+        b.reset_with_room(Room { kib: u64::MAX, inodes: 1 << 40 }).unwrap();
+        let last_init = calls(dir.path()).into_iter().rfind(|c| c.ends_with("--init")).unwrap();
+        assert_eq!(last_init, "--cg -b7 --quota=2147483647,2147483647 --init");
+    }
+
+    #[test]
+    fn without_a_quota_no_call_sets_one() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate(dir.path(), None), 7, None).unwrap();
+        b.reset().unwrap();
+        drop(b);
+        assert!(calls(dir.path()).iter().all(|c| !c.contains("--quota")), "{:?}", calls(dir.path()));
+    }
+
+    #[test]
+    fn the_quota_probe_tells_a_box_root_without_quotas_from_other_failures() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let config = fake_isolate(dir.path(), Some(HEADROOM));
+        assert!(disk_quota_works(&config, 3).unwrap());
+        std::fs::write(dir.path().join("no-quota"), "").unwrap();
+        assert!(!disk_quota_works(&config, 3).unwrap());
+        let broken = SandboxConfig { isolate_bin: "/nonexistent/isolate".into(), ..config };
+        assert!(disk_quota_works(&broken, 3).is_err(), "isolate missing is an error, not \"no quotas\"");
     }
 }
