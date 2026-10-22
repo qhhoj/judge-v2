@@ -305,6 +305,15 @@ case "$*" in *--quota=*) if [ -e "$d/no-quota" ]; then
 case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
 "#;
 
+    /// Held by each test that writes a fake isolate and runs it: a child another test thread forks while
+    /// the script is still open for writing keeps that fd until it execs, and running the script then fails
+    /// with ETXTBSY.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn fake_isolate(dir: &Path, quota: Option<DiskQuota>) -> SandboxConfig {
         let bin = dir.join("isolate");
         std::fs::write(&bin, FAKE_ISOLATE).unwrap();
@@ -325,6 +334,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
 
     #[test]
     fn every_init_sets_the_disk_quota_and_no_other_call_does() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let config = fake_isolate(dir.path(), Some(HEADROOM));
         let mut b = IsolateBox::open(&config, 7, None).unwrap();
@@ -338,6 +348,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
 
     #[test]
     fn a_reset_with_room_gets_the_headroom_plus_the_room() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
         b.reset_with_room(Room { kib: 153_600, inodes: 3 }).unwrap();
@@ -349,6 +360,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
 
     #[test]
     fn a_quota_past_what_isolate_takes_is_clamped() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
         b.reset_with_room(Room { kib: u64::MAX, inodes: 1 << 40 }).unwrap();
@@ -358,6 +370,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
 
     #[test]
     fn without_a_quota_no_call_sets_one() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let mut b = IsolateBox::open(&fake_isolate(dir.path(), None), 7, None).unwrap();
         b.reset().unwrap();
@@ -367,6 +380,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
 
     #[test]
     fn the_quota_probe_tells_a_box_root_without_quotas_from_other_failures() {
+        let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let config = fake_isolate(dir.path(), Some(HEADROOM));
         assert!(disk_quota_works(&config, 3).unwrap());
