@@ -1,0 +1,16 @@
+# protoc for tonic-prost-build (crates/judge-proto/build.rs), the same release as packaging/Containerfile.
+# A direct release download pinned by sha256, not arduino/setup-protoc: that one lists releases through the GitHub API
+# and fails the job on any non-200 page. protoc finds the well-known types in include/ next to its bin/.
+name: setup-protoc
+description: Install protoc 29.3 to $RUNNER_TEMP/protoc and put it on PATH
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/protoc.zip" \
+          https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
+        echo "3e866620c5be27664f3d2fa2d656b5f3e09b5152b42f1bedbf427b333e90021a  $RUNNER_TEMP/protoc.zip" | sha256sum -c
+        unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+        echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/protoc/bin/protoc" --version
