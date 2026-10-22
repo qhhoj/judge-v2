@@ -388,12 +388,15 @@ limits on the filesystem: after removing `disk_quota`, recreate the image (or cl
 ### Verify on the host
 
 Run the isolate-gated tests once on the judge host after these steps, before relying on either layer. Build
-them where cargo is (`cargo test -p judge-sandbox --features isolate --no-run` prints the test binary's
-path), copy the binary over, and with the judge stopped:
+them where cargo is (`cargo test -p judge-sandbox --features isolate --no-run` and the same for
+`-p judge-grader` print the test binaries' paths), copy `isolate_box-<hash>` and `run_case_isolate-<hash>`
+over, and with the judge stopped (`CORE` is one of the judge's worker cores, from `isolate-cpus`):
 
 ```sh
-grep -q '^box511\.cpus' /usr/local/etc/isolate || echo 'box511.cpus = 1' >> /usr/local/etc/isolate
+CORE=1
+grep -q '^box511\.cpus' /usr/local/etc/isolate || echo "box511.cpus = $CORE" >> /usr/local/etc/isolate
 JUDGE_TEST_BOX_BASE=500 ./isolate_box-<hash> --test-threads=1 cpuset quota headroom
+JUDGE_TEST_BOX_BASE=500 ./run_case_isolate-<hash> --test-threads=1 headroom
 sed -i '/^box511\.cpus/d' /usr/local/etc/isolate
 ```
 
