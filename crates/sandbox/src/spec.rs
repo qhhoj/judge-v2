@@ -95,6 +95,9 @@ pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path) -> Vec<String> {
     args.push("--env=PATH=/usr/bin:/bin".into());
     args.push("--env=HOME=/box".into());
     args.extend(spec.env.iter().map(|(k, v)| format!("--env={k}={v}")));
+    // No tmpfs on /dev/shm (isolate's default rule): /dev stays read-only. Pages the program keeps in a
+    // file it does not map are still counted (`Meta::memory_kib`); this only takes away the easy place.
+    args.push("--dir=dev/shm=".into());
     args.extend(spec.dirs.iter().map(|d| format!("--dir={d}")));
     args.extend(["--run".into(), "--".into()]);
     args.extend(spec.argv.iter().cloned());

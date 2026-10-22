@@ -323,3 +323,45 @@ fn mapped_files_already_in_page_cache_are_not_the_programs_memory() {
     assert_eq!(run.verdict, RunVerdict::Ok, "32 MiB of mapped input under an 8 MiB limit");
     assert!(run.memory_kib < 8192, "memory {} KiB", run.memory_kib);
 }
+
+/// 60 MiB of heap, then 22 MiB written to a `memfd` or `/dev/shm` file and read back with pread, so the
+/// file's pages are charged to the run but never mapped: they are not in the peak RSS. Prints `refused`
+/// when the file cannot be made.
+const STASH: &str = "#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <fcntl.h>\n\
+#include <sys/mman.h>\n#include <unistd.h>\nstatic char block[1 << 20];\nchar *volatile heap;\n\
+int main(){ char how[8]; if (scanf(\"%7s\", how) != 1) return 2;\n\
+int fd = how[0] == 'm' ? memfd_create(\"stash\", 0) : open(\"/dev/shm/stash\", O_RDWR | O_CREAT | O_TRUNC, 0600);\n\
+if (fd < 0) { puts(\"refused\"); return 0; }\n\
+heap = (char*)malloc(60 << 20); memset(heap, 1, 60 << 20); long sum = 0;\n\
+for (int i = 0; i < 22; i++) { memset(block, i, sizeof block); if (write(fd, block, sizeof block) != sizeof block) return 4; }\n\
+for (int i = 0; i < 22; i++) { if (pread(fd, block, sizeof block, (off_t)i << 20) != sizeof block) return 5; sum += block[7]; }\n\
+printf(\"%ld %d\", sum, heap[(60 << 20) - 1]); }\n";
+
+#[test]
+fn file_pages_the_program_holds_unmapped_count_against_the_memory_limit() {
+    // 82 MiB charged under a 64 MiB limit, inside the cgroup's 24 MiB page-cache room: no OOM kill.
+    let Some(mut f) = fixture(47, "CPP17", STASH) else { return };
+    let file = input(&f, "memfd");
+    let run = go_limited(&mut f, &plain(&file, 24 << 20), 65_536);
+    assert_eq!(run.verdict, RunVerdict::Mle, "memory {} KiB", run.memory_kib);
+    assert!(run.memory_kib > 80 << 10, "memory {} KiB leaves out the memfd", run.memory_kib);
+    let file = input(&f, "shm");
+    let run = go_limited(&mut f, &plain(&file, 24 << 20), 65_536);
+    assert_eq!(run.verdict, RunVerdict::Ok);
+    assert_eq!(std::fs::read_to_string(f.scratch.join("out")).unwrap(), "refused\n", "/dev/shm is writable");
+}
+
+/// Drops its stdin's page cache, then reads it all: the input's pages are charged to the run.
+const READ_EVICTED: &str = "#include <cstdio>\n#include <fcntl.h>\n#include <unistd.h>\n\
+static char block[1 << 16];\n\
+int main(){ fdatasync(0); posix_fadvise(0, 0, 0, POSIX_FADV_DONTNEED); long n = 0, r;\n\
+while ((r = read(0, block, sizeof block)) > 0) n += r; printf(\"%ld\", n); }\n";
+
+#[test]
+fn the_page_cache_of_an_input_the_program_reads_is_not_its_memory() {
+    let Some(mut f) = fixture(48, "CPP17", READ_EVICTED) else { return };
+    let file = input(&f, &"x".repeat(40 << 20));
+    let run = go_limited(&mut f, &plain(&file, 1 << 20), 32_768);
+    assert_eq!(run.verdict, RunVerdict::Ok, "40 MiB of input read under a 32 MiB limit");
+    assert!(run.memory_kib < 8192, "memory {} KiB", run.memory_kib);
+}

@@ -175,10 +175,11 @@ pub fn run_case(
     let written = sandbox.read_output(&output_name, io.output_cap + 1).unwrap_or_default();
     std::fs::write(output, &written)?;
     let output_len = written.len() as u64;
-    let verdict = classify(&meta, OutputUse { written: output_len, cap: io.output_cap }, &spec.limits);
-    let verdict = refine(verdict, runnable.program, sandbox);
+    let own_files = own_files_kib(sandbox, runnable.program, io.input.metadata()?.len(), Some(&output_name));
+    let usage = OutputUse { written: output_len, cap: io.output_cap, own_files_kib: Some(own_files) };
+    let verdict = refine(classify(&meta, usage, &spec.limits), runnable.program, sandbox);
     Ok(CaseRun {
-        memory_kib: reported_memory(&meta, &verdict),
+        memory_kib: reported_memory(&meta, usage.own_files_kib, &verdict),
         verdict,
         time_s: meta.time_s,
         output: output.to_path_buf(),
@@ -189,8 +190,31 @@ pub fn run_case(
 /// The memory shown for a run: the program's own (`Meta::memory_kib`), but for an MLE the larger of the
 /// cgroup peak and the peak RSS, so an MLE is never shown under the limit: one `refine` found on stderr (a
 /// JVM OutOfMemoryError, cgroup peak) or one by the program's own memory over the limit, no OOM kill.
-pub(crate) fn reported_memory(meta: &Meta, verdict: &RunVerdict) -> u64 {
-    if *verdict == RunVerdict::Mle { meta.cg_mem_kib.max(meta.max_rss_kib) } else { meta.memory_kib() }
+pub(crate) fn reported_memory(meta: &Meta, own_files_kib: Option<u64>, verdict: &RunVerdict) -> u64 {
+    if *verdict == RunVerdict::Mle {
+        meta.cg_mem_kib.max(meta.max_rss_kib)
+    } else {
+        meta.memory_kib(own_files_kib)
+    }
+}
+
+/// KiB of page cache `bytes` of a file take, in whole 4 KiB pages.
+fn page_cache_kib(bytes: u64) -> u64 {
+    bytes.div_ceil(4096) * 4
+}
+
+/// The page cache the run's own files may have charged to its cgroup (`Meta::memory_kib`): the
+/// `input_bytes` of case input it read, its `output` file and its kept stderr. The box files count by their
+/// allocated blocks, so a sparse file the program made adds nothing.
+pub(crate) fn own_files_kib(
+    sandbox: &IsolateBox,
+    program: &Program,
+    input_bytes: u64,
+    output: Option<&str>,
+) -> u64 {
+    let stderr = keeps_stderr(program).then_some(STDERR_FILE);
+    let written = [output, stderr].into_iter().flatten().map(|name| sandbox.allocated_bytes(name)).sum();
+    page_cache_kib(input_bytes) + page_cache_kib(written)
 }
 
 /// The last 64 KiB of the kept stderr (where the final exception is), lossy UTF-8.
@@ -286,11 +310,16 @@ mod tests {
     #[test]
     fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_program_memory() {
         let meta = Meta { cg_mem_kib: 200_000, max_rss_kib: 180_000, ..Meta::default() };
-        assert_eq!(reported_memory(&meta, &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
-        assert_eq!(reported_memory(&meta, &RunVerdict::Ok), 180_000);
+        assert_eq!(reported_memory(&meta, Some(0), &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
+        assert_eq!(reported_memory(&meta, Some(20 << 10), &RunVerdict::Ok), 180_000, "20 MiB of output");
+        assert_eq!(reported_memory(&meta, Some(0), &RunVerdict::Ok), 200_000, "unmapped memory counts");
         let rss_only = Meta { cg_mem_kib: 8_500, max_rss_kib: 9_000, ..Meta::default() };
-        assert_eq!(reported_memory(&rss_only, &RunVerdict::Mle), 9_000, "an MLE by peak RSS shows the RSS");
-        assert_eq!(reported_memory(&rss_only, &RunVerdict::Ok), 8_500);
+        assert_eq!(
+            reported_memory(&rss_only, Some(0), &RunVerdict::Mle),
+            9_000,
+            "an MLE by peak RSS shows the RSS"
+        );
+        assert_eq!(reported_memory(&rss_only, Some(0), &RunVerdict::Ok), 8_500);
     }
 
     #[test]

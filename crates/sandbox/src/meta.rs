@@ -18,17 +18,32 @@ pub struct Meta {
 }
 
 impl Meta {
-    /// The program's own memory: what `classify` holds to the memory limit, and what a run reports. The
-    /// cgroup peak also counts the page cache of files the program wrote (its output), the peak RSS also
-    /// counts mapped files already in page cache (a runtime's shared objects), so it is the smaller of the
-    /// two; an OOM kill reports the cgroup peak that hit the limit. When isolate reported only one of them,
-    /// it is that one (`packaging/check-host.sh` fails a host without `memory.peak`).
-    pub fn memory_kib(&self) -> u64 {
+    /// The program's own memory: what `classify` holds to the memory limit, and what a run reports.
+    ///
+    /// The cgroup peak counts every page charged to the run: the program's anonymous memory, but also
+    /// tmpfs, memfd and pipe pages it holds without mapping them, and the page cache of files it read or
+    /// wrote. The peak RSS counts only mapped pages, including mapped files already in page cache that are
+    /// charged elsewhere (a runtime's shared objects, ~37 MiB of PyPy's). So the memory is the cgroup peak
+    /// less `own_files_kib`, the page cache the run's own input and output files may hold, but never under
+    /// the peak RSS (so subtracting a file that was not charged frees no room for anonymous memory) and
+    /// never over the cgroup peak. With `own_files_kib` None (files not measured) and on a timeout (the
+    /// max-rss of a TO is isolate's proxy's), it is the smaller of the two counters. An OOM kill reports the
+    /// cgroup peak that hit the limit. When isolate reported only one counter, it is that one
+    /// (`packaging/check-host.sh` fails a host without `memory.peak`).
+    pub fn memory_kib(&self, own_files_kib: Option<u64>) -> u64 {
         let (cgroup, rss) = (self.cg_mem_kib, self.max_rss_kib);
         if cgroup == 0 || rss == 0 {
             return cgroup.max(rss);
         }
-        if self.oom_killed { cgroup } else { cgroup.min(rss) }
+        if self.oom_killed {
+            return cgroup;
+        }
+        match own_files_kib {
+            Some(files) if self.status.as_deref() != Some("TO") => {
+                cgroup.min(rss.max(cgroup.saturating_sub(files)))
+            }
+            _ => cgroup.min(rss),
+        }
     }
 }
 
@@ -82,21 +97,39 @@ mod tests {
     }
 
     #[test]
-    fn reported_memory_leaves_out_the_page_cache_but_an_oom_shows_the_cgroup_peak() {
-        let memory = |text: &str| parse_meta(text).unwrap().memory_kib();
-        assert_eq!(
-            memory("max-rss:3000\ncg-mem:22000\n"),
-            3000,
-            "20 MiB of written output is not the program"
-        );
-        assert_eq!(memory("max-rss:14616\ncg-mem:8192\n"), 8192);
-        assert_eq!(memory("max-rss:56196\ncg-mem:19644\n"), 19644, "PyPy's libpypy pages are not its own");
-        assert_eq!(memory("max-rss:3000\ncg-mem:65536\ncg-oom-killed:1\n"), 65536);
+    fn memory_leaves_out_the_page_cache_of_the_runs_own_files_but_an_oom_shows_the_cgroup_peak() {
+        let memory = |text: &str, files: u64| parse_meta(text).unwrap().memory_kib(Some(files));
+        assert_eq!(memory("max-rss:3000\ncg-mem:22000\n", 20 << 10), 3000, "20 MiB of written output");
+        // A 40 MiB input read after its page cache was evicted is charged to the run (isolate 2.6, md5sum)
+        assert_eq!(memory("max-rss:7460\ncg-mem:42720\n", 40 << 10), 7460, "40 MiB of input read");
+        assert_eq!(memory("max-rss:14616\ncg-mem:8192\n", 0), 8192);
+        assert_eq!(memory("max-rss:56196\ncg-mem:19644\n", 0), 19644, "PyPy's libpypy pages are not its own");
+        assert_eq!(memory("max-rss:3000\ncg-mem:65536\ncg-oom-killed:1\n", 0), 65536);
+    }
+
+    #[test]
+    fn memory_held_outside_the_programs_mappings_counts() {
+        let memory = |text: &str, files: u64| parse_meta(text).unwrap().memory_kib(Some(files));
+        // 60 MiB of heap and 22 MiB written to /dev/shm and read back with pread (isolate 2.6)
+        let shm = "max-rss:62968\ncg-mem:85472\nexitcode:0\n";
+        assert_eq!(memory(shm, 0), 85472, "tmpfs pages the program wrote are its memory");
+        assert_eq!(memory(shm, 4), 85468, "a 4 KiB output leaves the tmpfs pages counted");
+        // 60 MiB of heap and a 50 MiB input whose page cache was charged to the judge that wrote it
+        let cached_input = "max-rss:62000\ncg-mem:61000\n";
+        assert_eq!(memory(cached_input, 50 << 10), 61000, "an uncharged input frees no room for the heap");
+    }
+
+    #[test]
+    fn memory_is_the_smaller_counter_when_files_are_not_measured_or_the_run_timed_out() {
+        let memory = |text: &str, files| parse_meta(text).unwrap().memory_kib(files);
+        assert_eq!(memory("max-rss:62968\ncg-mem:85472\n", None), 62968);
+        let timeout = "max-rss:824\ncg-mem:131072\nkilled:1\nstatus:TO\n";
+        assert_eq!(memory(timeout, Some(0)), 824, "the max-rss of a TO is isolate's proxy's");
     }
 
     #[test]
     fn memory_is_the_one_counter_isolate_reported_when_the_other_is_missing() {
-        let memory = |text: &str| parse_meta(text).unwrap().memory_kib();
+        let memory = |text: &str| parse_meta(text).unwrap().memory_kib(Some(0));
         assert_eq!(memory("cg-mem:8192\n"), 8192, "no max-rss: the cgroup peak");
         assert_eq!(memory("max-rss:14616\n"), 14616, "no cg-mem (kernel before 5.19): the peak RSS");
         assert_eq!(memory("max-rss:14616\ncg-mem:0\n"), 14616, "cg-mem 0 is no reading");
