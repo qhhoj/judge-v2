@@ -3,7 +3,7 @@
 //! Case files are opened once per case through the resolver's checked handles; checkers and the
 //! interactor get `/proc/self/fd/N` paths of those handles, so nothing is looked up again by name.
 
-use crate::checkers::custom::CustomChecker;
+use crate::checkers::custom::{CustomChecker, PartialPoints};
 use crate::checkers::{CheckInput, CheckOutcome, Checker};
 use crate::error::GradeError;
 use crate::file_io::SolutionFileIo;
@@ -141,6 +141,8 @@ pub struct InteractiveCases<'a> {
     /// The problem's `interactive.checker`: it reads the interactor's `tout` as the output once the
     /// interactor accepts. None: the interactor's verdict stands (every legacy interactive problem).
     pub checker: Option<CaseContext<'a>>,
+    /// How the interactor's testlib `points N` is read.
+    pub partial: PartialPoints,
 }
 
 impl InteractiveCases<'_> {
@@ -172,6 +174,7 @@ impl CaseJudge for InteractiveCases<'_> {
             input: &input,
             answer: &answer,
             points: case.total,
+            partial: self.partial,
         };
         let boxes = Boxes { solution: &mut *self.boxes.solution, helper: &mut *self.boxes.helper };
         let result = interact(boxes, &x)?;

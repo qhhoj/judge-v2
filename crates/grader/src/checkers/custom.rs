@@ -159,6 +159,7 @@ fn outcome(passed: bool, fraction: f64, report: &ExitReport, testlib: bool) -> C
 /// testlib: `_pc(n)` n / 200 of the case (0 is a wrong answer), else by exit code: 0 AC, 1 WA, 2 and 4
 /// presentation error, 8 unexpected EOF (WA), 7 partial points read through `scale`, 3 fail (IE).
 /// default: 0 AC, 1 WA, 2 a 0..1 share on stdout, anything else IE. No exit code (signal, limit) is IE.
+/// Partial points of 0 or less are a wrong answer, so they stop a batch, and a full run at a pretest.
 pub fn interpret(
     kind: CustomKind,
     report: &ExitReport,
@@ -170,7 +171,7 @@ pub fn interpret(
     let partial = |text: &str| -> Result<CheckOutcome, CheckError> {
         let score = first_number(text).ok_or_else(|| fail("gave partial points without a score"))?;
         let fraction = if testlib { scale.fraction(score) } else { score };
-        Ok(outcome(true, fraction, report, testlib))
+        Ok(outcome(score > 0.0, fraction, report, testlib))
     };
     if let Some(n) = partially_correct(report).filter(|_| testlib) {
         return Ok(outcome(n > 0, f64::from(n) / PARTIALLY_CORRECT_SCALE, report, true));
@@ -342,7 +343,8 @@ mod tests {
         assert!((partial.fraction - 0.25).abs() < 1e-9);
         assert_eq!(partial.feedback, "partial");
         assert_eq!(testlib(7, "points 1.5 over").unwrap().fraction, 1.0);
-        assert_eq!(testlib(7, "points -3 under").unwrap().fraction, 0.0);
+        let under = testlib(7, "points -3 under").unwrap();
+        assert!(!under.passed && under.fraction == 0.0, "{under:?}");
         assert!(testlib(7, "no number").is_err());
         assert!(testlib(7, "points NaN x").is_err());
     }
@@ -409,6 +411,18 @@ mod tests {
     }
 
     #[test]
+    fn zero_points_is_a_wrong_answer_in_every_mode() {
+        for mode in [PartialPoints::Absolute, PartialPoints::Percentage] {
+            let zero = testlib_on(mode, 10.0, "points 0 nothing");
+            assert!(!zero.passed && zero.fraction == 0.0, "{mode:?}: {zero:?}");
+        }
+        let pretest = testlib_on(PartialPoints::Absolute, 0.0, "points 0 nothing");
+        assert!(!pretest.passed, "a failed zero-point case stops the run: {pretest:?}");
+        let half = testlib_on(PartialPoints::Absolute, 10.0, "points 5 half");
+        assert!(half.passed && (half.fraction - 0.5).abs() < 1e-9, "{half:?}");
+    }
+
+    #[test]
     fn testlib_points_are_a_percentage_with_the_flag() {
         let half = testlib_on(PartialPoints::Percentage, 40.0, "points 50 half");
         assert!((half.fraction - 0.5).abs() < 1e-9, "{half:?}");
@@ -440,6 +454,8 @@ mod tests {
         assert!(default(0, "").unwrap().passed);
         assert!(!default(1, "").unwrap().passed);
         assert!((default(2, "0.5\n").unwrap().fraction - 0.5).abs() < 1e-9);
+        let zero = default(2, "0\n").unwrap();
+        assert!(!zero.passed && zero.fraction == 0.0, "a 0 share is a wrong answer: {zero:?}");
         assert!(default(2, "").is_err());
         assert!(default(5, "").is_err());
         assert!(default(8, "").is_err(), "testlib's EOF code means nothing to a default checker");

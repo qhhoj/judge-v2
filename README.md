@@ -17,7 +17,9 @@ An interactive problem is judged by its interactor alone unless `interactive.che
 `interactive.checker`): then, once the interactor accepts a case, that checker reads the interactor's `tout` as
 the output and decides the case. The top-level and per-case checkers of an interactive problem are never run. A
 bridged checker's `files` may be a list: the source first, then headers compiled beside it (a package's own
-`testlib.h` among them, found before the vendored one).
+`testlib.h` among them, found before the vendored one). A checker's or interactor's testlib `points N` is N points
+of the case, or N percent of it with `treat_checker_points_as_percentage: true` (a bridged checker's arg, or a key of
+`interactive`, feature `interactive.percentage`); N of 0 or less is a wrong answer.
 
 `assets/testlib/testlib.h` is vendored unmodified from MikeMirzayanov/testlib tag 0.9.41 (MIT, see
 `assets/testlib/LICENSE`, `VERSION`, `SHA256SUMS`). `assets/testlib/testlib_themis_cms.h`, the testlib 0.9.37

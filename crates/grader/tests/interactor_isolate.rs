@@ -3,6 +3,7 @@
 mod common;
 
 use common::{artefacts, cpp_helper, registry, sandbox};
+use judge_grader::checkers::custom::PartialPoints;
 use judge_grader::compile::{CompileJob, build, program_for};
 use judge_grader::error::GradeError;
 use judge_grader::interactor::{Boxes, Interaction, Interactive, interact};
@@ -76,6 +77,7 @@ fn play_in(g: &mut Game, key: &str, source: &str) -> Result<Interactive, GradeEr
         input: &scratch.join("input"),
         answer: &scratch.join("answer"),
         points: 1.0,
+        partial: PartialPoints::Absolute,
     };
     interact(Boxes { solution: &mut g.solution, helper: &mut g.helper }, &x)
 }

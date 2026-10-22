@@ -428,6 +428,81 @@ fn a_bridged_checker_grades_partial_points_as_case_points_or_a_percentage() {
     }
 }
 
+/// `CHECKER`, but an answer off by one earns `quitp(0)`.
+const ZERO_POINT_CHECKER: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerTestlibCmd(argc, argv);
+    int want = ans.readInt(), got = ouf.readInt();
+    if (got == want) quitf(_ok, "correct");
+    if (got == want + 1) quitp(0, "close but worth nothing");
+    quitf(_wa, "expected %d, found %d", want, got);
+}
+"#;
+
+#[test]
+fn zero_checker_points_are_wa_and_a_full_run_stops_at_such_a_pretest() {
+    let mut b = bench(88);
+    let init = "checker: {name: bridged, args: {files: check.cpp, lang: CPP17, type: testlib}}\n\
+                pretest_test_cases:\n- {in: p.in, out: p.out, points: 10}\n\
+                test_cases:\n- {in: 1.in, out: 1.out, points: 50}\n- {in: 2.in, out: 2.out, points: 50}\n";
+    let mut files = APLUSB.to_vec();
+    files[0] = ("init.yml", init.as_bytes());
+    files.extend([
+        ("p.in", &b"10 1\n"[..]),
+        ("p.out", b"11\n"),
+        ("check.cpp", ZERO_POINT_CHECKER.as_bytes()),
+    ]);
+    b.write("zero", &files);
+    let off_by_one = "a, b = map(int, input().split())\nprint(a + b + (1 if a == 10 else 0))\n";
+    let (outcome, rec) = b.run("zero", "PY3", off_by_one);
+    assert_eq!(outcome, Outcome::Graded);
+    assert_eq!(rec.shape(), [(Status::Wa, 0.0), (Status::Sc, 0.0), (Status::Sc, 0.0)]);
+    let problem = b.resolve("zero", 0);
+    let mut rec = Recorder::default();
+    let mut pretests = submission("PY3", off_by_one.as_bytes());
+    pretests.pretests_only = true;
+    assert_eq!(b.judge(&problem, &pretests, &mut rec), Outcome::Graded);
+    assert_eq!(rec.shape(), [(Status::Wa, 0.0)], "points 0 on a 10-point case");
+}
+
+/// The guessing game, but finding the secret earns `quitp(50)`.
+const HALF_POINTS_INTERACTOR: &str = r#"#include "testlib.h"
+int main(int argc, char* argv[]) {
+    registerInteraction(argc, argv);
+    int secret = inf.readInt(), asked = 0;
+    while (true) {
+        int guess = ouf.readInt();
+        if (++asked > 40) quitf(_wa, "too many guesses");
+        if (guess == secret) { std::cout << "=" << std::endl; quitp(50, "found in %d", asked); }
+        std::cout << (guess < secret ? "<" : ">") << std::endl;
+    }
+}
+"#;
+
+/// An interactor's `points N` is N points of the case, or N% with `treat_checker_points_as_percentage`.
+#[test]
+fn an_interactor_grades_partial_points_as_case_points_or_a_percentage() {
+    let mut b = bench(90);
+    let modes =
+        [("halfpoints", "", 40.0), ("halfpercent", ", treat_checker_points_as_percentage: true", 20.0)];
+    for (code, flag, points) in modes {
+        let init = format!(
+            "interactive: {{files: inter.cpp, type: testlib, lang: CPP17{flag}}}\n\
+             test_cases:\n- {{in: 1.in, out: 1.out, points: 40}}\n"
+        );
+        let files: [(&str, &[u8]); 4] = [
+            ("init.yml", init.as_bytes()),
+            ("inter.cpp", HALF_POINTS_INTERACTOR.as_bytes()),
+            ("1.in", b"377\n"),
+            ("1.out", b""),
+        ];
+        b.write(code, &files);
+        let (outcome, rec) = b.run(code, "CPP17", BINARY_SEARCH);
+        assert_eq!(outcome, Outcome::Graded, "{code}");
+        assert_eq!(rec.shape(), [(Status::Ac, points)], "{code}");
+    }
+}
+
 #[test]
 fn text_language_answers_every_case_with_the_source() {
     let mut b = bench(20);

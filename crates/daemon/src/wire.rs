@@ -13,9 +13,10 @@ pub use judge_proto::v1::{BridgeMessage, JudgeMessage, bridge_message, judge_mes
 
 pub const MAX_INLINE_SOURCE: usize = 1 << 20;
 /// What this judge grades beyond plain programs (`Hello.features`). SCRATCH is not supported.
-pub const FEATURES: [&str; 11] = [
+pub const FEATURES: [&str; 12] = [
     "interactive",
     "interactive.checker",
+    "interactive.percentage",
     "file_io",
     "output_only",
     "signature",

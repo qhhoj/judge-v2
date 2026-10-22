@@ -8,7 +8,7 @@ use crate::artefacts::{Artefacts, HelperSource, read_data_source};
 use crate::case_judges::{
     CaseContext, Check, InteractiveCases, OutputCases, ProgramCases, UnreadableOutputs,
 };
-use crate::checkers::custom::CustomChecker;
+use crate::checkers::custom::{CustomChecker, PartialPoints};
 use crate::checkers::select::{CheckerChoice, CustomKind, choose};
 use crate::checkers::themis::{self, ThemisNames};
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
@@ -355,9 +355,14 @@ fn grade_interactive(
     let check =
         spec.checker.as_ref().map(|checker| check_of(env, problem, checker, time_limit_s)).transpose()?;
     let checker = check.map(|check| CaseContext { problem, check, scratch: env.scratch.clone() });
+    let partial = if spec.treat_checker_points_as_percentage {
+        PartialPoints::Percentage
+    } else {
+        PartialPoints::Absolute
+    };
     let limits = limits_of(run.submission, &env.defaults);
     let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
-    let mut judge = InteractiveCases { problem, boxes, program, interactor, limits, checker };
+    let mut judge = InteractiveCases { problem, boxes, program, interactor, limits, checker, partial };
     grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
 }
 
