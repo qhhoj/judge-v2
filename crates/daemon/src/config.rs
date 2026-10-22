@@ -1,5 +1,6 @@
 //! `/etc/qhhoj-judge/config.toml` (spec §7 "Config").
 
+use judge_problem::plan::MAX_OUTPUT_LIMIT;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -54,16 +55,41 @@ impl Default for Reconnect {
     }
 }
 
+/// A per-box disk quota: `kib` in 1 KiB blocks (isolate `--quota`).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiskQuotaConfig {
+    pub kib: u32,
+    pub inodes: u32,
+}
+
+/// Smallest disk quota a box may get: a run's stdout and stderr, each up to the largest output limit,
+/// plus 64 MiB for a compiler's temporary files. Less would cut a legal output short with EDQUOT.
+pub const MIN_DISK_QUOTA_KIB: u64 = (2 * MAX_OUTPUT_LIMIT + (64 << 20)) / 1024;
+/// Fewest inodes a box may get: a compile's temporary files and a JVM program's class files.
+pub const MIN_DISK_QUOTA_INODES: u32 = 256;
+/// isolate refuses numbers above a C `int`.
+const ISOLATE_MAX_NUMBER: u32 = i32::MAX as u32;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct IsolatePaths {
     pub bin: PathBuf,
     pub taskset: PathBuf,
+    /// isolate's own config, read at start to see whether its `box<id>.cpus` lines pin the boxes.
+    pub config: PathBuf,
+    /// Off when absent. Needs user quotas on isolate's box root (DEPLOY.md).
+    pub disk_quota: Option<DiskQuotaConfig>,
 }
 
 impl Default for IsolatePaths {
     fn default() -> Self {
-        IsolatePaths { bin: "/usr/local/bin/isolate".into(), taskset: "/usr/bin/taskset".into() }
+        IsolatePaths {
+            bin: "/usr/local/bin/isolate".into(),
+            taskset: "/usr/bin/taskset".into(),
+            config: "/usr/local/etc/isolate".into(),
+            disk_quota: None,
+        }
     }
 }
 
@@ -137,7 +163,22 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
     if config.control_dir.is_some() && !is_loopback_url(&config.bridge_url) {
         return Err(invalid("control_dir is for local test stacks only"));
     }
-    Ok(())
+    validate_disk_quota(config.isolate.disk_quota)
+}
+
+fn validate_disk_quota(quota: Option<DiskQuotaConfig>) -> Result<(), ConfigError> {
+    match quota {
+        Some(q) if u64::from(q.kib) < MIN_DISK_QUOTA_KIB => {
+            Err(invalid(format!("isolate.disk_quota.kib must be at least {MIN_DISK_QUOTA_KIB}")))
+        }
+        Some(q) if q.inodes < MIN_DISK_QUOTA_INODES => {
+            Err(invalid(format!("isolate.disk_quota.inodes must be at least {MIN_DISK_QUOTA_INODES}")))
+        }
+        Some(q) if q.kib.max(q.inodes) > ISOLATE_MAX_NUMBER => {
+            Err(invalid(format!("isolate.disk_quota values must be at most {ISOLATE_MAX_NUMBER}")))
+        }
+        _ => Ok(()),
+    }
 }
 
 pub fn parse(text: &str) -> Result<Config, ConfigError> {
@@ -224,6 +265,19 @@ mod tests {
         assert_eq!(c.read_key_in(Some(dir.path())).unwrap(), "secret");
         std::fs::write(dir.path().join("judge-key"), "  \n").unwrap();
         assert!(c.read_key_in(Some(dir.path())).is_err());
+    }
+
+    #[test]
+    fn a_disk_quota_too_small_for_the_largest_legal_output_is_refused() {
+        let with = |kib: u64, inodes: u32| {
+            format!("{MIN}[isolate]\ndisk_quota = {{ kib = {kib}, inodes = {inodes} }}\n")
+        };
+        assert!(parse(MIN).unwrap().isolate.disk_quota.is_none(), "off by default");
+        let ok = parse(&with(MIN_DISK_QUOTA_KIB, 1024)).unwrap().isolate.disk_quota.unwrap();
+        assert_eq!((u64::from(ok.kib), ok.inodes), (MIN_DISK_QUOTA_KIB, 1024));
+        assert!(parse(&with(MIN_DISK_QUOTA_KIB - 1, 1024)).is_err());
+        assert!(parse(&with(MIN_DISK_QUOTA_KIB, MIN_DISK_QUOTA_INODES - 1)).is_err());
+        assert!(parse(&with(1 << 31, 1024)).is_err(), "isolate takes no number above a C int");
     }
 
     #[test]

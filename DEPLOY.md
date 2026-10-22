@@ -226,6 +226,8 @@ Edit `/etc/qhhoj-judge/config.toml`:
 - leave `[tls] server_name = "bridge.qhhoj.internal"` and `ca_file` as they are
 - leave `slots` and `cores` unset: the judge uses one slot per physical core, minus one core for itself
 
+Then set up [box isolation](#box-isolation-cpuset-and-disk-quota): cpuset pinning and the box disk quota.
+
 ### 9. Firewall
 
 ```sh
@@ -312,6 +314,72 @@ the judge starts with `/etc/qhhoj-judge/config.toml` (config, `bridge-ca.pem` an
 read from the config's `key_file`, so mount it and set an absolute path). Add `--security-opt apparmor=unconfined` if the
 host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local disk, never NFS.
 
+## Box isolation (cpuset and disk quota)
+
+Both are off until you do the steps below; without them the judge still runs, with a warning at start.
+Do them on a new host in Phase A after step 8, and on a running host in an agreed deploy window.
+
+### CPU pinning by cpuset
+
+The judge pins each box to its worker's core with `taskset`, which a program can undo with
+`sched_setaffinity` and then slow another slot down (wrong TLEs). isolate's cgroup cpuset cannot be undone
+from inside a box. isolate reads it from `box<id>.cpus` lines in `/usr/local/etc/isolate`.
+
+```sh
+cat "$(cat /run/isolate/cgroup)/cgroup.subtree_control"      # must list cpuset (isolate.service enables it)
+sed -i '/^box[0-9]*\.cpus/d' /usr/local/etc/isolate           # drop old lines
+/opt/qhhoj-judge/current/qhhoj-judge isolate-cpus --config /etc/qhhoj-judge/config.toml >> /usr/local/etc/isolate
+systemctl restart qhhoj-judge
+journalctl -u qhhoj-judge -n 50 --no-pager | grep -i pinned   # "boxes pinned to their cores by cpuset"
+```
+
+Add the lines only when `cpuset` is listed: isolate fails every run of a box with a `cpus` line when the
+controller is missing. Run the two middle commands again whenever `cores`, `slots` or `box_base` change.
+At start the judge checks the lines against its cores:
+
+- no lines: warning `boxes pinned by taskset only`, the judge runs;
+- a line on another core, or lines without the cpuset controller: the judge refuses to start and says why.
+
+In the container image, mount an isolate config with the lines over `/usr/local/etc/isolate`; `cg-setup.sh`
+enables cpuset when the host delegates it to the container.
+
+### Disk quota on the box root
+
+`--fsize` caps each file a run writes, not their total: one run can write many files and fill the disk that
+the box root shares with the cache (and, on a shared host, the databases). Two layers fix it:
+
+1. **box_root on its own filesystem** caps all boxes together and keeps `/` safe. Size it at least
+   2 × slots × the quota below, plus 1 GiB (8 GiB for 4 slots and 512 MiB quotas).
+2. **User quotas there** with `disk_quota` in the judge config cap each box.
+
+Without a spare partition, a loop image works (it takes 8 GiB of `/`: check `df -h /` first). Box 999 below
+is one the judge never owns: isolate keeps the test's 1 MB limit on that box's uid.
+
+```sh
+apt install -y quota
+systemctl stop qhhoj-judge
+fallocate -l 8G /var/local/isolate-box.img
+mkfs.ext4 -q -O quota -E quotatype=usrquota /var/local/isolate-box.img
+echo "/var/local/isolate-box.img /var/local/lib/isolate ext4 loop,nodev,nosuid,usrquota 0 2" >> /etc/fstab
+systemctl daemon-reload && mount /var/local/lib/isolate
+quotaon -pu /var/local/lib/isolate                         # "user quota on /var/local/lib/isolate ... is on"
+isolate --cg -b 999 --init --quota=1000,100 && isolate --cg -b 999 --cleanup   # no "Cannot set disk quota"
+```
+
+The `usrquota` mount option is what enforces the limits (without it ext4 only counts usage). Then in
+`/etc/qhhoj-judge/config.toml`:
+
+```toml
+[isolate]
+disk_quota = { kib = 524288, inodes = 1024 }   # per box: 512 MiB, 1024 files
+```
+
+`kib` must be at least 196608 (stdout and stderr each at the 64 MiB output cap, plus 64 MiB for a
+compiler's temporary files). `systemctl start qhhoj-judge`; when the box root has no user quotas the journal
+says `isolate's box root has no user quotas` once and runs go without a quota. isolate keeps a box uid's
+last limits on the filesystem: after removing `disk_quota`, recreate the image (or clear them with
+`setquota`).
+
 ## Operating the judge
 
 - **Logs:** `journalctl -u qhhoj-judge -f`.
@@ -338,6 +406,7 @@ host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local di
 | Journal: `Judge key check failed` / no session | Wrong key or `name`; the key file must be exactly the key, mode 0400 root |
 | Every submission is "internal error" | `NoNewPrivileges=yes`, isolate not setuid, or `isolate.service` not running |
 | One language always fails | `selftest --require <LANG>` names the missing compiler |
+| Judge refuses to start: `isolate config pins box …` or `… no cpuset controller` | [CPU pinning by cpuset](#cpu-pinning-by-cpuset): regenerate the `box<id>.cpus` lines, or check the controller |
 | After a reboot nothing works | `systemctl status wg-quick@wg0 isolate qhhoj-judge-tuning qhhoj-judge`; `findmnt /srv/qhhoj/problem-data` |
 
 ## Appendix: the site admin's side (for reference)

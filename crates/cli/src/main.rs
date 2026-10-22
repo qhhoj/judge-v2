@@ -1,4 +1,5 @@
-//! `qhhoj-judge`: the judge daemon, `run` (one local grade), `generate` and `selftest` (one a+b per language).
+//! `qhhoj-judge`: the judge daemon, `run` (one local grade), `generate`, `selftest` (one a+b per language)
+//! and `isolate-cpus`.
 
 mod generate_cmd;
 mod local;
@@ -26,6 +27,8 @@ enum Command {
     Generate(generate_cmd::GenerateArgs),
     /// Compile and run an accepted a+b for every available language.
     Selftest(selftest::SelftestArgs),
+    /// Print the isolate config lines that pin every box to its worker's core (DEPLOY.md).
+    IsolateCpus,
 }
 
 /// `run` exits 1 for anything but a graded submission, a failure to judge included.
@@ -57,6 +60,14 @@ fn selftest_paths(
     Ok((config.languages_file, config.testlib_dir))
 }
 
+fn isolate_cpus(config: &std::path::Path) -> anyhow::Result<bool> {
+    use judge_daemon::{cores, cpuset};
+    let config = judge_daemon::config::load(config)?;
+    let cores = cores::worker_cores(&config, std::path::Path::new(cores::SYSFS_CPU));
+    print!("{}", cpuset::isolate_cpus_lines(config.box_base, &cores));
+    Ok(true)
+}
+
 fn daemon(config: &std::path::Path) -> anyhow::Result<bool> {
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(judge_daemon::run::run_daemon(config)).map(|()| true)
@@ -70,6 +81,7 @@ fn main() -> ExitCode {
         Some(Command::Selftest(args)) => {
             selftest_paths(&cli.config, &args).and_then(|(l, t)| selftest::selftest(&l, &t, &args))
         }
+        Some(Command::IsolateCpus) => isolate_cpus(&cli.config),
         None => daemon(&cli.config),
     })
 }

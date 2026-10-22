@@ -2,7 +2,8 @@
 //! dirs → owned boxes cleaned → workers → metrics → link; on SIGTERM or SIGINT it drains and stops.
 
 use crate::config::{Config, load};
-use crate::cores::worker_cores;
+use crate::cores::{SYSFS_CPU, worker_cores};
+use crate::cpuset::{Pinning, host_pinning};
 use crate::drain::wait_until;
 use crate::gates::Gates;
 use crate::generation::GrpcGeneration;
@@ -23,7 +24,7 @@ use judge_problem::data_version::{FsStamps, StampSource, WaitPolicy};
 use judge_problem::dir_cache::DirCache;
 use judge_problem::resolve::Resolver;
 use judge_sandbox::boxes::{box_pair, cleanup_owned};
-use judge_sandbox::{IsolateBox, SandboxConfig};
+use judge_sandbox::{DiskQuota, IsolateBox, SandboxConfig, disk_quota_works};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -66,7 +67,31 @@ fn sandbox_config(config: &Config) -> SandboxConfig {
         isolate_bin: config.isolate.bin.clone(),
         taskset_bin: config.isolate.taskset.clone(),
         meta_dir: config.cache_dir.join("meta"),
+        disk_quota: config.isolate.disk_quota.map(|q| DiskQuota { kib: q.kib, inodes: q.inodes }),
     }
+}
+
+/// The sandbox config, without its disk quota (warned once) when isolate's box root cannot take one.
+fn checked_sandbox(config: &Config) -> anyhow::Result<SandboxConfig> {
+    let mut sandbox = sandbox_config(config);
+    if sandbox.disk_quota.is_some() && !disk_quota_works(&sandbox, config.box_base)? {
+        tracing::warn!("isolate's box root has no user quotas: runs get no disk quota (DEPLOY.md)");
+        sandbox.disk_quota = None;
+    }
+    Ok(sandbox)
+}
+
+/// Logs how the boxes are kept on their cores; refuses to start when isolate would fail every run.
+fn check_pinning(config: &Config, cores: &[u32]) -> anyhow::Result<()> {
+    match host_pinning(&config.isolate.config, config.box_base, cores) {
+        Pinning::Cpuset => tracing::info!("boxes pinned to their cores by cpuset"),
+        Pinning::TasksetOnly(boxes) => tracing::warn!(
+            ?boxes,
+            "boxes pinned by taskset only: a run can move to another core (DEPLOY.md, `qhhoj-judge isolate-cpus`)"
+        ),
+        Pinning::Broken(reason) => anyhow::bail!("{reason}"),
+    }
+    Ok(())
 }
 
 fn grader_defaults(config: &Config) -> GraderDefaults {
@@ -78,16 +103,20 @@ fn grader_defaults(config: &Config) -> GraderDefaults {
 }
 
 /// Two boxes per worker (solution, helper), pinned to the worker's core.
-fn runners(config: &Config, cores: &[u32], shared: &Shared) -> anyhow::Result<Vec<Box<dyn Runner>>> {
-    let sandbox = sandbox_config(config);
+fn runners(
+    config: &Config,
+    sandbox: &SandboxConfig,
+    cores: &[u32],
+    shared: &Shared,
+) -> anyhow::Result<Vec<Box<dyn Runner>>> {
     let mut runners: Vec<Box<dyn Runner>> = Vec::new();
     for (worker, core) in cores.iter().enumerate() {
         let ids = box_pair(config.box_base, worker as u32).context("box ids overflow")?;
         let scratch = config.cache_dir.join("work").join(worker.to_string());
         std::fs::create_dir_all(&scratch)?;
         runners.push(Box::new(JudgeEnv {
-            solution: IsolateBox::open(&sandbox, ids.solution, Some(*core))?,
-            helper: IsolateBox::open(&sandbox, ids.helper, Some(*core))?,
+            solution: IsolateBox::open(sandbox, ids.solution, Some(*core))?,
+            helper: IsolateBox::open(sandbox, ids.helper, Some(*core))?,
             artefacts: shared.artefacts.clone(),
             stamps: shared.stamps.clone(),
             scratch,
@@ -142,13 +171,15 @@ fn shared(config: &Config, registry: LanguageRegistry, build_ids: HashMap<String
 
 fn build(config: &Arc<Config>) -> anyhow::Result<Daemon> {
     let (registry, hello, versions) = languages(config)?;
-    let cores = worker_cores(config, Path::new("/sys/devices/system/cpu"));
+    let cores = worker_cores(config, Path::new(SYSFS_CPU));
     fresh_dirs(config)?;
     for (id, error) in cleanup_owned(&sandbox_config(config), config.box_base, cores.len() as u32) {
         tracing::warn!(box_id = id, %error, "startup cleanup failed");
     }
+    check_pinning(config, &cores)?;
+    let sandbox = checked_sandbox(config)?;
     let shared = shared(config, registry, versions);
-    let runners = runners(config, &cores, &shared)?;
+    let runners = runners(config, &sandbox, &cores, &shared)?;
     let (outboxes, metrics) = (Arc::new(Outboxes::new(OUTBOX_WATERMARK)), Arc::new(Metrics::new()));
     let connection: Arc<RwLock<Option<Connection>>> = Arc::default();
     let deps = WorkerDeps {

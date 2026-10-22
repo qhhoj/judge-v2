@@ -8,4 +8,4 @@ pub mod meta;
 pub mod spec;
 
 pub use error::SandboxError;
-pub use isolate_box::{IsolateBox, SandboxConfig, cleanup_box};
+pub use isolate_box::{DiskQuota, IsolateBox, SandboxConfig, cleanup_box, disk_quota_works};

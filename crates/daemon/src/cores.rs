@@ -4,6 +4,9 @@ use crate::config::Config;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+/// Where the kernel lists the CPUs.
+pub const SYSFS_CPU: &str = "/sys/devices/system/cpu";
+
 fn online(cpu_dir: &Path) -> bool {
     std::fs::read_to_string(cpu_dir.join("online")).map_or(true, |s| s.trim() == "1")
 }
