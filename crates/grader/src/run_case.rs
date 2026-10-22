@@ -5,10 +5,10 @@ use crate::file_io::SolutionFileIo;
 use crate::languages::{ExceptionStyle, Placeholders, expand};
 use crate::program::Program;
 use judge_problem::init::is_plain_box_name;
-use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::meta::Meta;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
+use judge_sandbox::{IsolateBox, Room};
 use std::fs::File;
 use std::io::Read;
 use std::os::fd::AsRawFd;
@@ -132,14 +132,15 @@ fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
 }
 
 /// Resets the box and puts the program and the case input in it, the input also under each alias that
-/// names no program file.
+/// names no program file. The box's disk quota also holds both and an output of `output_cap` bytes.
 fn stage(
     sandbox: &mut IsolateBox,
     program: &Program,
-    input: &File,
+    (input, output_cap): (&File, u64),
     layout: &Layout,
 ) -> Result<(), GradeError> {
-    sandbox.reset()?;
+    let room = Room::for_files(&[&program.dir])?.plus_file(input.metadata()?.len()).plus_file(output_cap);
+    sandbox.reset_with_room(room)?;
     sandbox.put_tree(&program.dir)?;
     // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.
     let handle = format!("/proc/self/fd/{}", input.as_raw_fd());
@@ -166,7 +167,7 @@ pub fn run_case(
     if let Some(file_io) = io.file_io {
         check_file_io(file_io)?;
     }
-    stage(sandbox, runnable.program, io.input, &layout)?;
+    stage(sandbox, runnable.program, (io.input, io.output_cap), &layout)?;
     let (box_output, any_case) = (layout.output.clone(), layout.output_any_case);
     let spec = run_spec(runnable, layout, io.output_cap);
     let meta = sandbox.run(&spec)?;

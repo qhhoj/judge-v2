@@ -4,9 +4,9 @@ use super::plan::ProgramLimits;
 use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
-use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
+use judge_sandbox::{IsolateBox, Room};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
@@ -81,8 +81,15 @@ fn spec_of(run: &ProgramRun) -> RunSpec {
     }
 }
 
+/// Resets the box and puts the program and its stdin in it; the disk quota also holds an output at the cap.
 fn stage(sandbox: &mut IsolateBox, run: &ProgramRun) -> Result<(), GradeError> {
-    sandbox.reset()?;
+    let stdin_len = match run.stdin {
+        Some(stdin) => stdin.metadata()?.len(),
+        None => 0,
+    };
+    sandbox.reset_with_room(
+        Room::for_files(&[&run.program.dir])?.plus_file(stdin_len).plus_file(run.output_cap),
+    )?;
     sandbox.put_tree(&run.program.dir)?;
     if let Some(stdin) = run.stdin {
         // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.

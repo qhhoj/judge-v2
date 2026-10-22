@@ -349,16 +349,17 @@ enables cpuset when the host delegates it to the container.
 the box root shares with the cache (and, on a shared host, the databases). Two layers fix it:
 
 1. **box_root on its own filesystem** caps all boxes together and keeps `/` safe. Size it at least
-   2 × slots × the quota below, plus 1 GiB (8 GiB for 4 slots and 512 MiB quotas).
+   2 × slots × (headroom + 3 × the largest test file), plus 1 GiB: a checker box holds a case's input,
+   output and answer at once (10 GiB for 4 slots, 256 MiB headroom and 256 MiB files).
 2. **User quotas there** with `disk_quota` in the judge config cap each box.
 
-Without a spare partition, a loop image works (it takes 8 GiB of `/`: check `df -h /` first). Box 999 below
+Without a spare partition, a loop image works (it takes 10 GiB of `/`: check `df -h /` first). Box 999 below
 is one the judge never owns: isolate keeps the test's 1 MB limit on that box's uid.
 
 ```sh
 apt install -y quota
 systemctl stop qhhoj-judge
-fallocate -l 8G /var/local/isolate-box.img
+fallocate -l 10G /var/local/isolate-box.img
 mkfs.ext4 -q -O quota -E quotatype=usrquota /var/local/isolate-box.img
 echo "/var/local/isolate-box.img /var/local/lib/isolate ext4 loop,nodev,nosuid,usrquota 0 2" >> /etc/fstab
 systemctl daemon-reload && mount /var/local/lib/isolate
@@ -371,14 +372,33 @@ The `usrquota` mount option is what enforces the limits (without it ext4 only co
 
 ```toml
 [isolate]
-disk_quota = { kib = 524288, inodes = 1024 }   # per box: 512 MiB, 1024 files
+disk_quota = { headroom_kib = 262144, headroom_inodes = 1024 }   # per box, beyond what the judge stages
 ```
 
-`kib` must be at least 196608 (stdout and stderr each at the 64 MiB output cap, plus 64 MiB for a
-compiler's temporary files). `systemctl start qhhoj-judge`; when the box root has no user quotas the journal
-says `isolate's box root has no user quotas` once and runs go without a quota. isolate keeps a box uid's
-last limits on the filesystem: after removing `disk_quota`, recreate the image (or clear them with
-`setquota`).
+isolate charges every file in a box to its quota, the judge's own too. So each time the judge resets a box
+it sets the quota to the headroom plus what it is about to put in (program, input, answer, contestant
+output) and the most the run may write (its output limit; a compile's snapshot limit). The headroom only
+covers the rest: `headroom_kib` must be at least 131072 (a stderr or other file at the 64 MiB output cap,
+plus 64 MiB for a compiler's temporary files), `headroom_inodes` at least 256.
+
+`systemctl start qhhoj-judge`; when the box root has no user quotas the journal says
+`isolate's box root has no user quotas` once and runs go without a quota. isolate keeps a box uid's last
+limits on the filesystem: after removing `disk_quota`, recreate the image (or clear them with `setquota`).
+
+### Verify on the host
+
+Run the isolate-gated tests once on the judge host after these steps, before relying on either layer. Build
+them where cargo is (`cargo test -p judge-sandbox --features isolate --no-run` prints the test binary's
+path), copy the binary over, and with the judge stopped:
+
+```sh
+grep -q '^box511\.cpus' /usr/local/etc/isolate || echo 'box511.cpus = 1' >> /usr/local/etc/isolate
+JUDGE_TEST_BOX_BASE=500 ./isolate_box-<hash> --test-threads=1 cpuset quota headroom
+sed -i '/^box511\.cpus/d' /usr/local/etc/isolate
+```
+
+Boxes 500 and up must be ones the judge does not own (`box_base` is below them). A line `skip:` means that
+layer is not set up; `test result: ok` with no `skip:` lines is the pass.
 
 ## Operating the judge
 

@@ -55,19 +55,20 @@ impl Default for Reconnect {
     }
 }
 
-/// A per-box disk quota: `kib` in 1 KiB blocks (isolate `--quota`).
+/// A per-box disk quota (isolate `--quota`, `kib` in 1 KiB blocks), as headroom: each box's quota is this
+/// plus the files the judge puts in it and the output the run may write.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiskQuotaConfig {
-    pub kib: u32,
-    pub inodes: u32,
+    pub headroom_kib: u32,
+    pub headroom_inodes: u32,
 }
 
-/// Smallest disk quota a box may get: a run's stdout and stderr, each up to the largest output limit,
-/// plus 64 MiB for a compiler's temporary files. Less would cut a legal output short with EDQUOT.
-pub const MIN_DISK_QUOTA_KIB: u64 = (2 * MAX_OUTPUT_LIMIT + (64 << 20)) / 1024;
-/// Fewest inodes a box may get: a compile's temporary files and a JVM program's class files.
-pub const MIN_DISK_QUOTA_INODES: u32 = 256;
+/// Smallest headroom: a run's stderr or another file up to the largest output limit, plus 64 MiB for a
+/// compiler's temporary files. Less would fail a legal run with EDQUOT.
+pub const MIN_HEADROOM_KIB: u64 = (MAX_OUTPUT_LIMIT + (64 << 20)) / 1024;
+/// Fewest headroom inodes: a compile's temporary files and a JVM program's class files.
+pub const MIN_HEADROOM_INODES: u32 = 256;
 /// isolate refuses numbers above a C `int`.
 const ISOLATE_MAX_NUMBER: u32 = i32::MAX as u32;
 
@@ -168,13 +169,13 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
 
 fn validate_disk_quota(quota: Option<DiskQuotaConfig>) -> Result<(), ConfigError> {
     match quota {
-        Some(q) if u64::from(q.kib) < MIN_DISK_QUOTA_KIB => {
-            Err(invalid(format!("isolate.disk_quota.kib must be at least {MIN_DISK_QUOTA_KIB}")))
+        Some(q) if u64::from(q.headroom_kib) < MIN_HEADROOM_KIB => {
+            Err(invalid(format!("isolate.disk_quota.headroom_kib must be at least {MIN_HEADROOM_KIB}")))
         }
-        Some(q) if q.inodes < MIN_DISK_QUOTA_INODES => {
-            Err(invalid(format!("isolate.disk_quota.inodes must be at least {MIN_DISK_QUOTA_INODES}")))
+        Some(q) if q.headroom_inodes < MIN_HEADROOM_INODES => {
+            Err(invalid(format!("isolate.disk_quota.headroom_inodes must be at least {MIN_HEADROOM_INODES}")))
         }
-        Some(q) if q.kib.max(q.inodes) > ISOLATE_MAX_NUMBER => {
+        Some(q) if q.headroom_kib.max(q.headroom_inodes) > ISOLATE_MAX_NUMBER => {
             Err(invalid(format!("isolate.disk_quota values must be at most {ISOLATE_MAX_NUMBER}")))
         }
         _ => Ok(()),
@@ -268,16 +269,18 @@ mod tests {
     }
 
     #[test]
-    fn a_disk_quota_too_small_for_the_largest_legal_output_is_refused() {
+    fn a_disk_quota_headroom_too_small_for_the_largest_legal_output_is_refused() {
         let with = |kib: u64, inodes: u32| {
-            format!("{MIN}[isolate]\ndisk_quota = {{ kib = {kib}, inodes = {inodes} }}\n")
+            format!("{MIN}[isolate]\ndisk_quota = {{ headroom_kib = {kib}, headroom_inodes = {inodes} }}\n")
         };
         assert!(parse(MIN).unwrap().isolate.disk_quota.is_none(), "off by default");
-        let ok = parse(&with(MIN_DISK_QUOTA_KIB, 1024)).unwrap().isolate.disk_quota.unwrap();
-        assert_eq!((u64::from(ok.kib), ok.inodes), (MIN_DISK_QUOTA_KIB, 1024));
-        assert!(parse(&with(MIN_DISK_QUOTA_KIB - 1, 1024)).is_err());
-        assert!(parse(&with(MIN_DISK_QUOTA_KIB, MIN_DISK_QUOTA_INODES - 1)).is_err());
+        let ok = parse(&with(MIN_HEADROOM_KIB, 1024)).unwrap().isolate.disk_quota.unwrap();
+        assert_eq!((u64::from(ok.headroom_kib), ok.headroom_inodes), (MIN_HEADROOM_KIB, 1024));
+        assert!(parse(&with(MIN_HEADROOM_KIB - 1, 1024)).is_err());
+        assert!(parse(&with(MIN_HEADROOM_KIB, MIN_HEADROOM_INODES - 1)).is_err());
         assert!(parse(&with(1 << 31, 1024)).is_err(), "isolate takes no number above a C int");
+        let old = format!("{MIN}[isolate]\ndisk_quota = {{ kib = 524288, inodes = 1024 }}\n");
+        assert!(parse(&old).is_err(), "a total quota is not taken for headroom");
     }
 
     #[test]

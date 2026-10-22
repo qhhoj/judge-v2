@@ -2,6 +2,7 @@
 
 use crate::error::SandboxError;
 use crate::meta::{Meta, parse_meta};
+use crate::room::Room;
 use crate::spec::{RunSpec, isolate_args};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
@@ -9,13 +10,24 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// A disk quota on every file a box's runs write together (isolate `--quota`): `kib` in 1 KiB blocks.
-/// `--fsize` caps one file only. isolate sets the quota on the box uid at `--init`, so it covers all runs
-/// until the next reset.
+/// A disk quota on everything in a box (isolate `--quota`, in 1 KiB blocks); `--fsize` caps one file only.
+/// isolate sets it on the box uid at `--init`, and at `--run` charges every file in `/box` to that uid, the
+/// judge's own too. So each reset gets the headroom here plus the `Room` its caller stages and expects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiskQuota {
-    pub kib: u32,
-    pub inodes: u32,
+    pub headroom_kib: u32,
+    pub headroom_inodes: u32,
+}
+
+/// isolate refuses numbers above a C `int`.
+const ISOLATE_MAX_NUMBER: u64 = i32::MAX as u64;
+
+impl DiskQuota {
+    /// isolate's `--quota` for a box that also holds `room`.
+    fn arg(&self, room: Room) -> String {
+        let total = |headroom: u32, more: u64| more.saturating_add(headroom.into()).min(ISOLATE_MAX_NUMBER);
+        format!("--quota={},{}", total(self.headroom_kib, room.kib), total(self.headroom_inodes, room.inodes))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,10 +77,9 @@ pub fn cleanup_box(config: &SandboxConfig, id: u32) -> Result<(), SandboxError> 
     isolate(config, id, &["--cleanup".into()]).map(|_| ())
 }
 
-/// A fresh box, with the config's disk quota set on it. Returns the box's `/box` directory.
-fn init_box(config: &SandboxConfig, id: u32) -> Result<PathBuf, SandboxError> {
-    let mut args: Vec<String> =
-        config.disk_quota.iter().map(|q| format!("--quota={},{}", q.kib, q.inodes)).collect();
+/// A fresh box, with a disk quota of the config's headroom plus `room`. Returns the box's `/box` directory.
+fn init_box(config: &SandboxConfig, id: u32, room: Room) -> Result<PathBuf, SandboxError> {
+    let mut args: Vec<String> = config.disk_quota.iter().map(|q| q.arg(room)).collect();
     args.push("--init".into());
     Ok(Path::new(&isolate(config, id, &args)?).join("box"))
 }
@@ -87,13 +98,18 @@ impl IsolateBox {
     pub fn open(config: &SandboxConfig, id: u32, core: Option<u32>) -> Result<Self, SandboxError> {
         std::fs::create_dir_all(&config.meta_dir)?;
         cleanup_box(config, id)?;
-        let dir = init_box(config, id)?;
+        let dir = init_box(config, id, Room::default())?;
         Ok(IsolateBox { config: config.clone(), id, core, dir, dirty: false })
     }
 
     pub fn reset(&mut self) -> Result<(), SandboxError> {
+        self.reset_with_room(Room::default())
+    }
+
+    /// A fresh box whose disk quota also holds `room`: the files about to be put in and what the run may write.
+    pub fn reset_with_room(&mut self, room: Room) -> Result<(), SandboxError> {
         cleanup_box(&self.config, self.id)?;
-        self.dir = init_box(&self.config, self.id)?;
+        self.dir = init_box(&self.config, self.id, room)?;
         self.dirty = false;
         Ok(())
     }
@@ -301,6 +317,8 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
         }
     }
 
+    const HEADROOM: DiskQuota = DiskQuota { headroom_kib: 196_608, headroom_inodes: 1024 };
+
     fn calls(dir: &Path) -> Vec<String> {
         std::fs::read_to_string(dir.join("calls")).unwrap().lines().map(String::from).collect()
     }
@@ -308,7 +326,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
     #[test]
     fn every_init_sets_the_disk_quota_and_no_other_call_does() {
         let dir = tempfile::tempdir().unwrap();
-        let config = fake_isolate(dir.path(), Some(DiskQuota { kib: 196_608, inodes: 1024 }));
+        let config = fake_isolate(dir.path(), Some(HEADROOM));
         let mut b = IsolateBox::open(&config, 7, None).unwrap();
         b.reset().unwrap();
         drop(b);
@@ -316,6 +334,26 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
         let inits: Vec<_> = calls.iter().filter(|c| c.ends_with("--init")).collect();
         assert_eq!(inits, ["--cg -b7 --quota=196608,1024 --init"; 2], "{calls:?}");
         assert_eq!(calls.iter().filter(|c| c.contains("--quota")).count(), 2, "{calls:?}");
+    }
+
+    #[test]
+    fn a_reset_with_room_gets_the_headroom_plus_the_room() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
+        b.reset_with_room(Room { kib: 153_600, inodes: 3 }).unwrap();
+        b.reset().unwrap();
+        let inits: Vec<_> = calls(dir.path()).into_iter().filter(|c| c.ends_with("--init")).collect();
+        assert_eq!(inits[1], "--cg -b7 --quota=350208,1027 --init");
+        assert_eq!(inits[2], "--cg -b7 --quota=196608,1024 --init", "the room is for one reset only");
+    }
+
+    #[test]
+    fn a_quota_past_what_isolate_takes_is_clamped() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
+        b.reset_with_room(Room { kib: u64::MAX, inodes: 1 << 40 }).unwrap();
+        let last_init = calls(dir.path()).into_iter().rfind(|c| c.ends_with("--init")).unwrap();
+        assert_eq!(last_init, "--cg -b7 --quota=2147483647,2147483647 --init");
     }
 
     #[test]
@@ -330,7 +368,7 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
     #[test]
     fn the_quota_probe_tells_a_box_root_without_quotas_from_other_failures() {
         let dir = tempfile::tempdir().unwrap();
-        let config = fake_isolate(dir.path(), Some(DiskQuota { kib: 196_608, inodes: 1024 }));
+        let config = fake_isolate(dir.path(), Some(HEADROOM));
         assert!(disk_quota_works(&config, 3).unwrap());
         std::fs::write(dir.path().join("no-quota"), "").unwrap();
         assert!(!disk_quota_works(&config, 3).unwrap());

@@ -17,10 +17,10 @@ use crate::program::Program;
 use crate::run_case::{
     Runnable, STDERR_FILE, keeps_stderr, own_files_kib, refine, reported_memory, solution_limits,
 };
-use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::error::SandboxError;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
+use judge_sandbox::{IsolateBox, Room};
 use std::path::Path;
 use std::process::{Child, Stdio as ProcessStdio};
 use std::time::{Duration, Instant};
@@ -125,9 +125,9 @@ fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
 }
 
 fn prepare(boxes: &mut Boxes, x: &Interaction) -> Result<(), GradeError> {
-    boxes.solution.reset()?;
+    boxes.solution.reset_with_room(Room::for_files(&[&x.solution.program.dir])?)?;
     boxes.solution.put_tree(&x.solution.program.dir)?;
-    boxes.helper.reset()?;
+    boxes.helper.reset_with_room(Room::for_files(&[&x.interactor.dir, x.input, x.answer])?)?;
     boxes.helper.put_tree(&x.interactor.dir)?;
     boxes.helper.put("input", x.input, false)?;
     boxes.helper.put("answer", x.answer, false)?;

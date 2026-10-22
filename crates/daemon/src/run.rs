@@ -67,7 +67,10 @@ fn sandbox_config(config: &Config) -> SandboxConfig {
         isolate_bin: config.isolate.bin.clone(),
         taskset_bin: config.isolate.taskset.clone(),
         meta_dir: config.cache_dir.join("meta"),
-        disk_quota: config.isolate.disk_quota.map(|q| DiskQuota { kib: q.kib, inodes: q.inodes }),
+        disk_quota: config
+            .isolate
+            .disk_quota
+            .map(|q| DiskQuota { headroom_kib: q.headroom_kib, headroom_inodes: q.headroom_inodes }),
     }
 }
 

@@ -8,9 +8,9 @@ use super::{CheckError, CheckInput, CheckOutcome};
 use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
-use judge_sandbox::IsolateBox;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
+use judge_sandbox::{IsolateBox, Room};
 
 pub const MAX_FEEDBACK: usize = 50;
 pub const MAX_EXTENDED: usize = 512;
@@ -262,7 +262,8 @@ impl CustomChecker {
         io: &CheckInput,
         themis_names: &ThemisNames,
     ) -> Result<CheckOutcome, GradeError> {
-        sandbox.reset()?;
+        // A themis layout puts each case file in once and links its other names, so it takes the same room.
+        sandbox.reset_with_room(Room::for_files(&[&self.program.dir, io.input, io.output, io.answer])?)?;
         sandbox.put_tree(&self.program.dir)?;
         if self.kind == CustomKind::Themis {
             if themis_names.is_empty() {

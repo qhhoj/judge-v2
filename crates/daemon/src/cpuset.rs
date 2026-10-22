@@ -50,8 +50,9 @@ fn box_cpus(isolate_config: &str) -> BTreeMap<u32, &str> {
 /// The pinning of the owned boxes, from isolate's config and its cgroup parent's `cgroup.subtree_control`.
 pub fn pinning(isolate_config: &str, subtree_control: &str, box_base: u32, cores: &[u32]) -> Pinning {
     let configured = box_cpus(isolate_config);
+    let owned = box_cores(box_base, cores);
     let mut unpinned = Vec::new();
-    for (id, core) in box_cores(box_base, cores) {
+    for &(id, core) in &owned {
         match configured.get(&id) {
             None => unpinned.push(id),
             Some(cpus) if *cpus != core.to_string() => {
@@ -63,7 +64,7 @@ pub fn pinning(isolate_config: &str, subtree_control: &str, box_base: u32, cores
             Some(_) => {}
         }
     }
-    let lines_used = unpinned.len() < box_cores(box_base, cores).len();
+    let lines_used = unpinned.len() < owned.len();
     if lines_used && !subtree_control.split_whitespace().any(|c| c == "cpuset") {
         return Pinning::Broken(
             "isolate config has box cpus lines but isolate's cgroup has no cpuset controller".into(),
