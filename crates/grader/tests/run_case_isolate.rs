@@ -4,7 +4,7 @@ mod common;
 use common::{box_id, language_or_skip, registry, sandbox};
 use judge_grader::compile::{CompileJob, build, program_for};
 use judge_grader::file_io::SolutionFileIo;
-use judge_grader::languages::Language;
+use judge_grader::languages::{DEFAULT_JAVA, Language, jdk_etc_dir};
 use judge_grader::program::Program;
 use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
 use judge_problem::init::FileIo;
@@ -178,15 +178,20 @@ fn a_native_crash_is_rte_by_signal() {
     assert_eq!(run.verdict, RunVerdict::Rte { reason: "SIGSEGV".into() });
 }
 
-/// JAVA with the JRE-only layout of this host: javac is reached through the compiler module.
+/// JAVA with the JRE-only layout of this host: javac is reached through the compiler module, and the
+/// box binds the `/etc` directory of the installed JDK, whatever its major.
 fn java_language() -> Option<Language> {
-    let java = "/usr/lib/jvm/default-java/bin/java";
-    if !std::path::Path::new(java).exists() {
+    let java = format!("{DEFAULT_JAVA}/bin/java");
+    if !std::path::Path::new(&java).exists() {
         eprintln!("skip: JAVA (no JVM on this host)");
         return None;
     }
     let mut language = registry().get("JAVA").unwrap().clone();
-    let javac = [java, "-m", "jdk.compiler/com.sun.tools.javac.Main", "-encoding", "UTF-8", "{class}.java"];
+    let jdk_etc = jdk_etc_dir(std::path::Path::new(DEFAULT_JAVA)).expect("default-java names an OpenJDK");
+    assert_eq!(language.dirs, [jdk_etc.as_str()]);
+    assert_eq!(language.compile_dirs, [jdk_etc.as_str()]);
+    let javac =
+        [java.as_str(), "-m", "jdk.compiler/com.sun.tools.javac.Main", "-encoding", "UTF-8", "{class}.java"];
     language.compile = Some(javac.map(String::from).to_vec());
     Some(language)
 }
