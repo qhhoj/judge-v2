@@ -7,6 +7,8 @@
 //! helper box before a checker resets it in `files`.
 
 pub mod channel;
+#[cfg(test)]
+mod fake_isolate;
 pub mod files;
 pub mod run;
 pub mod score;
