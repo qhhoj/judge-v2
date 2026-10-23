@@ -236,17 +236,17 @@ impl IsolateBox {
         }
     }
 
-    /// The meta file of the last run. A missing one (isolate ended before writing it) or an empty one (ended
-    /// after opening it) is a sandbox failure: an empty file would otherwise parse as a clean exit.
+    /// The meta file of the last run. isolate opens it while reading its options and writes it as it exits, so
+    /// one killed by a signal leaves it missing or empty. A meta file without `time` or `status` (isolate's
+    /// own errors write only `status:XX`) is refused as a sandbox failure: it would parse as a clean exit.
     pub fn read_meta(&self) -> Result<Meta, SandboxError> {
         let text = match std::fs::read_to_string(self.meta_path()) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(SandboxError::Isolate("isolate wrote no meta file".into()));
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
             text => text?,
         };
-        if text.trim().is_empty() {
-            return Err(SandboxError::Meta("empty meta file".into()));
+        let complete = text.lines().any(|line| line.starts_with("time:") || line.starts_with("status:"));
+        if !complete {
+            return Err(SandboxError::Meta(format!("isolate ended without a meta file: {text:?}")));
         }
         parse_meta(&text)
     }
@@ -268,7 +268,7 @@ impl Drop for IsolateBox {
         if let Err(error) = cleanup_box(&self.config, self.id) {
             eprintln!("isolate cleanup of box {} failed: {error}", self.id);
         }
-        let _ = std::fs::remove_file(self.meta_path());
+        let _ = self.remove_meta();
     }
 }
 
@@ -436,7 +436,7 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
         let dir = tempfile::tempdir().unwrap();
         let b = box_with_stale_meta(dir.path());
         assert!(b.command(&run_spec()).unwrap().status().unwrap().success());
-        assert!(b.read_meta().is_err(), "read the previous run's meta: {:?}", b.read_meta());
+        assert!(matches!(b.read_meta(), Err(SandboxError::Meta(_))), "{:?}", b.read_meta());
     }
 
     #[test]
@@ -444,7 +444,7 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
         let _serial = serial();
         let dir = tempfile::tempdir().unwrap();
         let result = box_with_stale_meta(dir.path()).run(&run_spec());
-        assert!(matches!(result, Err(SandboxError::Isolate(_))), "{result:?}");
+        assert!(matches!(result, Err(SandboxError::Meta(_))), "{result:?}");
     }
 
     #[test]
@@ -458,5 +458,18 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
         b.reset().unwrap();
         assert!(b.command(&run_spec()).unwrap().status().unwrap().success());
         assert!(matches!(b.read_meta(), Err(SandboxError::Meta(_))), "{:?}", b.read_meta());
+    }
+
+    #[test]
+    fn a_truncated_meta_is_refused_and_a_complete_one_is_read() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = IsolateBox::open(&fake_isolate(dir.path(), None), 7, None).unwrap();
+        std::fs::write(b.meta_path(), "max-rss:1234\ncsw-voluntary:4\n").unwrap();
+        assert!(matches!(b.read_meta(), Err(SandboxError::Meta(_))), "{:?}", b.read_meta());
+        std::fs::write(b.meta_path(), "time:0.010\ntime-wall:0.020\nexitcode:0\n").unwrap();
+        assert_eq!(b.read_meta().unwrap().exit_code, Some(0), "a clean exit has no status line");
+        std::fs::write(b.meta_path(), "status:XX\nmessage:box busy\n").unwrap();
+        assert_eq!(b.read_meta().unwrap().status.as_deref(), Some("XX"), "isolate's own error has no time");
     }
 }

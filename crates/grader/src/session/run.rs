@@ -58,20 +58,19 @@ pub fn spawn_session(
     }
 }
 
-/// Two `std::io::pipe()`s; every pipe end is moved into a `Command` and is gone when this returns.
+/// Two `std::io::pipe()`s; every pipe end is moved into a `Command` and is gone when this returns. Both command
+/// lines are built before either is spawned, so a refused one leaves no isolate running.
 fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<Session, GradeError> {
+    let (mut manager_command, mut contestant_command) =
+        (manager.sandbox.command(manager.run)?, contestant.sandbox.command(contestant.run)?);
     let (to_manager_read, to_manager_write) = std::io::pipe()?;
     let (to_contestant_read, to_contestant_write) = std::io::pipe()?;
-    let mut manager_child = manager
-        .sandbox
-        .command(manager.run)?
+    let mut manager_child = manager_command
         .stdin(ProcessStdio::from(to_manager_read))
         .stdout(ProcessStdio::from(to_contestant_write))
         .stderr(ProcessStdio::null())
         .spawn()?;
-    let contestant_child = contestant
-        .sandbox
-        .command(contestant.run)?
+    let contestant_child = contestant_command
         .stdin(ProcessStdio::from(to_contestant_read))
         .stdout(ProcessStdio::from(to_manager_write))
         .stderr(ProcessStdio::null())
@@ -93,7 +92,8 @@ pub fn wait_all(session: &mut Session, deadline: Instant) -> Result<(), GradeErr
 
 /// Polls every child until all exited. Past the deadline all are killed in order, reaped, and the session is an
 /// error. isolate exits 2 on its own failures, which is an error too, because its meta file then does not
-/// describe the run. An isolate killed by a signal leaves no meta file, which `read_meta` refuses.
+/// describe the run. An isolate killed by a signal leaves its meta file missing or empty, which `read_meta`
+/// refuses.
 fn wait_children(children: &mut [&mut Child], deadline: Instant) -> Result<(), GradeError> {
     let mut statuses: Vec<Option<ExitStatus>> = vec![None; children.len()];
     loop {
