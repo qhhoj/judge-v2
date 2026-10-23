@@ -135,15 +135,20 @@ mod tests {
         std::process::Command::new(program).args(args).spawn().unwrap()
     }
 
+    /// A reaped child has no `/proc/<pid>` entry; an unreaped one stays as a zombie. Unlike `try_wait`, looking
+    /// here does not reap, so it proves the code under test did.
+    fn is_reaped(child: &Child) -> bool {
+        !std::path::Path::new(&format!("/proc/{}", child.id())).exists()
+    }
+
     #[test]
-    fn a_child_that_outlives_the_deadline_is_killed_and_reported() {
-        let (mut a, mut b) = (spawn("sleep", &["30"]), spawn("true", &[]));
+    fn children_that_outlive_the_deadline_are_all_killed_reaped_and_reported() {
+        let (mut a, mut b) = (spawn("sleep", &["30"]), spawn("sleep", &["30"]));
         let started = Instant::now();
         let result = wait_children(&mut [&mut a, &mut b], Instant::now() + Duration::from_millis(100));
         assert!(matches!(result, Err(GradeError::Sandbox(_))));
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(a.try_wait().unwrap().is_some(), "killed and reaped");
-        assert!(b.try_wait().unwrap().is_some(), "reaped");
+        assert!(is_reaped(&a) && is_reaped(&b), "both killed and waited for, none left as a zombie");
     }
 
     #[test]
@@ -166,7 +171,7 @@ mod tests {
         let mut children: Vec<Child> = (0..3).map(|_| spawn("true", &[])).collect();
         let mut refs: Vec<&mut Child> = children.iter_mut().collect();
         wait_children(&mut refs, Instant::now() + Duration::from_secs(60)).unwrap();
-        assert!(children.iter_mut().all(|child| child.try_wait().unwrap().is_some()));
+        assert!(children.iter().all(is_reaped));
     }
 
     #[test]
