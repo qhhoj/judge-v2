@@ -8,6 +8,7 @@ members = [
     "crates/grader",
     "crates/daemon",
     "crates/cli",
+    "crates/interface",
 ]
 
 [workspace.package]
@@ -36,6 +37,7 @@ judge-sandbox = { path = "crates/sandbox" }
 judge-grader = { path = "crates/grader" }
 judge-daemon = { path = "crates/daemon" }
 judge-proto = { path = "crates/judge-proto" }
+judge-interface = { path = "crates/interface" }
 conformance = { path = "crates/conformance" }
 anyhow = "1"
 toml = "0.8"

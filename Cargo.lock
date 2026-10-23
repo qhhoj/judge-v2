@@ -716,6 +716,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "judge-interface"
+version = "2.3.7"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "judge-problem"
 version = "2.3.9"
 dependencies = [
