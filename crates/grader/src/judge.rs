@@ -454,7 +454,16 @@ mod tests {
     }
 
     #[test]
-    fn only_testlib_interactors_are_graded() {
+    fn features_this_judge_does_not_grade_are_reported() {
+        let split =
+            parse_init("test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h, split: true}\n")
+                .unwrap();
+        assert_eq!(unsupported_feature(&split).as_deref(), Some("signature.split"));
+        let paired = parse_init(
+            "test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h, split: true, cores: 2}\n",
+        )
+        .unwrap();
+        assert_eq!(unsupported_feature(&paired).as_deref(), Some("signature.split.paired"));
         let themis =
             parse_init("test_cases: []\ninteractive: {files: i.cpp, type: themis, lang: CPP17}\n").unwrap();
         assert_eq!(unsupported_feature(&themis).as_deref(), Some("interactive.themis"));

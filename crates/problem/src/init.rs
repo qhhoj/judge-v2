@@ -41,7 +41,10 @@ pub struct InitYaml {
     pub signature_grader: Option<SignatureSpec>,
 }
 
-/// `signature_grader {entry, header, allow_main}`: the contestant writes functions, `entry` holds `main` (Task 34).
+/// `signature_grader {entry, header, allow_main, split, cores}`: the contestant writes functions, `entry` holds
+/// `main` (Task 34). `split` runs the contestant in its own box behind generated glue and `cores: 2` asks for a
+/// paired lane (docs/split-and-communication.md §4, §6). The backend writes both only when set, so a legacy
+/// init.yml is byte-identical.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignatureSpec {
@@ -49,6 +52,10 @@ pub struct SignatureSpec {
     pub header: String,
     #[serde(default)]
     pub allow_main: bool,
+    #[serde(default)]
+    pub split: bool,
+    #[serde(default)]
+    pub cores: Option<u8>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +151,38 @@ impl CheckerSpec {
 
 const GRADED_CUSTOM_CHECKERS: [&str; 3] = ["testlib", "default", "themis"];
 
+/// Hello features of split signature (docs/split-and-communication.md §3.3): one-core lane and paired lane.
+pub const SPLIT_FEATURE: &str = "signature.split";
+pub const SPLIT_PAIRED_FEATURE: &str = "signature.split.paired";
+
+/// A mode an init.yml selects by setting its key. `SignatureSplit` is `signature_grader` with `split: true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeKey {
+    Interactive,
+    Signature,
+    SignatureSplit,
+    OutputOnly,
+    FileIo,
+}
+
+impl ModeKey {
+    pub fn name(self) -> &'static str {
+        match self {
+            ModeKey::Interactive => "interactive",
+            ModeKey::Signature => "signature_grader",
+            ModeKey::SignatureSplit => "signature_grader.split",
+            ModeKey::OutputOnly => "output_only",
+            ModeKey::FileIo => "file_io",
+        }
+    }
+
+    /// The session modes (§2) must be the only mode of their file. Legacy modes keep every combination that
+    /// parsed before them (§3.1): refusing those waits for a query proving no stored problem has one.
+    fn is_exclusive(self) -> bool {
+        matches!(self, ModeKey::SignatureSplit)
+    }
+}
+
 impl InitYaml {
     pub fn unsupported_feature(&self) -> Option<String> {
         if self.generator.is_some() {
@@ -152,7 +191,29 @@ impl InitYaml {
         if self.hints.iter().any(|hint| hint == "nobigmath") {
             return Some("hints.nobigmath".into());
         }
+        if let Some(feature) = self.split_feature() {
+            return Some(feature.into());
+        }
         self.unsupported_custom_checker()
+    }
+
+    /// Every mode key this file sets, in a fixed order.
+    pub fn mode_keys(&self) -> Vec<ModeKey> {
+        let signature = self.signature_grader.as_ref().map(|spec| match spec.split {
+            true => ModeKey::SignatureSplit,
+            false => ModeKey::Signature,
+        });
+        let interactive = self.interactive.as_ref().map(|_| ModeKey::Interactive);
+        let output_only = self.output_only.then_some(ModeKey::OutputOnly);
+        let file_io = self.file_io.as_ref().map(|_| ModeKey::FileIo);
+        [interactive, signature, output_only, file_io].into_iter().flatten().collect()
+    }
+
+    /// A split problem until this judge grades split signature (plan 05 removes the one-core case, plan 12 the
+    /// paired one): requeued, never graded by the one-process path.
+    fn split_feature(&self) -> Option<&'static str> {
+        let spec = self.signature_grader.as_ref().filter(|spec| spec.split)?;
+        Some(if spec.cores == Some(2) { SPLIT_PAIRED_FEATURE } else { SPLIT_FEATURE })
     }
 
     /// The problem-wide checker and the interactive problem's own checker.
@@ -197,6 +258,31 @@ fn check_file_io(file_io: &FileIo) -> Result<(), InitError> {
     Ok(())
 }
 
+/// The split options' own rules (§3.1): two `main`s cannot be linked, `cores` only means something with `split`.
+fn check_signature(spec: &SignatureSpec) -> Result<(), InitError> {
+    let refused = |what: String| Err(InitError::Unsupported(what));
+    if spec.split && spec.allow_main {
+        return refused("signature_grader.split with allow_main".into());
+    }
+    match spec.cores {
+        Some(_) if !spec.split => refused("signature_grader.cores without split".into()),
+        Some(cores) if !(1..=2).contains(&cores) => {
+            refused(format!("signature_grader.cores {cores} (1 or 2)"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// An exclusive mode with any other mode key is refused, naming both keys.
+fn check_modes(init: &InitYaml) -> Result<(), InitError> {
+    let modes = init.mode_keys();
+    let Some(exclusive) = modes.iter().copied().find(|mode| mode.is_exclusive()) else { return Ok(()) };
+    match modes.iter().find(|mode| **mode != exclusive) {
+        Some(other) => Err(InitError::Unsupported(format!("{} with {}", exclusive.name(), other.name()))),
+        None => Ok(()),
+    }
+}
+
 pub fn parse_init(text: &str) -> Result<InitYaml, InitError> {
     let init: InitYaml = serde_norway::from_str(text).map_err(|error| {
         let message = error.to_string();
@@ -208,6 +294,10 @@ pub fn parse_init(text: &str) -> Result<InitYaml, InitError> {
     if let Some(file_io) = &init.file_io {
         check_file_io(file_io)?;
     }
+    if let Some(signature) = &init.signature_grader {
+        check_signature(signature)?;
+    }
+    check_modes(&init)?;
     Ok(init)
 }
 
@@ -313,5 +403,93 @@ mod tests {
     fn unknown_checker_keys_are_not_accepted_silently() {
         let error = parse_init("test_cases: []\nchecker: {name: floats, typo: 1}\n").unwrap_err();
         assert!(matches!(error, InitError::Invalid(_) | InitError::Unsupported(_)), "{error:?}");
+    }
+
+    fn split(tail: &str) -> Result<InitYaml, InitError> {
+        parse_init(&format!("test_cases: []\nsignature_grader: {{entry: g.cpp, header: s.h{tail}}}\n"))
+    }
+
+    fn signature_of(init: &InitYaml) -> &SignatureSpec {
+        init.signature_grader.as_ref().unwrap()
+    }
+
+    #[test]
+    fn a_legacy_signature_problem_reads_as_one_process() {
+        for tail in ["", ", split: false", ", allow_main: true"] {
+            let init = split(tail).unwrap();
+            assert!(!signature_of(&init).split, "{tail}");
+            assert_eq!(signature_of(&init).cores, None, "{tail}");
+            assert_eq!(init.unsupported_feature(), None, "{tail}");
+            assert_eq!(init.mode_keys(), vec![ModeKey::Signature], "{tail}");
+        }
+    }
+
+    #[test]
+    fn a_split_problem_is_requeued_until_this_judge_grades_it() {
+        let feature = |tail: &str| split(tail).unwrap().unsupported_feature();
+        assert_eq!(feature(", split: true").as_deref(), Some(SPLIT_FEATURE));
+        assert_eq!(feature(", split: true, cores: 1").as_deref(), Some(SPLIT_FEATURE));
+        assert_eq!(feature(", split: true, cores: 2").as_deref(), Some(SPLIT_PAIRED_FEATURE));
+        assert_eq!(split(", split: true").unwrap().mode_keys(), vec![ModeKey::SignatureSplit]);
+    }
+
+    #[test]
+    fn split_options_that_contradict_each_other_are_refused() {
+        let refused = |tail: &str| match split(tail) {
+            Err(InitError::Unsupported(message)) => message,
+            other => panic!("{tail}: {other:?}"),
+        };
+        assert_eq!(refused(", split: true, allow_main: true"), "signature_grader.split with allow_main");
+        assert_eq!(refused(", cores: 2"), "signature_grader.cores without split");
+        assert_eq!(refused(", cores: 1"), "signature_grader.cores without split");
+        assert_eq!(refused(", split: true, cores: 0"), "signature_grader.cores 0 (1 or 2)");
+        assert_eq!(refused(", split: true, cores: 3"), "signature_grader.cores 3 (1 or 2)");
+    }
+
+    #[test]
+    fn malformed_split_values_are_invalid_not_a_panic() {
+        for tail in [
+            ", split: yes please",
+            ", split: true, cores: -1",
+            ", split: true, cores: \"2\"",
+            ", split: true, cores: 300",
+        ] {
+            assert!(matches!(split(tail), Err(InitError::Invalid(_))), "{tail}");
+        }
+    }
+
+    #[test]
+    fn a_split_problem_is_the_only_mode_of_its_file() {
+        let others = [
+            ("interactive: {files: i.cpp, type: testlib, lang: CPP17}", "interactive"),
+            ("output_only: true", "output_only"),
+            ("file_io: {input: a.inp, output: a.out}", "file_io"),
+        ];
+        for (line, name) in others {
+            let text = format!(
+                "test_cases: []\n{line}\nsignature_grader: {{entry: g.cpp, header: s.h, split: true}}\n"
+            );
+            assert_eq!(
+                parse_init(&text).unwrap_err(),
+                InitError::Unsupported(format!("signature_grader.split with {name}")),
+            );
+        }
+    }
+
+    #[test]
+    fn every_legacy_combination_of_mode_keys_still_parses() {
+        let lines = [
+            "interactive: {files: i.cpp, type: testlib, lang: CPP17}",
+            "signature_grader: {entry: g.cpp, header: s.h}",
+            "output_only: true",
+            "file_io: {input: a.inp, output: a.out}",
+        ];
+        for (index, first) in lines.iter().enumerate() {
+            for second in &lines[index + 1..] {
+                let text = format!("test_cases: []\n{first}\n{second}\n");
+                let init = parse_init(&text).unwrap_or_else(|e| panic!("{first} + {second}: {e}"));
+                assert_eq!(init.mode_keys().len(), 2, "{first} + {second}");
+            }
+        }
     }
 }
