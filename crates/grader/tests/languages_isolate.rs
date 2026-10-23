@@ -2,7 +2,7 @@
 #![cfg(feature = "isolate")]
 mod common;
 
-use common::{installed, language_or_skip, registry, sandbox};
+use common::{installed, language_or_skip, registry, sandbox, sandbox_on};
 use judge_grader::compile::{BuildOutcome, CompileJob, build, program_for};
 use judge_grader::error::GradeError;
 use judge_grader::run_case::{CaseIo, CaseLimits, Runnable, run_case};
@@ -76,4 +76,33 @@ fn a_compiler_missing_in_the_box_is_a_judge_error_not_a_compile_error() {
         matches!(result, Err(GradeError::RuntimeMissing(_))),
         "execve failure blamed on the user: {result:?}"
     );
+}
+
+const PRINT_PROCESSORS: &str = "public class Main { public static void main(String[] a) { \
+    System.out.println(Runtime.getRuntime().availableProcessors()); } }\n";
+
+#[test]
+fn a_jvm_in_a_box_pinned_to_one_core_sees_one_processor_on_any_host() {
+    // isolate's `time` sums every thread of the box, the JIT's too: the JVM must size them from the box's core.
+    let language = registry().get("JAVA").unwrap().clone();
+    let (snapshot, meta, io) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut program = program_for(&language, snapshot.path(), PRINT_PROCESSORS.as_bytes());
+    if !std::path::Path::new(&program.run[0]).exists() {
+        return eprintln!("skip: JAVA (runtime not installed on this host)");
+    }
+    // The source launcher stands in for javac (a JRE-only host): the shipped run flags, Main.java compiled in memory.
+    *program.run.last_mut().unwrap() = "Main.java".into();
+    std::fs::write(snapshot.path().join("Main.java"), PRINT_PROCESSORS).unwrap();
+    let input = io.path().join("in");
+    std::fs::write(&input, "").unwrap();
+    let file = std::fs::File::open(&input).unwrap();
+    let case_io = CaseIo { input: &file, output_cap: 1 << 20, file_io: None };
+    let limits = CaseLimits { time_limit_s: 10.0, ..LIMITS };
+    let out = io.path().join("out");
+    let mut sandbox = sandbox_on(47, meta.path(), Some(0));
+    let run =
+        run_case(&mut sandbox, &Runnable { program: &program, limits: &limits }, &case_io, &out).unwrap();
+    assert_eq!(run.verdict, RunVerdict::Ok);
+    assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "1");
 }

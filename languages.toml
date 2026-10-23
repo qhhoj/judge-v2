@@ -142,6 +142,8 @@ name = "Java"
 source = "{class}.java"
 compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-encoding", "UTF-8", "{class}.java"]
 compile_processes = 128
+# isolate's `time` sums every thread of the box, the JIT's too; each box runs under `taskset -c <core>`, so the JVM
+# sizes them from 1 CPU on any host (2 compilers; 12 on 16 unpinned cores): no -XX:ActiveProcessorCount needed.
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
@@ -159,6 +161,8 @@ name = "Java 8 (alias of the installed JDK)"
 source = "{class}.java"
 compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-encoding", "UTF-8", "{class}.java"]
 compile_processes = 128
+# isolate's `time` sums every thread of the box, the JIT's too; each box runs under `taskset -c <core>`, so the JVM
+# sizes them from 1 CPU on any host (2 compilers; 12 on 16 unpinned cores): no -XX:ActiveProcessorCount needed.
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
@@ -177,6 +181,8 @@ source = "main.kt"
 compile = ["/usr/bin/env", "JAVA_HOME=/usr/lib/jvm/default-java", "/usr/local/lib/kotlinc/bin/kotlinc", "main.kt", "-include-runtime", "-d", "main.jar"]
 compile_limits = { time_s = 30.0, wall_s = 60.0, memory_kib = 2097152 }
 compile_processes = 128
+# isolate's `time` sums every thread of the box, the JIT's too; each box runs under `taskset -c <core>`, so the JVM
+# sizes them from 1 CPU on any host (2 compilers; 12 on 16 unpinned cores): no -XX:ActiveProcessorCount needed.
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "-jar", "main.jar"]
 processes = 64
 jvm = true
