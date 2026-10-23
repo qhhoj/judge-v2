@@ -269,6 +269,18 @@ fn every_required_language_is_in_the_manifest() {
 }
 
 #[test]
+fn a_pypy_program_gets_the_same_gc_nursery_on_every_host() {
+    let mut s = suite();
+    if !has_runtime(&s.registry, "PYPY3") {
+        assert!(!required_keys().contains(&"PYPY3".to_string()), "PYPY3 required but absent");
+        return eprintln!("skipped: no PYPY3 runtime");
+    }
+    write_problem(s.data_root(), "nursery", &[("", "4194304\n")]);
+    let result = judge(&mut s, "nursery", "PYPY3", program("PYPY3/gc_nursery.py"));
+    assert_eq!(result, (Outcome::Graded, vec!["AC".to_string()]), "the nursery is not 4 MiB in the box");
+}
+
+#[test]
 fn a_fork_bomb_does_not_hurt_the_next_submission() {
     let mut s = suite();
     assert_eq!(verdict(&mut s, "secure", "CPP17", "CPP17/sec_fork.cpp"), "AC", "fork must fail");

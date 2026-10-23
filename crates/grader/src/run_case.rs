@@ -309,20 +309,6 @@ mod tests {
     const PYTHON: &str = "Traceback (most recent call last)";
 
     #[test]
-    fn a_pypy_run_gets_a_gc_sized_the_same_on_every_host() {
-        let registry =
-            crate::languages::LanguageRegistry::from_toml(include_str!("../../../languages.toml")).unwrap();
-        let program = crate::compile::program_for(registry.get("PYPY3").unwrap(), Path::new("/p"), b"");
-        let limits = CaseLimits { time_limit_s: 1.0, memory_kib: 65_536, jvm_reserve_kib: 0 };
-        let spec =
-            run_spec(&Runnable { program: &program, limits: &limits }, layout(&program, None), 1 << 16);
-        let args = judge_sandbox::spec::isolate_args(0, &spec, Path::new("/m"));
-        for pinned in ["--env=PYPY_GC_NURSERY=4M", "--env=PYPY_GC_MAX_DELTA=2GB"] {
-            assert!(args.iter().any(|a| a == pinned), "{pinned} missing from {args:?}");
-        }
-    }
-
-    #[test]
     fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_program_memory() {
         let meta = Meta { cg_mem_kib: 200_000, max_rss_kib: 180_000, ..Meta::default() };
         assert_eq!(reported_memory(&meta, Some(0), &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
