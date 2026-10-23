@@ -13,11 +13,11 @@ use std::time::{Duration, Instant};
 
 /// Host-side margin past the manager's own wall limit before the isolate processes are killed.
 const DEADLINE_SLACK: Duration = Duration::from_secs(5);
-/// Exit statuses that mean isolate did not run properly, so its meta file is stale. isolate exits 2 on its own
-/// failures (1 is "the program failed"). A channel run starts isolate through the mover shell, which exits 126
-/// (found but not executable) or 127 (not found) when its `exec` fails; so does `taskset`. isolate itself only
-/// exits 0, 1 or 2, so these never hide a program's result.
-const ISOLATE_FAILURES: [i32; 3] = [2, 126, 127];
+/// isolate's documented exit statuses for a run it carried out: 0 (the program exited 0) and 1 (the program
+/// failed; the meta file says how). Anything else means isolate did not run properly and its meta file does not
+/// describe the run: 2 is isolate's own error, 126/127 come from the channel mover shell or `taskset` failing to
+/// exec it, and a signal killed it.
+const ISOLATE_RAN: [i32; 2] = [0, 1];
 const POLL: Duration = Duration::from_millis(2);
 /// isolate resets signal dispositions inside the box, so a jury program is started through a shell that
 /// ignores SIGPIPE and execs it: a last write to a contestant that already exited fails with EPIPE, and the
@@ -122,8 +122,8 @@ pub fn wait_all(session: &mut Session, deadline: Instant) -> Result<(), GradeErr
 }
 
 /// Polls every child until all exited. Past the deadline all are killed in order, reaped, and the session is an
-/// error. An isolate failure (`ISOLATE_FAILURES`) is an error too, because its meta file then does not describe
-/// the run. An isolate killed by a signal leaves its meta file missing or empty, which `read_meta` refuses.
+/// error. An isolate that did not run properly (any status but `ISOLATE_RAN`) is an error too, because its meta
+/// file then does not describe the run.
 fn wait_children(children: &mut [&mut Child], deadline: Instant) -> Result<(), GradeError> {
     let mut statuses: Vec<Option<ExitStatus>> = vec![None; children.len()];
     loop {
@@ -153,7 +153,7 @@ fn kill_all(children: &mut [&mut Child]) -> Result<(), GradeError> {
 
 fn refuse_isolate_failure(statuses: &[Option<ExitStatus>]) -> Result<(), GradeError> {
     let isolate_failed =
-        |status: &&ExitStatus| status.code().is_some_and(|code| ISOLATE_FAILURES.contains(&code));
+        |status: &&ExitStatus| !status.code().is_some_and(|code| ISOLATE_RAN.contains(&code));
     match statuses.iter().flatten().find(isolate_failed) {
         Some(status) => Err(SandboxError::Isolate(format!("isolate exited with {status}")).into()),
         None => Ok(()),
@@ -199,6 +199,15 @@ mod tests {
         let (mut a, mut b) = (spawn("true", &[]), spawn("sh", &["-c", "exit 2"]));
         let result = wait_children(&mut [&mut a, &mut b], Instant::now() + Duration::from_secs(60));
         assert!(matches!(result, Err(GradeError::Sandbox(_))));
+    }
+
+    #[test]
+    fn any_status_but_exit_0_or_1_is_an_isolate_failure() {
+        for script in ["exit 3", "exit 255", "kill -KILL $$"] {
+            let (mut a, mut b) = (spawn("true", &[]), spawn("sh", &["-c", script]));
+            let result = wait_children(&mut [&mut a, &mut b], Instant::now() + Duration::from_secs(60));
+            assert!(matches!(result, Err(GradeError::Sandbox(_))), "{script}: {result:?}");
+        }
     }
 
     #[test]
