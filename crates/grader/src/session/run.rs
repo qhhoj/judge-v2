@@ -92,7 +92,8 @@ pub fn wait_all(session: &mut Session, deadline: Instant) -> Result<(), GradeErr
 }
 
 /// Polls every child until all exited. Past the deadline all are killed in order, reaped, and the session is an
-/// error. isolate exits 2 on its own failures, which is an error too, because its meta file is then stale.
+/// error. isolate exits 2 on its own failures, which is an error too, because its meta file then does not
+/// describe the run. An isolate killed by a signal leaves no meta file, which `read_meta` refuses.
 fn wait_children(children: &mut [&mut Child], deadline: Instant) -> Result<(), GradeError> {
     let mut statuses: Vec<Option<ExitStatus>> = vec![None; children.len()];
     loop {
