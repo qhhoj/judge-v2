@@ -329,16 +329,23 @@ int main(int argc, char* argv[]) {
 /// Secret 377 (10 guesses by binary search, budget 10) and secret 1 (9 guesses, budget 3). `checker` is the
 /// `interactive` entry's tail; the top-level `standard` checker, which the backend always writes, must be ignored.
 fn counting_problem(b: &Bench, code: &str, checker: &str) {
+    counting_problem_burning(b, code, checker, false);
+}
+
+/// `counting_problem`; with `burn`, the interactor and the checker each use at least `BURN_S` of CPU.
+fn counting_problem_burning(b: &Bench, code: &str, checker: &str, burn: bool) {
+    let burning = |source: &str| if burn { burn_cpu(source) } else { source.to_string() };
     let init = format!(
         "checker: standard\ninteractive: {{files: count.cpp, type: testlib, lang: CPP17{checker}}}\n\
          test_cases:\n- {{in: 1.in, out: 1.out, points: 60}}\n- {{in: 2.in, out: 2.out, points: 40}}\n"
     );
     let vendored = std::fs::read(common::testlib_dir().join("testlib.h")).unwrap();
     let package_testlib = [b"#define PACKAGE_TESTLIB 1\n".as_slice(), &vendored].concat();
+    let (interactor, budget_checker) = (burning(COUNTING_INTERACTOR), burning(BUDGET_CHECKER));
     let files: [(&str, &[u8]); 9] = [
         ("init.yml", init.as_bytes()),
-        ("count.cpp", COUNTING_INTERACTOR.as_bytes()),
-        ("check.cpp", BUDGET_CHECKER.as_bytes()),
+        ("count.cpp", interactor.as_bytes()),
+        ("check.cpp", budget_checker.as_bytes()),
         ("testlib.h", &package_testlib),
         ("budget.h", b"inline bool within(int asked, int budget) { return asked <= budget; }\n"),
         ("1.in", b"377\n"),
@@ -632,4 +639,57 @@ fn an_archive_problem_whose_stamp_moves_while_graded_is_retry_data_unavailable()
     // Its checker, interactor and signature sources come from the data root, not the cache entry.
     assert_eq!(outcome, Outcome::Retry(RetryReason::DataUnavailable), "not kept as version 1");
     assert_eq!(rec.shape(), [(Status::Ac, 50.0), (Status::Ac, 50.0)]);
+}
+
+/// CPU every burning jury program uses at least, in seconds (`clock()` counts the process's own CPU).
+const BURN_S: f64 = 0.2;
+
+/// A testlib jury program that first spins until it has used `BURN_S` of CPU.
+fn burn_cpu(source: &str) -> String {
+    let spin = "static void burn() { while (clock() < CLOCKS_PER_SEC / 5); }\nint main(";
+    source.replacen("int main(", spin, 1).replacen("{\n", "{\n    burn();\n", 1)
+}
+
+#[test]
+fn a_bridged_checker_reports_its_cpu_as_jury_time_and_a_builtin_checker_reports_none() {
+    let mut b = bench(92);
+    let init = "checker: {name: bridged, args: {files: check.cpp, lang: CPP17, type: testlib}}\n\
+                test_cases:\n- {in: 1.in, out: 1.out, points: 50}\n- {in: 2.in, out: 2.out, points: 50}\n";
+    let mut files = APLUSB.to_vec();
+    files[0] = ("init.yml", init.as_bytes());
+    let burning = burn_cpu(CHECKER);
+    files.push(("check.cpp", burning.as_bytes()));
+    b.write("burningchecker", &files);
+    b.write("builtinchecker", &APLUSB);
+    let (_, custom) = b.run("burningchecker", "CPP17", CPP_SUM);
+    let (_, builtin) = b.run("builtinchecker", "CPP17", CPP_SUM);
+    assert_eq!(custom.shape(), builtin.shape(), "the verdicts do not change");
+    assert!(custom.cases.iter().all(|c| c.jury_time_s >= BURN_S), "{:?}", custom.cases);
+    assert!(builtin.cases.iter().all(|c| c.jury_time_s == 0.0), "{:?}", builtin.cases);
+}
+
+#[test]
+fn an_interactive_case_reports_the_interactor_cpu_and_adds_the_checker_cpu() {
+    let mut b = bench(94);
+    let checker = ", checker: {name: bridged, args: {files: [check.cpp, testlib.h, budget.h], lang: CPP17, type: testlib}}";
+    counting_problem_burning(&b, "burnalone", "", true);
+    counting_problem_burning(&b, "burnchecked", checker, true);
+    let (_, alone) = b.run("burnalone", "CPP17", BINARY_SEARCH);
+    let (_, checked) = b.run("burnchecked", "CPP17", BINARY_SEARCH);
+    let interactor_only = alone.cases[0].jury_time_s;
+    assert!(interactor_only >= BURN_S, "the interactor's CPU is counted: {interactor_only}");
+    let both = checked.cases[0].jury_time_s;
+    assert!(both >= 2.0 * BURN_S, "interactor and checker are summed: {both}");
+    assert_eq!(checked.cases[1].status, Status::Wa, "the budget checker rejected case 2");
+    assert!(checked.cases[1].jury_time_s >= 2.0 * BURN_S, "a checker-rejected case still counts both");
+}
+
+#[test]
+fn an_interactor_that_decides_alone_still_reports_its_cpu_when_the_solution_fails() {
+    let mut b = bench(96);
+    counting_problem_burning(&b, "burnfail", "", true);
+    let never_reads = "#include <iostream>\nint main(){ while (true) std::cout << 1 << std::endl; }\n";
+    let (_, rec) = b.run("burnfail", "CPP17", never_reads);
+    assert_eq!(rec.cases[0].status, Status::Wa);
+    assert!(rec.cases[0].jury_time_s >= BURN_S, "{:?}", rec.cases[0]);
 }

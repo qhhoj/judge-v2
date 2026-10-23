@@ -54,6 +54,7 @@ fn checked(outcome: CheckOutcome, time_s: f64, memory_kib: u64, output_prefix: S
         status: if outcome.passed { Status::Ac } else { Status::Wa },
         fraction: outcome.fraction,
         time_s,
+        jury_time_s: outcome.jury_time_s,
         memory_kib,
         feedback: outcome.feedback,
         extended: outcome.extended,
@@ -183,11 +184,13 @@ impl CaseJudge for InteractiveCases<'_> {
         // also for a solution killed by SIGPIPE after the interactor had finished. The solution's stdout is a
         // pipe, so there is no output prefix.
         if let Some(outcome) = result.check {
-            let outcome = self.verdict_after(&files, outcome)?;
+            let mut outcome = self.verdict_after(&files, outcome)?;
+            outcome.jury_time_s += result.jury_time_s;
             return Ok(checked(outcome, result.time_s, result.memory_kib, String::new()));
         }
         let failed = failed_run(&result.verdict, result.time_s, result.memory_kib)?;
-        failed.ok_or_else(|| GradeError::Checker("interactor gave no verdict".into()))
+        let failed = failed.ok_or_else(|| GradeError::Checker("interactor gave no verdict".into()))?;
+        Ok(CaseVerdict { jury_time_s: result.jury_time_s, ..failed })
     }
 }
 

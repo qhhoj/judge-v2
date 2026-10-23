@@ -42,6 +42,7 @@ impl Checker for LineMatches {
             fraction: share,
             feedback: String::new(),
             extended: String::new(),
+            jury_time_s: 0.0,
         })
     }
 }

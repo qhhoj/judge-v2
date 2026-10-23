@@ -153,6 +153,7 @@ fn outcome(passed: bool, fraction: f64, report: &ExitReport, testlib: bool) -> C
         fraction: fraction.clamp(0.0, 1.0),
         feedback: clip_text(message, MAX_FEEDBACK),
         extended: clip_text(report.stderr.trim(), MAX_EXTENDED),
+        jury_time_s: 0.0,
     }
 }
 
@@ -284,13 +285,14 @@ impl CustomChecker {
         let meta = sandbox.run(&spec)?;
         let verdict = classify(&meta, OutputUse::UNMEASURED, &spec.limits);
         let code = finished_code(&verdict, meta.exit_code, "checker")?;
-        if self.kind == CustomKind::Themis {
-            return Ok(themis::interpret(code, &read_text(sandbox, STDOUT))?);
-        }
-        let report =
-            ExitReport { code, stdout: read_text(sandbox, STDOUT), stderr: read_text(sandbox, STDERR) };
-        let scale = PartialScale { mode: self.partial, case_points: io.points };
-        Ok(interpret(self.kind, &report, scale)?)
+        let outcome = if self.kind == CustomKind::Themis {
+            themis::interpret(code, &read_text(sandbox, STDOUT))?
+        } else {
+            let report =
+                ExitReport { code, stdout: read_text(sandbox, STDOUT), stderr: read_text(sandbox, STDERR) };
+            interpret(self.kind, &report, PartialScale { mode: self.partial, case_points: io.points })?
+        };
+        Ok(CheckOutcome { jury_time_s: meta.time_s, ..outcome })
     }
 }
 

@@ -159,6 +159,7 @@ pub fn interpret(code: Option<i32>, stdout: &str) -> Result<CheckOutcome, CheckE
         fraction,
         feedback: clip_text(message.lines().next().unwrap_or(""), MAX_FEEDBACK),
         extended: clip_text(&message, MAX_EXTENDED),
+        jury_time_s: 0.0,
     })
 }
 

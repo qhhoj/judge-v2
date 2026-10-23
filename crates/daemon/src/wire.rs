@@ -231,6 +231,7 @@ fn case(c: &CaseReport) -> v1::Case {
         position: c.position,
         status: status(c.status),
         time_s: c.time_s,
+        jury_time_s: c.jury_time_s,
         memory_kib: c.memory_kib,
         points: c.points,
         total: c.total,
@@ -412,6 +413,7 @@ mod tests {
             position: 1,
             status: Status::Wa,
             time_s: 0.5,
+            jury_time_s: 0.25,
             memory_kib: 9,
             points: 0.0,
             total: 10.0,
@@ -425,6 +427,7 @@ mod tests {
         let Some(judge_message::Body::Cases(cases)) = message.body else { panic!() };
         assert_eq!(cases.cases.iter().map(|c| c.batch).collect::<Vec<_>>(), [0, 2]);
         assert_eq!(cases.cases[0].status, v1::Status::Wa as i32);
+        assert_eq!(cases.cases.iter().map(|c| c.jury_time_s).collect::<Vec<_>>(), [0.25, 0.25]);
     }
 
     fn assign(source: Vec<u8>, with_ref: bool) -> BridgeMessage {

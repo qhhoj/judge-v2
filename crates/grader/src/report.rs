@@ -9,6 +9,8 @@ pub struct CaseReport {
     pub position: u32,
     pub status: Status,
     pub time_s: f64,
+    /// CPU of the problem's own programs for this case (custom checker, interactor); 0 for built-in checkers.
+    pub jury_time_s: f64,
     pub memory_kib: u64,
     pub points: f64,
     pub total: f64,

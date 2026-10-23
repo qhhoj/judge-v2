@@ -202,6 +202,7 @@ fn report_case(reporter: &mut dyn Reporter, c: &v1::Case) {
         position: c.position,
         status: status(c.status),
         time_s: c.time_s,
+        jury_time_s: c.jury_time_s,
         memory_kib: c.memory_kib,
         points: c.points,
         total: c.total,
