@@ -283,4 +283,26 @@ mod tests {
         let waited = wait_all(&mut session, Instant::now() + Duration::from_secs(10));
         assert!(matches!(waited, Err(GradeError::Sandbox(SandboxError::Isolate(_)))), "{waited:?}");
     }
+
+    #[test]
+    fn a_ring_session_whose_isolate_writes_no_meta_is_a_sandbox_failure_not_a_stale_verdict() {
+        let (dirs, manager_box, contestant_box) = two_fake_boxes();
+        for (dir, sandbox) in dirs.iter().zip([&manager_box, &contestant_box]) {
+            std::fs::write(dir.path().join("quick"), "").unwrap();
+            let stale = dir.path().join("meta").join(format!("{}.meta", sandbox.id()));
+            std::fs::write(stale, "status:TO\ntime:1.100\ntime-wall:1.200\n").unwrap();
+        }
+        let run = sleeping_run();
+        let mut session = spawn_session(
+            &MemberSpec { sandbox: &manager_box, run: &run },
+            &MemberSpec { sandbox: &contestant_box, run: &run },
+            ChannelPlan::Ring(RingChannel::create().unwrap()),
+        )
+        .unwrap();
+        wait_all(&mut session, Instant::now() + Duration::from_secs(10)).unwrap();
+        for sandbox in [&manager_box, &contestant_box] {
+            let meta = sandbox.read_meta();
+            assert!(matches!(meta, Err(SandboxError::Meta(_))), "box {}: {meta:?}", sandbox.id());
+        }
+    }
 }

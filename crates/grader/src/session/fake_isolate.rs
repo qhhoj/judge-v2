@@ -1,6 +1,7 @@
 //! Test-only stand-in for isolate: every call is logged to `calls` beside the script, `--init` answers with a box
 //! root there, `--run` sleeps 30 s (as `exec`, so killing the isolate process kills the sleep), every other call
-//! succeeds.
+//! succeeds. With a `quick` file beside it, `--run` exits 0 at once. No call writes a meta file, as an isolate
+//! killed by a signal does not.
 
 use judge_sandbox::{IsolateBox, SandboxConfig};
 use std::path::Path;
@@ -10,7 +11,7 @@ const SLEEPING_ISOLATE: &str = r#"#!/bin/sh
 d=$(dirname "$0")
 echo "$*" >> "$d/calls"
 case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
-case "$*" in *--run*) exec sleep 30 ;; esac
+case "$*" in *--run*) [ -e "$d/quick" ] && exit 0; exec sleep 30 ;; esac
 "#;
 
 /// A box opened through the sleeping fake written to `dir`.
