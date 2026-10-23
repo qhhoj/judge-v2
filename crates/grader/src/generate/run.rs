@@ -78,6 +78,7 @@ fn spec_of(run: &ProgramRun) -> RunSpec {
         },
         env: run.program.env.clone(),
         dirs: run.program.dirs.clone(),
+        inherit_fds: false,
     }
 }
 
