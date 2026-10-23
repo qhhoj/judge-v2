@@ -249,7 +249,8 @@ impl Parser<'_> {
             "define" => return self.define_guard(rest),
             "pragma" => rest == "once",
             "ifndef" => return self.open_guard(rest),
-            "endif" => rest.is_empty() && self.close_guard(),
+            "endif" if !rest.is_empty() => return Err(self.refuse(Reason::TextAfterEndif)),
+            "endif" => self.close_guard(),
             _ => false,
         };
         if accepted { Ok(()) } else { Err(self.refuse(Reason::Directive(name))) }

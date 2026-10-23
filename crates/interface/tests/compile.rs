@@ -1,7 +1,9 @@
 //! The generated sources compile: every grammar-v1 type in every position, on both sides, under the oldest and
 //! a recent C++ standard. Syntax only, against a declarations-only runtime; the compile-and-link test under every
-//! C++ key, with the real runtime, belongs to the runtime crate. Skipped (with a note) when `g++` is not installed.
+//! C++ key, with the real runtime, belongs to the runtime crate. Without `g++` the tests fail under CI (`CI` set)
+//! and are skipped locally with a note.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -82,7 +84,10 @@ fn write_sources(dir: &Path, header: &str, roles: &[Role]) -> Vec<&'static str> 
 /// Compiler errors of every generated source under each standard; empty when all compile.
 fn compile_errors(test: &str, header: &str, roles: &[Role]) -> Option<Vec<String>> {
     if Command::new("g++").arg("--version").output().is_err() {
-        eprintln!("g++ is not installed: the generated sources were not compiled");
+        let note = "g++ is not installed: the generated sources were not compiled";
+        assert!(std::env::var_os("CI").is_none(), "{note}");
+        // Written to the process's stderr, not `eprintln!`, which the test harness captures for passing tests.
+        let _ = writeln!(std::io::stderr().lock(), "note: {note}");
         return None;
     }
     let dir = work_dir(test);

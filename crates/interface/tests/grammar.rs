@@ -116,7 +116,8 @@ fn every_unsupported_construct_is_refused_at_its_declaration() {
         ),
         ("#ifndef main\n#define main\n#endif", ReservedName("main".into()), at(1, 1)),
         ("#ifndef int\n#define int\n#endif", Unexpected("int".into()), at(1, 1)),
-        ("#ifndef G\n#define G\nvoid f();\n#endif int g();", Directive("endif".into()), at(4, 1)),
+        ("#ifndef G\n#define G\nvoid f();\n#endif int g();", TextAfterEndif, at(4, 1)),
+        ("#ifndef G\n#define G\nvoid f();\n#endif G", TextAfterEndif, at(4, 1)),
     ];
     for (text, reason, position) in table {
         let (got, got_at, _) = refused(text);
@@ -216,4 +217,18 @@ fn a_header_larger_than_the_limit_is_refused_before_it_is_read() {
     assert_eq!(parsed(&padded(MAX_HEADER_BYTES)).functions.len(), 1);
     let refusal = parse_header("grader.h", &padded(MAX_HEADER_BYTES + 1)).unwrap_err();
     assert_eq!((refusal.reason, refusal.at), (Reason::HeaderTooLarge, Some(Position { line: 1, column: 1 })));
+}
+
+#[test]
+fn refusals_for_the_guard_say_what_is_wrong_with_it() {
+    let message = |text: &str| parse_header("grader.h", text).unwrap_err().to_string();
+    assert_eq!(
+        message("#ifndef QHHOJ_RPC_HPP\n#define QHHOJ_RPC_HPP\n#endif"),
+        "grader.h:1:1: '#ifndef QHHOJ_RPC_HPP': the name 'QHHOJ_RPC_HPP' is reserved (the prefix 'qhhoj' is, in any case)."
+    );
+    assert_eq!(message("int main();"), "grader.h:1:1: 'int main()': the name 'main' is reserved.");
+    assert_eq!(
+        message("#ifndef G\n#define G\nvoid f();\n#endif G"),
+        "grader.h:4:1: '#endif G': nothing may follow #endif on its line."
+    );
 }

@@ -51,6 +51,7 @@ pub enum Reason {
     Directive(String),
     GuardMismatch,
     GuardNotClosed,
+    TextAfterEndif,
     Pointer,
     Array,
     Reference,
@@ -123,6 +124,7 @@ impl Reason {
                 "the include guard must be #ifndef X, then #define X with no value, then #endif at the end"
                     .into()
             }
+            Reason::TextAfterEndif => "nothing may follow #endif on its line".into(),
             Reason::GuardNotClosed => {
                 "the include guard is not closed by #endif at the end of the header".into()
             }
@@ -157,6 +159,9 @@ impl Reason {
             Reason::Variable => "variables are not supported (functions only)".into(),
             Reason::ConstValueReturn => "a const return must be a reference (const T&)".into(),
             Reason::Overload(name) => format!("'{name}' is declared twice (one name, one declaration)"),
+            Reason::ReservedName(name) if name.to_ascii_lowercase().starts_with("qhhoj") => {
+                format!("the name '{name}' is reserved (the prefix 'qhhoj' is, in any case)")
+            }
             Reason::ReservedName(name) => format!("the name '{name}' is reserved"),
             Reason::TooManyFunctions => "more than 64 functions".into(),
             Reason::TooManyParameters => "more than 16 parameters".into(),
@@ -230,6 +235,7 @@ mod tests {
             Reason::Directive("d".into()),
             Reason::GuardMismatch,
             Reason::GuardNotClosed,
+            Reason::TextAfterEndif,
             Reason::Pointer,
             Reason::Array,
             Reason::Reference,
