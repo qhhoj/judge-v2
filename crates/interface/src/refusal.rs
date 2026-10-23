@@ -41,6 +41,8 @@ impl fmt::Display for Refusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
     UnexpectedCharacter(char),
+    LoneCarriageReturn,
+    LineSplice,
     UnterminatedComment,
     QuotedInclude,
     Directive(String),
@@ -89,6 +91,13 @@ impl Reason {
         let text = match self {
             Reason::UnexpectedCharacter(c) => {
                 format!("the character {c:?} is not part of the supported grammar")
+            }
+            Reason::LoneCarriageReturn => {
+                "a carriage return without a line feed is not a supported line end; save the header with LF or CRLF line ends"
+                    .into()
+            }
+            Reason::LineSplice => {
+                "a line ending in '\\' continues onto the next line, which is not supported (in comments either)".into()
             }
             Reason::UnterminatedComment => "the comment is not closed".into(),
             Reason::QuotedInclude => {
@@ -202,6 +211,8 @@ mod tests {
     fn every_reason_has_its_own_text() {
         let all = [
             Reason::UnexpectedCharacter('x'),
+            Reason::LoneCarriageReturn,
+            Reason::LineSplice,
             Reason::UnterminatedComment,
             Reason::QuotedInclude,
             Reason::Directive("d".into()),

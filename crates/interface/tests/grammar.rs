@@ -152,3 +152,34 @@ fn spelling_a_parsed_declaration_and_parsing_it_again_gives_the_same_function() 
         assert_eq!(back, function);
     }
 }
+
+#[test]
+fn line_ends_the_compiler_reads_differently_are_refused_where_they_occur() {
+    use Reason::*;
+    let at = |line, column| Position { line, column };
+    let table: Vec<(&str, Reason, Position)> = vec![
+        ("int ask(int); // c\rint spare(int);\nvoid solve();\n", LoneCarriageReturn, at(1, 19)),
+        ("#ifndef G\n#define G\nvoid solve();\n#endif\rint spare(int);\n", LoneCarriageReturn, at(4, 7)),
+        ("#include <vector> // x\rint spare(int);\nvoid solve();\n", LoneCarriageReturn, at(1, 23)),
+        ("void solve();\r\r\n", LoneCarriageReturn, at(1, 14)),
+        ("int ask(int); // c\\\nint spare(int);\nvoid solve();\n", LineSplice, at(1, 19)),
+        ("int ask(int); // c\\  \t\nint spare(int);\n", LineSplice, at(1, 19)),
+        ("int ask(int); // c\\\r\nint spare(int);\r\n", LineSplice, at(1, 19)),
+        ("#include <vector> // x\\\nint spare(int);\n", LineSplice, at(1, 23)),
+        ("/* a *\\\n/ int spare(int); */ void solve();\n", LineSplice, at(1, 7)),
+        ("// c ??/\nint spare(int);\n", LineSplice, at(1, 6)),
+        ("#define LONG_MACRO \\\n  1\n", LineSplice, at(1, 20)),
+        ("void solve(); // c\\", LineSplice, at(1, 19)),
+    ];
+    for (text, reason, position) in table {
+        let (got, got_at, _) = refused(text);
+        assert_eq!((got, got_at), (reason, position), "{text:?}");
+    }
+}
+
+#[test]
+fn a_backslash_inside_a_comment_line_and_crlf_line_ends_are_accepted() {
+    let interface = parsed("// a \\ b\r\nint ask(int); /* c:\\dir */\r\nvoid solve();\r\n");
+    let names: Vec<_> = interface.functions.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, vec!["ask", "solve"]);
+}

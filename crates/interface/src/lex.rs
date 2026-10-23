@@ -26,13 +26,46 @@ const PUNCTUATION: [&str; 18] =
     ["...", "::", ">>", "&&", "->", "<", ">", "(", ")", ",", ";", "&", "*", "[", "]", "{", "}", "="];
 
 pub fn lex(file: &str, text: &str) -> Result<Vec<Token>, Refusal> {
-    let mut lexer =
-        Lexer { file, chars: text.chars().collect(), index: 0, line: 1, column: 1, line_start: true };
+    let chars: Vec<char> = text.chars().collect();
+    if let Some((index, reason)) = line_end_mismatch(&chars) {
+        let at = Some(position_of(&chars, index));
+        return Err(Refusal { file: file.to_string(), at, construct: String::new(), reason });
+    }
+    let mut lexer = Lexer { file, chars, index: 0, line: 1, column: 1, line_start: true };
     let mut tokens = Vec::new();
     while let Some(token) = lexer.next_token()? {
         tokens.push(token);
     }
     Ok(tokens)
+}
+
+/// The first character where the compiler would split or join lines differently from this lexer, which reads only
+/// `\n` and `\r\n` as line ends: GCC also ends a line at a lone `\r`, and splices a line ending in `\` (blanks
+/// allowed after it, `??/` under trigraphs) onto the next one, comments included.
+fn line_end_mismatch(chars: &[char]) -> Option<(usize, Reason)> {
+    (0..chars.len()).find_map(|index| {
+        let rest = &chars[index..];
+        let reason = match rest {
+            ['\r', after @ ..] if after.first() != Some(&'\n') => Reason::LoneCarriageReturn,
+            ['\\', after @ ..] | ['?', '?', '/', after @ ..] if ends_line(after) => Reason::LineSplice,
+            _ => return None,
+        };
+        Some((index, reason))
+    })
+}
+
+/// Only blanks before the line end or the end of the text.
+fn ends_line(after: &[char]) -> bool {
+    let blanks = after.iter().take_while(|c| matches!(c, ' ' | '\t' | '\x0b' | '\x0c')).count();
+    matches!(after[blanks..], [] | ['\n' | '\r', ..])
+}
+
+/// The line and column of `chars[index]`, counted as `Lexer::bump` counts them.
+fn position_of(chars: &[char], index: usize) -> Position {
+    let before = &chars[..index];
+    let line_start = before.iter().rposition(|c| *c == '\n').map_or(0, |newline| newline + 1);
+    let line = 1 + before.iter().filter(|c| **c == '\n').count();
+    Position { line: line as u32, column: (index - line_start + 1) as u32 }
 }
 
 struct Lexer<'a> {
@@ -161,8 +194,8 @@ impl Lexer<'_> {
         Err(self.refuse(at, Reason::UnexpectedCharacter(c)))
     }
 
-    /// The rest of the line after `#`. A trailing `\` would continue it: no supported directive does, so it is
-    /// refused under the directive's own name. `//` and `/* */` comments on the line are dropped.
+    /// The rest of the line after `#` (`lex` has already refused a line that continues). `//` and `/* */` comments
+    /// on the line are dropped.
     fn directive(&mut self, at: Position) -> Result<Token, Refusal> {
         self.bump(); // '#'
         self.line_start = false; // set again only by the newline that ends the directive
@@ -175,12 +208,7 @@ impl Lexer<'_> {
                 self.bump();
             }
         }
-        let text = text.trim().to_string();
-        if text.ends_with('\\') {
-            let name = text.split_whitespace().next().unwrap_or("").to_string();
-            return Err(self.refuse(at, Reason::Directive(name)));
-        }
-        Ok(Token { kind: TokenKind::Directive(text), at })
+        Ok(Token { kind: TokenKind::Directive(text.trim().to_string()), at })
     }
 }
 
@@ -260,8 +288,9 @@ mod tests {
         );
         assert_eq!(refused("int f(int a: 3);").reason, Reason::UnexpectedCharacter(':'));
         assert_eq!(refused("int f(); ồ").reason, Reason::UnexpectedCharacter('ồ'));
-        assert_eq!(refused("#define LONG_MACRO \\\n  1\n").reason, Reason::Directive("define".into()));
-        assert_eq!(refused("int f() \\\n;").reason, Reason::UnexpectedCharacter('\\'));
+        assert_eq!(refused("#define LONG_MACRO \\\n  1\n").reason, Reason::LineSplice);
+        assert_eq!(refused("int f() \\\n;").reason, Reason::LineSplice);
+        assert_eq!(refused("int f() \\ ;").reason, Reason::UnexpectedCharacter('\\'));
     }
 
     #[test]
