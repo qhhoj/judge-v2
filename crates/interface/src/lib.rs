@@ -5,6 +5,7 @@
 //! `refusal`, roles from symbol tables in `classify`, the Data tab text in `log`, generated C++ in `glue`.
 
 pub mod classify;
+pub mod glue;
 pub mod lex;
 pub mod log;
 pub mod model;
