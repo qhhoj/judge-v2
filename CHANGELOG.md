@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.8 (2026-10-23)
+
+### Fixes
+
+- JAVA, JAVA8 and KOTLIN bind the `/etc/java-NN-openjdk` directory of the JDK `/usr/lib/jvm/default-java` links to (`{jdk_etc}` in languages.toml) instead of a hard-coded JDK 21 path, so they work on hosts with another JDK major; a language whose bound directory is missing is not advertised, instead of retrying every job as a sandbox failure.
+- Internal: interactive grading runs on a new `session` module (spawn, wait, verdict predicates, testlib score, jury file save) that split signature and Communication will share. No verdict, time or message changes.
+- init.yml `signature_grader` accepts `split` and `cores`; `split` with `allow_main`, `cores` without `split` or outside 1..2, and `split` together with `interactive`, `output_only` or `file_io` are refused. Until split signature is graded, a split problem answers `RETRY UNSUPPORTED` (`signature.split`, `signature.split.paired`) instead of an internal error. Legacy files parse exactly as before.
+
 ## 2.3.7 (2026-10-23)
 
 ### Fixes
