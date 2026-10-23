@@ -275,8 +275,22 @@ mod tests {
         );
         assert!(matches!(result, Err(GradeError::Sandbox(_))));
         assert!(started.elapsed() < Duration::from_secs(5), "no member was started and waited out");
-        let manager_calls = std::fs::read_to_string(dirs[0].path().join("calls")).unwrap();
+        // A started manager logs `--run` only once its shell has been scheduled: give it a bounded time to do so.
+        let manager_calls =
+            wait_for_log_to_contain(&dirs[0].path().join("calls"), "--run", Duration::from_millis(500));
         assert!(!manager_calls.contains("--run"), "the manager never started: {manager_calls}");
+    }
+
+    /// Polls the file until it contains `needle` or the timeout passes; returns the last content read.
+    fn wait_for_log_to_contain(path: &std::path::Path, needle: &str, timeout: Duration) -> String {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            if content.contains(needle) || Instant::now() >= deadline {
+                return content;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
