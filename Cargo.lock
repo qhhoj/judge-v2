@@ -707,6 +707,7 @@ dependencies = [
  "judge-sandbox",
  "libc",
  "regex",
+ "rustix",
  "serde",
  "serde_norway",
  "sha2",

@@ -23,6 +23,7 @@ hex.workspace = true
 regex.workspace = true
 zip.workspace = true
 libc.workspace = true
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
