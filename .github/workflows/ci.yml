@@ -102,10 +102,10 @@ jobs:
           isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
       - name: isolate tests (one test thread, the tests share isolate boxes)
         run: cargo test --locked -p judge-sandbox -p judge-grader -p judge-daemon -p judge-cli --features isolate -- --test-threads=1
-      - name: selftest (host copy of languages.toml, every CI language required)
+      - name: selftest (the manifest again through the binary; host copy of languages.toml, every CI language required)
         run: |
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
-            --host-languages "$RUNNER_TEMP/languages.host.toml" \
+            --programs tests/programs --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
   # The container image (packaging/Containerfile). Pull requests only build it (so this can be a required check); pushes to main and v* tags also
   # push it to ghcr.io/qhhoj/judge-v2 (:sha-<12>, :main, and :vX.Y.Z on tags). The isolate selftest needs cgroup delegation, SYS_ADMIN and a tuned

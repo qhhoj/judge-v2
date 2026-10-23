@@ -262,14 +262,17 @@ From the second session, open a **new** SSH connection to prove you can still ge
 ```sh
 DAY_ONE_LANGUAGES=C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT
 sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
-  --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # every line ok
+  --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # last line ends in ok
 bash /opt/qhhoj-judge/current/packaging/check-host.sh --bridge bridge.qhhoj.internal:9990
 systemctl show qhhoj-judge -p NoNewPrivileges                               # NoNewPrivileges=no
 ```
 
 `check-host.sh` must print `ok` on every line except two, which are expected now and become `ok` in Phase B:
 `judge key is 0400 root` (no key yet), and `TLS to bridge.qhhoj.internal:9990` if the bridge is not running
-yet. If a language fails `selftest`, fix it (usually a missing package) before going on: every judge must
+yet. `selftest` judges every program of `tests/programs/manifest.toml` (shipped in the release) on this host and
+prints one line per row; a `MISMATCH` row is a verdict that differs here. It uses boxes 900-901 (refused when the
+config gives them to a slot), pinned to the last slot's core at nice 10, so it can run while the judge is live
+(`--box-base`, `--core`, `--nice` change that). If a language fails `selftest`, fix it (usually a missing package) before going on: every judge must
 offer every language in the list.
 
 `NoNewPrivileges` must be `no`: with `yes`, isolate cannot use its setuid bit and every run fails.
@@ -409,7 +412,8 @@ layer is not set up; `test result: ok` with no `skip:` lines is the pass.
 - **Metrics** (local only): `curl -s 127.0.0.1:9464/metrics` (`judge_assignments_total`,
   `judge_sandbox_failures_total`, `judge_reconnects_total`, `judge_slots_busy`).
 - **Update to a new release:** unpack it into `/opt/qhhoj-judge/releases/<new>` as in step 8, run
-  `sha256sum -c SHA256SUMS` and `selftest` (step 10) from the new directory, then
+  `sha256sum -c SHA256SUMS` and `selftest` (step 10) from the new directory (`--languages` and `--testlib` of the
+  new release; its programs are found next to its binary), then
   `ln -sfn releases/<new> /opt/qhhoj-judge/current && systemctl restart qhhoj-judge`. A restart drains:
   it takes no new work and lets running submissions finish (up to 120 s). Agree on a time with the site
   admin; never during a contest.
