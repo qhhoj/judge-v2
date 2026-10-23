@@ -209,10 +209,13 @@ impl IsolateBox {
         copy_tree(src_dir, &self.dir)
     }
 
+    /// The isolate command line of one run. The previous run's meta file is removed first, so a run that
+    /// writes none (isolate killed by a signal) fails `read_meta` instead of being graded from old data.
     pub fn command(&self, spec: &RunSpec) -> Result<Command, SandboxError> {
         if self.dirty {
             return Err(SandboxError::Dirty);
         }
+        self.remove_meta()?;
         let args = isolate_args(self.id, spec, &self.meta_path());
         let mut command = match self.core {
             Some(core) => {
@@ -226,17 +229,34 @@ impl IsolateBox {
         Ok(command)
     }
 
+    fn remove_meta(&self) -> Result<(), SandboxError> {
+        match std::fs::remove_file(self.meta_path()) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// The meta file of the last run. isolate opens it while reading its options and writes it as it exits, so
+    /// one killed by a signal leaves it missing or empty. A meta file without `time` or `status` (isolate's
+    /// own errors write only `status:XX`) is refused as a sandbox failure: it would parse as a clean exit.
     pub fn read_meta(&self) -> Result<Meta, SandboxError> {
-        parse_meta(&std::fs::read_to_string(self.meta_path())?)
+        let text = match std::fs::read_to_string(self.meta_path()) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            text => text?,
+        };
+        let complete = text.lines().any(|line| line.starts_with("time:") || line.starts_with("status:"));
+        if !complete {
+            return Err(SandboxError::Meta(format!("isolate ended without a meta file: {text:?}")));
+        }
+        parse_meta(&text)
     }
 
     pub fn run(&mut self, spec: &RunSpec) -> Result<Meta, SandboxError> {
         let mut command = self.command(spec)?;
         self.dirty = true;
-        let _ = std::fs::remove_file(self.meta_path());
         let status = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
         // isolate exits 1 for a program that failed and 2 for its own errors; the meta file decides.
-        if status.code() == Some(2) || !self.meta_path().exists() {
+        if status.code() == Some(2) {
             return Err(SandboxError::Isolate(format!("isolate exited with {status}")));
         }
         self.read_meta()
@@ -248,7 +268,7 @@ impl Drop for IsolateBox {
         if let Err(error) = cleanup_box(&self.config, self.id) {
             eprintln!("isolate cleanup of box {} failed: {error}", self.id);
         }
-        let _ = std::fs::remove_file(self.meta_path());
+        let _ = self.remove_meta();
     }
 }
 
@@ -295,14 +315,17 @@ fn make_dir(target: &Path) -> Result<(), SandboxError> {
 mod tests {
     use super::*;
 
-    /// A stand-in for isolate that logs each call to `calls` and answers `--init` with a box root.
+    /// A stand-in for isolate that logs each call to `calls` and answers `--init` with a box root. A run writes
+    /// no meta file, as an isolate killed before its exit does not.
     /// With a `no-quota` file beside it, an `--init` that sets a quota fails as on a box root without quotas.
+    /// With an `empty-meta` file beside it, a run leaves its meta file empty, as an isolate killed after opening it.
     const FAKE_ISOLATE: &str = r#"#!/bin/sh
 d=$(dirname "$0")
 echo "$*" >> "$d/calls"
 case "$*" in *--quota=*) if [ -e "$d/no-quota" ]; then
   echo "Cannot set disk quota: quotas have not been enabled for this filesystem" >&2; exit 2; fi ;; esac
 case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
+if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${a#--meta=}" ;; esac; done; fi
 "#;
 
     /// Held by each test that writes a fake isolate and runs it: a child another test thread forks while
@@ -388,5 +411,65 @@ case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root" ;; esac
         assert!(!disk_quota_works(&config, 3).unwrap());
         let broken = SandboxConfig { isolate_bin: "/nonexistent/isolate".into(), ..config };
         assert!(disk_quota_works(&broken, 3).is_err(), "isolate missing is an error, not \"no quotas\"");
+    }
+
+    fn run_spec() -> RunSpec {
+        RunSpec {
+            argv: vec!["/bin/true".into()],
+            limits: crate::spec::Limits::for_solution(1.0, 65_536, 1, 4096),
+            stdio: crate::spec::Stdio::default(),
+            env: vec![],
+            dirs: vec![],
+        }
+    }
+
+    /// A box whose previous run left a meta file that a clean verdict would come from.
+    fn box_with_stale_meta(dir: &Path) -> IsolateBox {
+        let b = IsolateBox::open(&fake_isolate(dir, None), 7, None).unwrap();
+        std::fs::write(b.meta_path(), "status:TO\ntime:1.100\ntime-wall:1.200\n").unwrap();
+        b
+    }
+
+    #[test]
+    fn a_spawned_run_that_writes_no_meta_is_not_read_from_the_previous_runs_meta() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = box_with_stale_meta(dir.path());
+        assert!(b.command(&run_spec()).unwrap().status().unwrap().success());
+        assert!(matches!(b.read_meta(), Err(SandboxError::Meta(_))), "{:?}", b.read_meta());
+    }
+
+    #[test]
+    fn a_run_that_writes_no_meta_is_a_sandbox_failure() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let result = box_with_stale_meta(dir.path()).run(&run_spec());
+        assert!(matches!(result, Err(SandboxError::Meta(_))), "{result:?}");
+    }
+
+    #[test]
+    fn an_empty_meta_is_a_sandbox_failure_not_a_clean_run() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("empty-meta"), "").unwrap();
+        let mut b = box_with_stale_meta(dir.path());
+        let result = b.run(&run_spec());
+        assert!(matches!(result, Err(SandboxError::Meta(_))), "{result:?}");
+        b.reset().unwrap();
+        assert!(b.command(&run_spec()).unwrap().status().unwrap().success());
+        assert!(matches!(b.read_meta(), Err(SandboxError::Meta(_))), "{:?}", b.read_meta());
+    }
+
+    #[test]
+    fn a_truncated_meta_is_refused_and_a_complete_one_is_read() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = IsolateBox::open(&fake_isolate(dir.path(), None), 7, None).unwrap();
+        std::fs::write(b.meta_path(), "max-rss:1234\ncsw-voluntary:4\n").unwrap();
+        assert!(matches!(b.read_meta(), Err(SandboxError::Meta(_))), "{:?}", b.read_meta());
+        std::fs::write(b.meta_path(), "time:0.010\ntime-wall:0.020\nexitcode:0\n").unwrap();
+        assert_eq!(b.read_meta().unwrap().exit_code, Some(0), "a clean exit has no status line");
+        std::fs::write(b.meta_path(), "status:XX\nmessage:box busy\n").unwrap();
+        assert_eq!(b.read_meta().unwrap().status.as_deref(), Some("XX"), "isolate's own error has no time");
     }
 }
