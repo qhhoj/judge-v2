@@ -216,10 +216,24 @@ impl InitYaml {
         Some(if spec.cores == Some(2) { SPLIT_PAIRED_FEATURE } else { SPLIT_FEATURE })
     }
 
-    /// The problem-wide checker and the interactive problem's own checker.
+    /// Every checker the file names: problem-wide, the interactive problem's own, then each case's and batch's
+    /// (tests, then pretests), so no checker of an ungraded kind is reached while grading.
     fn unsupported_custom_checker(&self) -> Option<String> {
         let interactive = self.interactive.as_ref().and_then(|spec| spec.checker.as_ref());
-        [self.checker.as_ref(), interactive].into_iter().flatten().find_map(unsupported_custom_kind)
+        let mut checkers: Vec<&CheckerSpec> = self.checker.iter().chain(interactive).collect();
+        for entry in self.test_cases.iter().chain(&self.pretest_test_cases) {
+            entry.collect_checkers(&mut checkers);
+        }
+        checkers.into_iter().find_map(unsupported_custom_kind)
+    }
+}
+
+impl CaseEntry {
+    fn collect_checkers<'a>(&'a self, checkers: &mut Vec<&'a CheckerSpec>) {
+        checkers.extend(self.checker.as_ref());
+        for entry in self.batched.iter().flatten() {
+            entry.collect_checkers(checkers);
+        }
     }
 }
 
@@ -335,6 +349,29 @@ mod tests {
         let signature =
             parse_init("test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h}\n").unwrap();
         assert_eq!(signature.unsupported_feature(), None);
+    }
+
+    /// A case, batch or pretest checker of a kind this judge does not grade is requeued like a problem-wide one,
+    /// never left to fail as an internal error when the case is checked.
+    #[test]
+    fn a_per_case_checker_of_an_ungraded_kind_is_reported() {
+        let refused = |cases: &str| parse_init(cases).unwrap().unsupported_feature();
+        let custom =
+            |kind: &str| format!("{{name: bridged, args: {{type: {kind}, lang: CPP17, files: c.cpp}}}}");
+        let case = |checker: &str| format!("{{in: a, out: b, points: 1, checker: {checker}}}");
+        let cms = custom("cms");
+        assert_eq!(refused(&format!("test_cases:\n- {}\n", case(&cms))).as_deref(), Some("checker.cms"));
+        let batch = format!(
+            "test_cases:\n- points: 1\n  checker: {}\n  batched:\n  - {{in: a, out: b}}\n",
+            custom("cms")
+        );
+        assert_eq!(refused(&batch).as_deref(), Some("checker.cms"));
+        let in_batch = format!("test_cases:\n- points: 1\n  batched:\n  - {}\n", case(&custom("ioi")));
+        assert_eq!(refused(&in_batch).as_deref(), Some("checker.ioi"));
+        let pretest = format!("test_cases: []\npretest_test_cases:\n- {}\n", case(&cms));
+        assert_eq!(refused(&pretest).as_deref(), Some("checker.cms"));
+        let graded = format!("test_cases:\n- {}\n- {}\n", case(&custom("themis")), case("identical"));
+        assert_eq!(refused(&graded), None);
     }
 
     #[test]

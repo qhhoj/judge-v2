@@ -29,8 +29,9 @@ bridged checkers written in Pascal or Java that include testlib do not compile (
 
 ## Grading outcomes (`judge_submission`)
 
-- Refused before any box is used: an init.yml feature not graded here (generator, `nobigmath`, a non-testlib
-  custom checker or interactor, per-case checker overrides) is `RETRY UNSUPPORTED`; a language with no runtime on
+- Refused before any box is used: an init.yml feature not graded here (generator, `nobigmath`, a custom checker
+  of a kind not graded here wherever init.yml names it (problem, interactive, batch or case: `checker.<type>`), a
+  non-testlib interactor, per-case checker overrides) is `RETRY UNSUPPORTED`; a language with no runtime on
   this judge (SCRATCH, or a key removed at start) is `RETRY RUNTIME_MISSING`.
 - Batches and pretests follow DMOJ: a case that is not AC skips the rest of its batch (SC), `short_circuit` skips
   every later case; a pretest run grades only `pretest_test_cases`. Each case reports `fraction x total`, where a
