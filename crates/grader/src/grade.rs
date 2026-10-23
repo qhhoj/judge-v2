@@ -16,6 +16,8 @@ pub struct CaseVerdict {
     /// Share of the case total earned, 0..=1. A failed case keeps the checker's partial share (linecount).
     pub fraction: f64,
     pub time_s: f64,
+    /// CPU of the checker and interactor runs (see `CaseReport::jury_time_s`).
+    pub jury_time_s: f64,
     pub memory_kib: u64,
     pub feedback: String,
     pub extended: String,
@@ -28,6 +30,7 @@ impl CaseVerdict {
             status,
             fraction: 0.0,
             time_s,
+            jury_time_s: 0.0,
             memory_kib,
             feedback,
             extended: String::new(),
@@ -45,6 +48,7 @@ fn skipped(case: &PlannedCase) -> CaseReport {
         position: case.position,
         status: Status::Sc,
         time_s: 0.0,
+        jury_time_s: 0.0,
         memory_kib: 0,
         points: 0.0,
         total: case.total,
@@ -60,6 +64,7 @@ fn graded(case: &PlannedCase, verdict: CaseVerdict) -> CaseReport {
         position: case.position,
         status: verdict.status,
         time_s: verdict.time_s,
+        jury_time_s: verdict.jury_time_s,
         memory_kib: verdict.memory_kib,
         points: verdict.fraction * case.total,
         total: case.total,
@@ -139,6 +144,7 @@ mod tests {
                 status,
                 fraction,
                 time_s: 0.1,
+                jury_time_s: 0.25,
                 memory_kib: 10,
                 feedback: "f".repeat(80),
                 extended: "e".repeat(600),
@@ -177,6 +183,7 @@ mod tests {
         assert_eq!(rec.started, Some((false, 4)));
         let first = &rec.cases[0];
         assert_eq!(first.position, 1);
+        assert_eq!(first.jury_time_s, 0.25, "the jury time reaches the report");
         assert_eq!(
             (first.feedback.len(), first.extended_feedback.len(), first.output_prefix.len()),
             (50, 512, 512),
@@ -192,6 +199,7 @@ mod tests {
         let statuses: Vec<_> = rec.cases.iter().map(|c| c.status).collect();
         assert_eq!(statuses, [Status::Tle, Status::Sc, Status::Sc, Status::Sc]);
         assert_eq!((rec.cases[3].time_s, rec.cases[3].memory_kib, rec.cases[3].total), (0.0, 0, 60.0));
+        assert_eq!(rec.cases[3].jury_time_s, 0.0, "a skipped case ran nothing");
     }
 
     #[test]

@@ -52,6 +52,8 @@ pub struct Interaction<'a> {
 pub struct Interactive {
     pub verdict: RunVerdict,
     pub time_s: f64,
+    /// The interactor's own CPU seconds.
+    pub jury_time_s: f64,
     pub memory_kib: u64,
     /// `None` when the solution's own verdict wins.
     pub check: Option<CheckOutcome>,
@@ -151,6 +153,7 @@ fn decide(
     let own = Interactive {
         verdict: result.verdict,
         time_s: result.time_s,
+        jury_time_s: interactor.time_s,
         memory_kib: result.memory_kib,
         check: None,
     };

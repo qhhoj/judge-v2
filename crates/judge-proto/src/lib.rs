@@ -15,4 +15,4 @@ pub mod golden;
 pub mod shape;
 
 /// `proto/version.json`: bumped with every additive change inside v1 (`Hello`/`Welcome.protocol_minor`).
-pub const PROTOCOL_MINOR: u32 = 3;
+pub const PROTOCOL_MINOR: u32 = 4;

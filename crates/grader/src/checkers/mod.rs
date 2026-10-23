@@ -34,15 +34,29 @@ pub struct CheckOutcome {
     pub fraction: f64,
     pub feedback: String,
     pub extended: String,
+    /// CPU seconds the check itself used in a sandbox: a custom checker's run; 0 for built-in checkers.
+    pub jury_time_s: f64,
 }
 
 impl CheckOutcome {
     pub fn pass() -> Self {
-        CheckOutcome { passed: true, fraction: 1.0, feedback: String::new(), extended: String::new() }
+        CheckOutcome {
+            passed: true,
+            fraction: 1.0,
+            feedback: String::new(),
+            extended: String::new(),
+            jury_time_s: 0.0,
+        }
     }
 
     pub fn fail(feedback: &str) -> Self {
-        CheckOutcome { passed: false, fraction: 0.0, feedback: feedback.into(), extended: String::new() }
+        CheckOutcome {
+            passed: false,
+            fraction: 0.0,
+            feedback: feedback.into(),
+            extended: String::new(),
+            jury_time_s: 0.0,
+        }
     }
 }
 

@@ -238,6 +238,9 @@ message Case {
   string feedback = 8;
   string extended_feedback = 9;
   string output_prefix = 10;
+  // CPU seconds (isolate `time`) of the problem's own programs for this case: the custom checker, the
+  // interactor and the interactive checker, summed. 0 for built-in checkers and skipped cases.
+  double jury_time_s = 11;
 }
 
 message CaseResults {

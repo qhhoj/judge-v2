@@ -51,6 +51,7 @@ impl Runner for Scripted {
                 position,
                 status: Status::Ac,
                 time_s: 0.0,
+                jury_time_s: 0.0,
                 memory_kib: 0,
                 points: 1.0,
                 total: 1.0,

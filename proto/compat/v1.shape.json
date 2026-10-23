@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "minor": 3,
+  "minor": 4,
   "messages": {
     ".qhhoj.judge.v1.Abort": {
       "fields": {
@@ -315,6 +315,13 @@
         "10": {
           "name": "output_prefix",
           "kind": "String",
+          "repeated": false,
+          "optional": false,
+          "oneof": null
+        },
+        "11": {
+          "name": "jury_time_s",
+          "kind": "Double",
           "repeated": false,
           "optional": false,
           "oneof": null

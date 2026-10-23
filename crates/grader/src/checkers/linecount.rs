@@ -85,7 +85,13 @@ fn outcome(matched: usize, total: usize, extra: bool) -> CheckOutcome {
         return CheckOutcome::fail("");
     }
     let fraction = if total == 0 { 1.0 } else { matched as f64 / total as f64 };
-    CheckOutcome { passed: matched == total, fraction, feedback: String::new(), extended: String::new() }
+    CheckOutcome {
+        passed: matched == total,
+        fraction,
+        feedback: String::new(),
+        extended: String::new(),
+        jury_time_s: 0.0,
+    }
 }
 
 #[cfg(test)]
