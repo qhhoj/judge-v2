@@ -10,6 +10,8 @@ pub enum SandboxError {
     Dirty,
     #[error("bad meta file: {0}")]
     Meta(String),
+    #[error("the daemon holds inheritable fds {0:?}; a channel run would pass them into the box")]
+    InheritableFds(Vec<i32>),
 }
 
 impl From<std::io::Error> for SandboxError {

@@ -3,6 +3,7 @@
 pub mod boxes;
 pub mod classify;
 pub mod error;
+pub mod fds;
 pub mod isolate_box;
 pub mod meta;
 pub mod room;
