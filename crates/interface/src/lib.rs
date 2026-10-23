@@ -6,10 +6,10 @@
 
 pub mod classify;
 pub mod glue;
-pub mod lex;
+pub(crate) mod lex;
 pub mod log;
 pub mod model;
-pub mod parse;
+pub(crate) mod parse;
 pub mod refusal;
 
 pub use classify::{Classification, EntrySymbols, Role, Symbol, classify, foreign_symbols, map_declarations};
@@ -24,3 +24,5 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const MAX_FUNCTIONS: usize = 64;
 pub const MAX_PARAMETERS: usize = 16;
 pub const MAX_NESTING: usize = 8;
+/// Larger headers are refused before they are read.
+pub const MAX_HEADER_BYTES: usize = 64 * 1024;

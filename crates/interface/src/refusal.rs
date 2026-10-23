@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::MAX_HEADER_BYTES;
+
 pub const SUPPORTED_TYPES: &str = "Supported: int, long long, double, bool, std::string, std::vector<T>, \
 std::pair<A,B> of supported types, by value or const&; void or const& returns.";
 
@@ -43,6 +45,7 @@ pub enum Reason {
     UnexpectedCharacter(char),
     LoneCarriageReturn,
     LineSplice,
+    HeaderTooLarge,
     UnterminatedComment,
     QuotedInclude,
     Directive(String),
@@ -86,8 +89,8 @@ impl Reason {
         )
     }
 
-    /// Reasons found while reading the header text.
-    fn syntax_text(&self) -> Option<String> {
+    /// Reasons found before or while splitting the header text into tokens.
+    fn lexical_text(&self) -> Option<String> {
         let text = match self {
             Reason::UnexpectedCharacter(c) => {
                 format!("the character {c:?} is not part of the supported grammar")
@@ -99,7 +102,16 @@ impl Reason {
             Reason::LineSplice => {
                 "a line ending in '\\' continues onto the next line, which is not supported (in comments either)".into()
             }
+            Reason::HeaderTooLarge => format!("the header is larger than {MAX_HEADER_BYTES} bytes"),
             Reason::UnterminatedComment => "the comment is not closed".into(),
+            _ => return None,
+        };
+        Some(text)
+    }
+
+    /// Reasons found while reading the header's directives and declarations.
+    fn syntax_text(&self) -> Option<String> {
+        let text = match self {
             Reason::QuotedInclude => {
                 "quoted includes are not supported (the header must be self-contained); use #include <...>"
                     .into()
@@ -160,7 +172,7 @@ impl Reason {
                 "the grader uses {}, which it does not define and the header does not declare; that cannot be provided from another process",
                 names.join(", ")
             ),
-            // Every syntax reason is answered by `syntax_text`; the test below pins that none lands here.
+            // Every lexical and syntax reason is answered above; the test below pins that none lands here.
             other => format!("{other:?}"),
         }
     }
@@ -168,10 +180,8 @@ impl Reason {
 
 impl fmt::Display for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.syntax_text() {
-            Some(text) => f.write_str(&text),
-            None => f.write_str(&self.interface_text()),
-        }
+        let text = self.lexical_text().or_else(|| self.syntax_text());
+        f.write_str(&text.unwrap_or_else(|| self.interface_text()))
     }
 }
 
@@ -208,11 +218,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // one list of every reason
     fn every_reason_has_its_own_text() {
         let all = [
             Reason::UnexpectedCharacter('x'),
             Reason::LoneCarriageReturn,
             Reason::LineSplice,
+            Reason::HeaderTooLarge,
             Reason::UnterminatedComment,
             Reason::QuotedInclude,
             Reason::Directive("d".into()),

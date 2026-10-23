@@ -1,4 +1,4 @@
-use judge_interface::{Interface, Pass, Position, Reason, Ret, Type, parse_header};
+use judge_interface::{Interface, MAX_HEADER_BYTES, Pass, Position, Reason, Ret, Type, parse_header};
 
 fn parsed(text: &str) -> Interface {
     parse_header("grader.h", text).unwrap_or_else(|refusal| panic!("{refusal}"))
@@ -103,6 +103,20 @@ fn every_unsupported_construct_is_refused_at_its_declaration() {
         ("int f();\n#ifndef G\n#define G\n#endif", Directive("ifndef".into()), at(2, 1)),
         ("#ifndef G\n#define G\nint f();", GuardNotClosed, at(1, 1)),
         ("int f(int", UnexpectedEnd, at(1, 1)),
+        ("const int N = 5;", Variable, at(1, 1)),
+        ("const int N;", Variable, at(1, 1)),
+        ("extern const long long N = 1;", Variable, at(1, 1)),
+        ("const int N[3];", Array, at(1, 1)),
+        ("int inline(int);", Unexpected("inline".into()), at(1, 1)),
+        ("#include </usr/include/vector>", Directive("include".into()), at(1, 1)),
+        (
+            "#ifndef QHHOJ_RPC_HPP\n#define QHHOJ_RPC_HPP\n#endif",
+            ReservedName("QHHOJ_RPC_HPP".into()),
+            at(1, 1),
+        ),
+        ("#ifndef main\n#define main\n#endif", ReservedName("main".into()), at(1, 1)),
+        ("#ifndef int\n#define int\n#endif", Unexpected("int".into()), at(1, 1)),
+        ("#ifndef G\n#define G\nvoid f();\n#endif int g();", Directive("endif".into()), at(4, 1)),
     ];
     for (text, reason, position) in table {
         let (got, got_at, _) = refused(text);
@@ -182,4 +196,24 @@ fn a_backslash_inside_a_comment_line_and_crlf_line_ends_are_accepted() {
     let interface = parsed("// a \\ b\r\nint ask(int); /* c:\\dir */\r\nvoid solve();\r\n");
     let names: Vec<_> = interface.functions.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, vec!["ask", "solve"]);
+}
+
+#[test]
+fn a_long_construct_is_quoted_up_to_200_characters() {
+    let declaration = format!("int* f({})", vec!["int"; 100].join(", "));
+    let (reason, _, construct) = refused(&format!("{declaration};"));
+    assert_eq!(reason, Reason::Pointer);
+    assert_eq!(construct, format!("{}...", declaration.chars().take(200).collect::<String>()));
+    let short = "int* pick(int)";
+    assert_eq!(refused(&format!("{short};")).2, short);
+}
+
+#[test]
+fn a_header_larger_than_the_limit_is_refused_before_it_is_read() {
+    let declaration = "void solve();\n";
+    let padded = |size: usize| format!("{declaration}//{}\n", "x".repeat(size - declaration.len() - 3));
+    assert_eq!(padded(MAX_HEADER_BYTES).len(), MAX_HEADER_BYTES);
+    assert_eq!(parsed(&padded(MAX_HEADER_BYTES)).functions.len(), 1);
+    let refusal = parse_header("grader.h", &padded(MAX_HEADER_BYTES + 1)).unwrap_err();
+    assert_eq!((refusal.reason, refusal.at), (Reason::HeaderTooLarge, Some(Position { line: 1, column: 1 })));
 }

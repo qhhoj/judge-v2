@@ -5,13 +5,25 @@
 
 use crate::lex::{Token, TokenKind, lex};
 use crate::model::{Function, Interface, Param, Pass, Ret, Type};
-use crate::refusal::{Reason, Refusal};
-use crate::{MAX_FUNCTIONS, MAX_NESTING, MAX_PARAMETERS};
+use crate::refusal::{Position, Reason, Refusal};
+use crate::{MAX_FUNCTIONS, MAX_HEADER_BYTES, MAX_NESTING, MAX_PARAMETERS};
 
 type Parsed<T> = Result<T, Refusal>;
 
+/// A refusal quotes at most this many characters of its construct, then `...`.
+const MAX_CONSTRUCT_CHARS: usize = 200;
+
 /// Reads a header. `file` is only used in messages.
 pub fn parse_header(file: &str, text: &str) -> Parsed<Interface> {
+    if text.len() > MAX_HEADER_BYTES {
+        let at = Some(Position { line: 1, column: 1 });
+        return Err(Refusal {
+            file: file.into(),
+            at,
+            construct: String::new(),
+            reason: Reason::HeaderTooLarge,
+        });
+    }
     let tokens = lex(file, text)?;
     let parser = Parser {
         file,
@@ -180,7 +192,7 @@ impl Parser<'_> {
                 render(&self.tokens[self.start..end.max(self.start + 1)])
             }
         };
-        Refusal { file: self.file.into(), at: Some(first.at), construct, reason }
+        Refusal { file: self.file.into(), at: Some(first.at), construct: shortened(construct), reason }
     }
 
     // ----- header level -----
@@ -236,8 +248,8 @@ impl Parser<'_> {
             "include" => return self.include(rest),
             "define" => return self.define_guard(rest),
             "pragma" => rest == "once",
-            "ifndef" => self.open_guard(rest),
-            "endif" => self.close_guard(),
+            "ifndef" => return self.open_guard(rest),
+            "endif" => rest.is_empty() && self.close_guard(),
             _ => false,
         };
         if accepted { Ok(()) } else { Err(self.refuse(Reason::Directive(name))) }
@@ -255,13 +267,15 @@ impl Parser<'_> {
         }
     }
 
-    fn open_guard(&mut self, rest: &str) -> bool {
+    /// `#ifndef X` as the first token; `X` is a name the glue and the runtime leave free.
+    fn open_guard(&mut self, rest: &str) -> Parsed<()> {
         let first_token = self.start == 0 && matches!(self.guard, Guard::Absent);
-        if first_token && is_identifier(rest) {
-            self.guard = Guard::Opened(rest.to_string());
-            return true;
+        if !first_token || !is_identifier(rest) {
+            return Err(self.refuse(Reason::Directive("ifndef".into())));
         }
-        false
+        self.reserved_name(rest)?;
+        self.guard = Guard::Opened(rest.to_string());
+        Ok(())
     }
 
     fn define_guard(&mut self, rest: &str) -> Parsed<()> {
@@ -339,21 +353,27 @@ impl Parser<'_> {
         };
         self.reserved_name(&name)?;
         self.index += 1;
-        if self.is_punct(";") || self.is_punct("=") {
-            return Err(self.refuse(Reason::Variable));
-        }
-        if self.is_punct("[") {
-            return Err(self.refuse(Reason::Array));
+        if let Some(reason) = self.variable_shape() {
+            return Err(self.refuse(reason));
         }
         self.expect_punct("(")?;
         Ok(name)
+    }
+
+    /// After a name: `;` or `=` declares a variable, `[` an array.
+    fn variable_shape(&self) -> Option<Reason> {
+        match self.kind(0) {
+            Some(TokenKind::Punct(";" | "=")) => Some(Reason::Variable),
+            Some(TokenKind::Punct("[")) => Some(Reason::Array),
+            _ => None,
+        }
     }
 
     fn reserved_name(&self, name: &str) -> Parsed<()> {
         if name == "main" || name.to_ascii_lowercase().starts_with("qhhoj") {
             return Err(self.refuse(Reason::ReservedName(name.into())));
         }
-        if RESERVED_WORDS.contains(&name) {
+        if RESERVED_WORDS.contains(&name) || refused_opening(name).is_some() {
             return Err(self.refuse(Reason::Unexpected(name.into())));
         }
         Ok(())
@@ -433,8 +453,19 @@ impl Parser<'_> {
         match self.qualified_type()? {
             (ty, Pass::Value) => Ok(Ret::Value(ty)),
             (ty, Pass::ConstRef) => Ok(Ret::ConstRef(ty)),
-            (_, Pass::ConstValue) => Err(self.refuse(Reason::ConstValueReturn)),
+            (_, Pass::ConstValue) => Err(self.const_value_return()),
         }
+    }
+
+    /// `const T` then a name: a variable (`const int N = 5;`) is refused as one; anything else as a const return.
+    fn const_value_return(&mut self) -> Refusal {
+        if matches!(self.kind(0), Some(TokenKind::Ident(_))) {
+            self.index += 1;
+            if let Some(reason) = self.variable_shape() {
+                return self.refuse(reason);
+            }
+        }
+        self.refuse(Reason::ConstValueReturn)
     }
 
     /// `T`, `const T`, `const T&` or `T const&`: the type and how it is passed. A trailing `const` on a value, a
@@ -569,10 +600,19 @@ fn is_identifier(text: &str) -> bool {
     starts_well && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// A header name in `#include <...>`: no `..`, no blanks, only path characters.
+/// A header name in `#include <...>`: relative (no leading `/`), no `..`, no blanks, only path characters.
 fn is_include_name(name: &str) -> bool {
     let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '+' | '-');
-    !name.is_empty() && !name.contains("..") && name.chars().all(allowed)
+    !name.is_empty() && !name.starts_with('/') && !name.contains("..") && name.chars().all(allowed)
+}
+
+/// The construct cut to `MAX_CONSTRUCT_CHARS` characters, marked with `...` when cut.
+fn shortened(construct: String) -> String {
+    if construct.chars().count() <= MAX_CONSTRUCT_CHARS {
+        return construct;
+    }
+    let kept: String = construct.chars().take(MAX_CONSTRUCT_CHARS).collect();
+    format!("{kept}...")
 }
 
 fn token_text(kind: &TokenKind) -> String {
