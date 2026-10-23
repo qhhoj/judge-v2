@@ -1,11 +1,14 @@
-//! One isolate box. Every run starts from a fresh `--init` (Review Focus 1).
+//! One isolate box. Every run starts from a fresh `--init` (Review Focus 1). A channel run
+//! (`command_with_channel`) is the only way fds above 2 reach a box.
 
 use crate::error::SandboxError;
 use crate::meta::{Meta, parse_meta};
 use crate::room::Room;
 use crate::spec::{RunSpec, isolate_args};
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -49,6 +52,20 @@ impl Default for SandboxConfig {
         }
     }
 }
+
+/// The three channel fds a box receives, in box fd order: 3 = the doorbell this side waits on (read end),
+/// 4 = the doorbell this side rings (write end, non-blocking), 5 = the shared memory (read-write).
+pub struct ChannelFds {
+    pub doorbell_wait: OwnedFd,
+    pub doorbell_ring: OwnedFd,
+    pub shared: OwnedFd,
+}
+
+/// The mover: the command starts with the channel fds as its 0/1/2, moves them to 3/4/5 by duplication (so fd 5
+/// keeps the shared memory's read-write mode; reopening it by path would fail on its 0600 mode), points 0/1/2 at
+/// /dev/null, then execs the isolate command line. isolate's own `--stdin/--stdout/--stderr` give the program
+/// its stdio.
+const CHANNEL_MOVER: &str = r#"exec 3<&0 4>&1 5<&2 </dev/null >/dev/null 2>/dev/null; exec "$@""#;
 
 pub struct IsolateBox {
     config: SandboxConfig,
@@ -151,6 +168,11 @@ impl IsolateBox {
         write_new(&self.box_path(name)?, &mut &bytes[..], 0o644)
     }
 
+    /// Like `put_bytes`, but mode 0666: a file the box uid writes in place (the session page).
+    pub fn put_writable(&self, name: &str, bytes: &[u8]) -> Result<(), SandboxError> {
+        write_new(&self.box_path(name)?, &mut &bytes[..], 0o666)
+    }
+
     /// Opens a regular file the program left in the box for reading. A symlink is refused.
     pub fn open_output(&self, name: &str) -> Result<File, SandboxError> {
         let path = self.box_path(name)?;
@@ -209,23 +231,47 @@ impl IsolateBox {
         copy_tree(src_dir, &self.dir)
     }
 
-    /// The isolate command line of one run. The previous run's meta file is removed first, so a run that
-    /// writes none (isolate killed by a signal) fails `read_meta` instead of being graded from old data.
-    pub fn command(&self, spec: &RunSpec) -> Result<Command, SandboxError> {
+    /// `[taskset -c <core>] isolate <args>`: the command line both `command` and `command_with_channel` run.
+    /// The previous run's meta file is removed first, so a run that writes none (isolate killed by a signal, or
+    /// never started) fails `read_meta` instead of being graded from old data.
+    fn isolate_command_line(&self, spec: &RunSpec) -> Result<Vec<OsString>, SandboxError> {
         if self.dirty {
             return Err(SandboxError::Dirty);
         }
         self.remove_meta()?;
-        let args = isolate_args(self.id, spec, &self.meta_path());
-        let mut command = match self.core {
-            Some(core) => {
-                let mut c = Command::new(&self.config.taskset_bin);
-                c.args(["-c", &core.to_string()]).arg(&self.config.isolate_bin);
-                c
-            }
-            None => Command::new(&self.config.isolate_bin),
-        };
-        command.args(args);
+        let mut line: Vec<OsString> = Vec::new();
+        if let Some(core) = self.core {
+            line.extend([self.config.taskset_bin.clone().into(), "-c".into(), core.to_string().into()]);
+        }
+        line.push(self.config.isolate_bin.clone().into());
+        line.extend(isolate_args(self.id, spec, &self.meta_path()).into_iter().map(OsString::from));
+        Ok(line)
+    }
+
+    pub fn command(&self, spec: &RunSpec) -> Result<Command, SandboxError> {
+        let line = self.isolate_command_line(spec)?;
+        let mut command = Command::new(&line[0]);
+        command.args(&line[1..]);
+        Ok(command)
+    }
+
+    /// A command for `spec` (which must set `inherit_fds`) that gives the box `fds` as 3/4/5 and /dev/null as
+    /// the command's own 0/1/2. Refuses while the daemon holds inheritable fds (`fds::inheritable_fds`): the box
+    /// would receive them too. `fds` are owned by the returned command and close when it drops.
+    pub fn command_with_channel(&self, spec: &RunSpec, fds: ChannelFds) -> Result<Command, SandboxError> {
+        if !spec.inherit_fds {
+            return Err(SandboxError::Isolate("a channel run needs RunSpec.inherit_fds".into()));
+        }
+        let leaked = crate::fds::inheritable_fds()?;
+        if !leaked.is_empty() {
+            return Err(SandboxError::InheritableFds(leaked));
+        }
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", CHANNEL_MOVER, "sh"]).args(self.isolate_command_line(spec)?);
+        command
+            .stdin(Stdio::from(fds.doorbell_wait))
+            .stdout(Stdio::from(fds.doorbell_ring))
+            .stderr(Stdio::from(fds.shared));
         Ok(command)
     }
 
@@ -314,6 +360,7 @@ fn make_dir(target: &Path) -> Result<(), SandboxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::OwnedFd;
 
     /// A stand-in for isolate that logs each call to `calls` and answers `--init` with a box root. A run writes
     /// no meta file, as an isolate killed before its exit does not.
@@ -338,15 +385,14 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
     }
 
     fn fake_isolate(dir: &Path, quota: Option<DiskQuota>) -> SandboxConfig {
+        SandboxConfig { disk_quota: quota, ..fake_isolate_with(dir, FAKE_ISOLATE) }
+    }
+
+    fn fake_isolate_with(dir: &Path, script: &str) -> SandboxConfig {
         let bin = dir.join("isolate");
-        std::fs::write(&bin, FAKE_ISOLATE).unwrap();
+        std::fs::write(&bin, script).unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        SandboxConfig {
-            isolate_bin: bin,
-            meta_dir: dir.join("meta"),
-            disk_quota: quota,
-            ..Default::default()
-        }
+        SandboxConfig { isolate_bin: bin, meta_dir: dir.join("meta"), ..Default::default() }
     }
 
     const HEADROOM: DiskQuota = DiskQuota { headroom_kib: 196_608, headroom_inodes: 1024 };
@@ -420,6 +466,7 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
             stdio: crate::spec::Stdio::default(),
             env: vec![],
             dirs: vec![],
+            inherit_fds: false,
         }
     }
 
@@ -471,5 +518,101 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
         assert_eq!(b.read_meta().unwrap().exit_code, Some(0), "a clean exit has no status line");
         std::fs::write(b.meta_path(), "status:XX\nmessage:box busy\n").unwrap();
         assert_eq!(b.read_meta().unwrap().status.as_deref(), Some("XX"), "isolate's own error has no time");
+    }
+
+    /// A fake isolate that, on `--run`, writes one line per fd 0..5: `<fd> <readlink target> <flags octal>`.
+    /// The shell execs nothing, so `$$` is the fake itself.
+    const FAKE_ISOLATE_FDS: &str = r#"#!/bin/sh
+d=$(dirname "$0")
+case "$*" in *--init*) mkdir -p "$d/root/box"; echo "$d/root"; exit 0 ;; esac
+case "$*" in *--run*)
+  for fd in 0 1 2 3 4 5; do
+    t=$(readlink /proc/$$/fd/$fd 2>/dev/null || echo closed)
+    f=$(sed -n 's/^flags:[[:space:]]*//p' /proc/$$/fdinfo/$fd 2>/dev/null)
+    echo "$fd $t $f" >> "$d/fds"
+  done ;;
+esac
+"#;
+
+    fn channel_files(dir: &Path) -> ChannelFds {
+        let open = |name: &str| -> OwnedFd {
+            let options = OpenOptions::new().read(true).write(true).create(true).truncate(true).clone();
+            options.open(dir.join(name)).unwrap().into()
+        };
+        ChannelFds { doorbell_wait: open("wait"), doorbell_ring: open("ring"), shared: open("shared") }
+    }
+
+    #[test]
+    fn a_channel_command_gives_the_box_its_fds_as_3_4_5_and_null_stdio() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = IsolateBox::open(&fake_isolate_with(dir.path(), FAKE_ISOLATE_FDS), 7, None).unwrap();
+        let spec = RunSpec { inherit_fds: true, ..run_spec() };
+        let status = b.command_with_channel(&spec, channel_files(dir.path())).unwrap().status().unwrap();
+        assert!(status.success());
+        let fds = std::fs::read_to_string(dir.path().join("fds")).unwrap();
+        let field = |fd: usize, column: usize| {
+            fds.lines().nth(fd).unwrap().split(' ').nth(column).unwrap().to_string()
+        };
+        assert_eq!((0..3).map(|fd| field(fd, 1)).collect::<Vec<_>>(), ["/dev/null"; 3]);
+        let real = dir.path().canonicalize().unwrap();
+        let expected = ["wait", "ring", "shared"].map(|name| real.join(name).display().to_string());
+        assert_eq!((3..6).map(|fd| field(fd, 1)).collect::<Vec<_>>(), expected);
+        let flags5 = u32::from_str_radix(&field(5, 2), 8).unwrap();
+        assert_eq!(flags5 & 0o3, 0o2, "fd 5 keeps O_RDWR: duplicated, never reopened");
+    }
+
+    #[test]
+    fn a_channel_command_without_inherit_fds_is_refused() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = IsolateBox::open(&fake_isolate_with(dir.path(), FAKE_ISOLATE_FDS), 7, None).unwrap();
+        let refused = b.command_with_channel(&run_spec(), channel_files(dir.path()));
+        assert!(matches!(refused, Err(SandboxError::Isolate(_))));
+    }
+
+    #[test]
+    fn a_channel_command_on_a_core_runs_isolate_under_taskset() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = IsolateBox::open(&fake_isolate_with(dir.path(), FAKE_ISOLATE_FDS), 7, Some(3)).unwrap();
+        let spec = RunSpec { inherit_fds: true, ..run_spec() };
+        let command = b.command_with_channel(&spec, channel_files(dir.path())).unwrap();
+        let argv: Vec<String> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let tail = &argv[3..];
+        assert_eq!(command.get_program(), "/bin/sh");
+        assert_eq!(&tail[..4], ["/usr/bin/taskset", "-c", "3", b.config.isolate_bin.to_str().unwrap()]);
+        assert!(tail.contains(&"--inherit-fds".to_string()));
+    }
+
+    #[test]
+    fn a_dirty_box_refuses_a_channel_command() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate_with(dir.path(), FAKE_ISOLATE_FDS), 7, None).unwrap();
+        b.dirty = true;
+        let spec = RunSpec { inherit_fds: true, ..run_spec() };
+        let refused = b.command_with_channel(&spec, channel_files(dir.path()));
+        assert!(matches!(refused, Err(SandboxError::Dirty)));
+    }
+
+    #[test]
+    fn a_writable_file_is_created_fresh_with_mode_0666() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let b = IsolateBox::open(&fake_isolate(dir.path(), None), 7, None).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::write(&elsewhere, "keep").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, b.dir().join(".page")).unwrap();
+        b.put_writable(".page", &[0u8; 4096]).unwrap();
+        let meta = std::fs::symlink_metadata(b.dir().join(".page")).unwrap();
+        assert!(meta.is_file());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o666);
+        assert_eq!(std::fs::read(b.dir().join(".page")).unwrap(), vec![0u8; 4096]);
+        assert_eq!(
+            std::fs::read_to_string(elsewhere).unwrap(),
+            "keep",
+            "the link was replaced, not followed"
+        );
     }
 }

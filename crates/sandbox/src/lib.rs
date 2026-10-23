@@ -10,5 +10,5 @@ pub mod room;
 pub mod spec;
 
 pub use error::SandboxError;
-pub use isolate_box::{DiskQuota, IsolateBox, SandboxConfig, cleanup_box, disk_quota_works};
+pub use isolate_box::{ChannelFds, DiskQuota, IsolateBox, SandboxConfig, cleanup_box, disk_quota_works};
 pub use room::Room;
