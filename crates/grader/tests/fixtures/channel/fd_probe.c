@@ -43,7 +43,17 @@ static void shared_memory(void) {
     printf("fallocate_grow %s\n", result(fallocate(5, 0, st.st_size, 4096)));
 }
 
+/* What fd points at, as /proc shows it: `pipe:[inode]` for a doorbell, so two boxes can be compared. */
+static void print_target(int fd) {
+    char path[32], target[256] = {0};
+    snprintf(path, sizeof path, "/proc/self/fd/%d", fd);
+    if (readlink(path, target, sizeof target - 1) < 0) strcpy(target, "unreadable");
+    printf("fd%d_target %s\n", fd, target);
+}
+
 static void doorbells(void) {
+    print_target(3);
+    print_target(4);
     printf("fd4_nonblock %s\n", (fcntl(4, F_GETFL) & O_NONBLOCK) ? "yes" : "no");
     printf("fd3_nonblock %s\n", (fcntl(3, F_GETFL) & O_NONBLOCK) ? "yes" : "no");
 }

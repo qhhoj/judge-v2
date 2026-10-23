@@ -1,6 +1,6 @@
 #![cfg(feature = "isolate")]
 //! The split channel seen from inside both boxes: which fds each box holds and what it can do with the shared
-//! memory. Box offsets 60-65 (two per test). Run under `flock -o` (CONTRIBUTING.md): a channel run refuses to
+//! memory. Box offsets 60-67 (two per test). Run under `flock -o` (CONTRIBUTING.md): a channel run refuses to
 //! start while the test process holds an inheritable fd.
 mod common;
 
@@ -89,7 +89,19 @@ fn each_box_sees_exactly_fds_0_to_5_with_the_channel_on_3_4_5() {
         assert_eq!(value(report, "fd5_size"), (3u64 << 20).to_string());
         assert_eq!(value(report, "fd4_nonblock"), "yes");
         assert_eq!(value(report, "fd3_nonblock"), "no");
+        for doorbell in ["fd3_target", "fd4_target"] {
+            assert!(value(report, doorbell).starts_with("pipe:["), "{doorbell}: {report}");
+        }
     }
+}
+
+#[test]
+fn each_box_rings_the_doorbell_the_other_box_waits_on() {
+    let Some(probe) = run_probe(66) else { return };
+    let (jury, contestant) = (&probe.jury, &probe.contestant);
+    assert_eq!(value(jury, "fd4_target"), value(contestant, "fd3_target"), "jury rings, contestant waits");
+    assert_eq!(value(contestant, "fd4_target"), value(jury, "fd3_target"), "contestant rings, jury waits");
+    assert_ne!(value(jury, "fd3_target"), value(jury, "fd4_target"), "two doorbells, not one pipe");
 }
 
 #[test]
