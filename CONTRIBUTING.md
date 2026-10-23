@@ -16,4 +16,4 @@ The isolate suites (`--features isolate`) need isolate 2.x with `isolate.service
 flock -o /path/to/isolate.lock cargo test --locked -p judge-sandbox -p judge-grader --features isolate -- --test-threads=1
 ```
 
-`-o` closes the lock fd before the tests start. Channel runs (`--inherit-fds`) refuse to start while the process holds any fd that is not close-on-exec, and `flock` without `-o` passes its lock fd on. The same holds for any wrapper that starts the tests or the daemon: it must pass only fds 0-2.
+`-o` closes the lock fd before the tests start. Channel runs (`--inherit-fds`) refuse to start while the process holds any fd that is not close-on-exec, and `flock` without `-o` passes its lock fd on. The same holds for any wrapper that starts the tests or the daemon: it must pass only fds 0-2. CI starts its test steps through `.github/scripts/only-stdio.sh`, which closes the inheritable fds the GitHub runner passes to each step.

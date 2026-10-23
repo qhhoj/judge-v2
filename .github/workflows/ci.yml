@@ -35,7 +35,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked --all
+      # the runner passes extra fds to each step; channel runs refuse to start while the tests hold one
+      - run: .github/scripts/only-stdio.sh cargo test --locked --all
       - name: golden binaries match their JSON
         run: |
           cargo run --locked -q -p judge-proto --example write_golden
@@ -101,7 +102,7 @@ jobs:
           isolate --version
           isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
       - name: isolate tests (one test thread, the tests share isolate boxes)
-        run: cargo test --locked -p judge-sandbox -p judge-grader -p judge-daemon -p judge-cli --features isolate -- --test-threads=1
+        run: .github/scripts/only-stdio.sh cargo test --locked -p judge-sandbox -p judge-grader -p judge-daemon -p judge-cli --features isolate -- --test-threads=1
       - name: selftest (the manifest again through the binary; host copy of languages.toml, every CI language required)
         run: |
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
