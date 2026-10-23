@@ -5,6 +5,7 @@
 set -eu
 for fd in $(ls /proc/$$/fd); do
   [ "$fd" -gt 2 ] || continue
+  [[ -e /proc/$$/fd/$fd ]] || continue # gone since the listing: the command substitution's own pipe
   flags=$(sed -n 's/^flags:[[:space:]]*//p' "/proc/$$/fdinfo/$fd" 2>/dev/null || true)
   [ -n "$flags" ] || continue
   if (( (8#$flags & 8#2000000) == 0 )); then
