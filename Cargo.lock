@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "judge-interface"
-version = "2.3.7"
+version = "2.3.9"
 dependencies = [
  "thiserror 2.0.21",
 ]
