@@ -16,7 +16,7 @@ pub fn contestant_glue(interface: &Interface, roles: &[Role], header: &str) -> S
 }
 
 fn serve_contestant_function(function: &Function) -> String {
-    let call = format!("{}({})", function.name, arguments(function));
+    let call = format!("::{}({})", function.name, arguments(function));
     match function.ret {
         Ret::Void => format!("      {call};\n      qhhoj::reply({});\n", function.id),
         _ => format!("      qhhoj::reply({}, {call});\n", function.id),

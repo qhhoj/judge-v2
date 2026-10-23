@@ -5,13 +5,14 @@ use super::{signature, with_role};
 use crate::classify::Role;
 use crate::model::Interface;
 
-/// Takes every declaration's address, so `nm -u` names its symbol.
+/// Takes every declaration's address, so `nm -u` names its symbol. `::` picks the global declaration even when
+/// `using namespace std;` brings a standard function of the same name.
 pub fn probe(interface: &Interface, header: &str) -> String {
     let mut out = format!(
         "#include \"{header}\"\ntypedef void (*qhhoj_any_function)();\nqhhoj_any_function qhhoj_probe[] = {{\n"
     );
     for function in &interface.functions {
-        out += &format!("  (qhhoj_any_function)&{},\n", function.name);
+        out += &format!("  (qhhoj_any_function)&::{},\n", function.name);
     }
     out + "};\n"
 }

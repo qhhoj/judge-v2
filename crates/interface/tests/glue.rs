@@ -95,7 +95,7 @@ fn the_probe_takes_every_declaration_and_the_null_contestant_defines_only_contes
     let interface = parse_header("g.h", HEADER).unwrap();
     let probe_source = probe::probe(&interface, "grader.h");
     for name in ["solve", "ask", "note", "view", "spare"] {
-        assert!(probe_source.contains(&format!("(qhhoj_any_function)&{name},")), "{name}");
+        assert!(probe_source.contains(&format!("(qhhoj_any_function)&::{name},")), "{name}");
     }
     assert_eq!(probe::baseline("grader.h"), "#include \"grader.h\"\n");
     let null = probe::null_contestant(&interface, &ROLES, "grader.h");
@@ -116,11 +116,39 @@ fn the_pair_for_the_reference_interface_has_the_documented_shape() {
         "std::vector<int> solve(int qhhoj_a0, const std::vector<int>& qhhoj_a1) {\n  qhhoj::Call qhhoj_call(0, qhhoj_serve);\n  qhhoj_call.put(qhhoj_a0);\n  qhhoj_call.put(qhhoj_a1);\n  return qhhoj_call.result<std::vector<int> >();\n}\n"
     ));
     assert!(jury.contains(
-        "      const std::vector<std::vector<int> >* qhhoj_out = 0;\n      try {\n        qhhoj::Serving qhhoj_serving(3);\n        qhhoj_out = &view();\n      } catch (...) {\n        qhhoj::callback_threw(3);\n      }\n      qhhoj::reply_cached(3, qhhoj_out);\n"
+        "      const std::vector<std::vector<int> >* qhhoj_out = 0;\n      try {\n        qhhoj::Serving qhhoj_serving(3);\n        qhhoj_out = &::view();\n      } catch (...) {\n        qhhoj::callback_threw(3);\n      }\n      qhhoj::reply_cached(3, qhhoj_out);\n"
     ));
     let contestant = contestant_glue(&interface, &roles, "grader.h");
     assert!(contestant.contains(
-        "    case 0: {\n      int qhhoj_a0 = qhhoj_request.get<int >();\n      std::vector<int> qhhoj_a1 = qhhoj_request.get<std::vector<int> >();\n      qhhoj_request.end();\n      qhhoj::reply(0, solve(qhhoj_a0, qhhoj_a1));\n      break;\n    }\n"
+        "    case 0: {\n      int qhhoj_a0 = qhhoj_request.get<int >();\n      std::vector<int> qhhoj_a1 = qhhoj_request.get<std::vector<int> >();\n      qhhoj_request.end();\n      qhhoj::reply(0, ::solve(qhhoj_a0, qhhoj_a1));\n      break;\n    }\n"
     ));
     assert!(contestant.ends_with("int main() { return qhhoj::contestant_main(qhhoj_serve); }\n"));
+}
+
+#[test]
+fn a_scalar_callback_result_starts_at_zero_and_a_library_one_at_its_default() {
+    let header = "#include <string>\nlong long big();\nbool flag();\nstd::string word();\nvoid solve();\n";
+    let interface = parse_header("g.h", header).unwrap();
+    let roles = [Role::Callback, Role::Callback, Role::Callback, Role::Contestant];
+    let jury = jury_glue(&interface, &roles, "grader.h");
+    assert!(jury.contains("      long long qhhoj_out = 0;\n"), "{jury}");
+    assert!(jury.contains("      bool qhhoj_out = 0;\n"), "{jury}");
+    assert!(jury.contains("      std::string qhhoj_out = std::string();\n"), "{jury}");
+}
+
+#[test]
+fn generated_calls_and_addresses_name_the_global_declaration() {
+    let header = "#include <algorithm>\nusing namespace std;\nint count(int x);\nint find(int x);\n";
+    let interface = parse_header("g.h", header).unwrap();
+    let roles = [Role::Callback, Role::Contestant];
+    assert!(probe::probe(&interface, "grader.h").contains("(qhhoj_any_function)&::count,"));
+    assert!(jury_glue(&interface, &roles, "grader.h").contains("qhhoj_out = ::count(qhhoj_a0);"));
+    assert!(contestant_glue(&interface, &roles, "grader.h").contains("qhhoj::reply(1, ::find(qhhoj_a0));"));
+}
+
+#[test]
+#[should_panic(expected = "one role per function")]
+fn glue_for_roles_that_do_not_match_the_functions_is_a_programming_error() {
+    let interface = parse_header("g.h", "int ask(int);\nvoid solve();\n").unwrap();
+    contestant_glue(&interface, &[Role::Callback], "grader.h");
 }

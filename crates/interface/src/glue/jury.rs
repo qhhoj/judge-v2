@@ -3,7 +3,7 @@
 
 use super::{arguments, banner, dispatch::dispatcher, proxy, with_role};
 use crate::classify::Role;
-use crate::model::{Function, Interface, Ret};
+use crate::model::{Function, Interface, Ret, Type};
 
 pub fn jury_glue(interface: &Interface, roles: &[Role], header: &str) -> String {
     let mut out = banner(header);
@@ -19,11 +19,11 @@ pub fn jury_glue(interface: &Interface, roles: &[Role], header: &str) -> String 
 /// inside `try`, so its destructor restores the page state before `callback_threw` and before the RETURN is posted.
 fn serve_callback(function: &Function) -> String {
     let id = function.id;
-    let call = format!("{}({})", function.name, arguments(function));
+    let call = format!("::{}({})", function.name, arguments(function));
     let (declare, run, reply) = match &function.ret {
         Ret::Void => (String::new(), format!("{call};"), format!("qhhoj::reply({id});")),
         Ret::Value(ty) => (
-            format!("      {t} qhhoj_out = {t}();\n", t = ty.cpp()),
+            format!("      {} qhhoj_out = {};\n", ty.cpp(), initial_value(ty)),
             format!("qhhoj_out = {call};"),
             format!("qhhoj::reply({id}, qhhoj_out);"),
         ),
@@ -37,4 +37,12 @@ fn serve_callback(function: &Function) -> String {
         "{declare}      try {{\n        qhhoj::Serving qhhoj_serving({id});\n        {run}\n      }} catch (...) {{\n        \
          qhhoj::callback_threw({id});\n      }}\n      {reply}\n"
     )
+}
+
+/// `0` for a scalar; `T()` for a library type. `long long()` is not C++ (a functional cast takes a one-word type).
+fn initial_value(ty: &Type) -> String {
+    match ty {
+        Type::Int | Type::LongLong | Type::Double | Type::Bool => "0".into(),
+        Type::String | Type::Vector(_) | Type::Pair(..) => format!("{}()", ty.cpp()),
+    }
 }

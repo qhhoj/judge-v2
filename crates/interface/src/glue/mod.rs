@@ -1,6 +1,8 @@
 //! Generated C++. C++03 only (`> >`, no auto, lambdas or nullptr) so every C++ key compiles it; the runtime
-//! it calls is `runtime/qhhoj_rpc.hpp`. Each definition's signature is one line ending in ` {`. The `header`
-//! argument of every generator is the header's file name, which the caller has already validated.
+//! it calls is `runtime/qhhoj_rpc.hpp`. Each definition's signature is one line ending in ` {`. Calls and
+//! addresses spell the header's functions `::name`, so a standard function brought in by `using namespace std;`
+//! never makes them ambiguous. The `header` argument of every generator is the header's file name, which the
+//! caller has already validated.
 
 pub mod contestant;
 mod dispatch;
@@ -18,8 +20,9 @@ pub(crate) fn banner(header: &str) -> String {
     )
 }
 
-/// The functions with `role`, in declaration order (`roles` is indexed by `Function::id`).
+/// The functions with `role`, in declaration order (`roles` is indexed by `Function::id`, one per function).
 pub(crate) fn with_role<'a>(interface: &'a Interface, roles: &[Role], role: Role) -> Vec<&'a Function> {
+    assert_eq!(roles.len(), interface.functions.len(), "one role per function");
     let pairs = interface.functions.iter().zip(roles);
     pairs.filter(|(_, found)| **found == role).map(|(function, _)| function).collect()
 }
