@@ -248,7 +248,12 @@ impl IsolateBox {
         Ok(line)
     }
 
+    /// The isolate command for `spec`. A spec that inherits fds is refused: only `command_with_channel`, which
+    /// checks the daemon's fds first, may start such a run.
     pub fn command(&self, spec: &RunSpec) -> Result<Command, SandboxError> {
+        if spec.inherit_fds {
+            return Err(SandboxError::Isolate("a run that inherits fds needs command_with_channel".into()));
+        }
         let line = self.isolate_command_line(spec)?;
         let mut command = Command::new(&line[0]);
         command.args(&line[1..]);
@@ -583,6 +588,17 @@ esac
         assert_eq!(command.get_program(), "/bin/sh");
         assert_eq!(&tail[..4], ["/usr/bin/taskset", "-c", "3", b.config.isolate_bin.to_str().unwrap()]);
         assert!(tail.contains(&"--inherit-fds".to_string()));
+    }
+
+    #[test]
+    fn a_plain_command_refuses_inherited_fds() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate_with(dir.path(), FAKE_ISOLATE_FDS), 7, None).unwrap();
+        let spec = RunSpec { inherit_fds: true, ..run_spec() };
+        assert!(matches!(b.command(&spec), Err(SandboxError::Isolate(_))));
+        assert!(matches!(b.run(&spec), Err(SandboxError::Isolate(_))));
+        assert!(!dir.path().join("fds").exists(), "isolate never ran");
     }
 
     #[test]
