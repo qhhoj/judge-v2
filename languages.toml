@@ -120,6 +120,9 @@ source = "main.py"
 # A syntax error is CE, as for PY3; running main.py never reads the cached .pyc.
 compile = ["/usr/bin/pypy3", "-m", "py_compile", "main.py"]
 run = ["/usr/bin/pypy3", "main.py"]
+# PyPy sizes its GC from the host (nursery = cache/2, 1M to 130M seen; max delta = RAM/8), so verdicts near the
+# memory limit varied by CPU: pin the documented 4M nursery default and the 2GB delta of a 16 GiB host.
+env = { PYPY_GC_NURSERY = "4M", PYPY_GC_MAX_DELTA = "2GB" }
 version = ["/usr/bin/pypy3", "--version"]
 exception_marker = "Traceback (most recent call last)"
 exception_style = "last_line"
