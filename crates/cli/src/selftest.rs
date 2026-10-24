@@ -1,11 +1,11 @@
 //! `selftest`: every row of the conformance manifest (`tests/programs/manifest.toml`, shipped in the release)
-//! judged by the real grader with the installed languages file and isolate, on two spare boxes pinned to one
-//! slot's core at a low priority, so the live judge keeps running. Fails on any verdict that differs from the
+//! judged by the real grader with the installed languages file and isolate, on two spare boxes pinned to a
+//! core no slot owns at a low priority, so the live judge keeps running. Fails on any verdict that differs from the
 //! manifest's and on a required language the judge does not advertise; the others are skipped.
 
 use crate::local::{Boxes, LocalJudge};
 use judge_daemon::config::Config;
-use judge_daemon::cores::{SYSFS_CPU, worker_cores};
+use judge_daemon::cores::{SYSFS_CPU, physical_cores, worker_cores};
 use judge_grader::languages::{LanguageRegistry, host_languages};
 use judge_grader::manifest::{self, Manifest, Row};
 use judge_grader::report::{CaseReport, Reporter};
@@ -26,10 +26,10 @@ pub struct SelftestArgs {
     /// The first of two boxes; refused when either is a live slot's box.
     #[arg(long, default_value_t = 900)]
     pub box_base: u32,
-    /// The CPU to run on; default: the last slot's core (from the config), unpinned without a config.
+    /// The CPU to run on, never a slot's; default: the last core no slot owns (unpinned without a config).
     #[arg(long)]
     pub core: Option<u32>,
-    /// Niceness of the selftest and its boxes: the live slot sharing the core keeps priority.
+    /// Niceness of the selftest and its boxes.
     #[arg(long, default_value_t = 10)]
     pub nice: i32,
     #[arg(long, value_delimiter = ',')]
@@ -64,21 +64,49 @@ fn default_programs() -> anyhow::Result<PathBuf> {
     Ok(dir.join("tests/programs"))
 }
 
-fn plan_with_config(config: &Config, args: &SelftestArgs, programs: PathBuf) -> Plan {
-    let cores = worker_cores(config, Path::new(SYSFS_CPU));
+/// `--core`, else the last core no slot owns; never a slot's core, so live verdicts keep their core.
+fn spare_core(requested: Option<u32>, slot_cores: &[u32], sysfs: &Path) -> anyhow::Result<u32> {
+    if let Some(core) = requested {
+        anyhow::ensure!(!slot_cores.contains(&core), "core {core} runs a slot: pass a --core no slot uses");
+        return Ok(core);
+    }
+    let spare = physical_cores(sysfs).into_iter().rev().find(|core| !slot_cores.contains(core));
+    spare
+        .ok_or_else(|| anyhow::anyhow!("every core runs a slot ({slot_cores:?}): pass a --core no slot uses"))
+}
+
+/// Refuses boxes that are a live slot's (`live`) or past the last box id.
+fn check_boxes(base: u32, live: &[u32]) -> anyhow::Result<()> {
+    let helper =
+        base.checked_add(1).ok_or_else(|| anyhow::anyhow!("--box-base {base} is the last box id"))?;
+    if let (Some(id), Some(last)) = ([base, helper].iter().find(|id| live.contains(id)), live.last()) {
+        anyhow::bail!("box {id} belongs to a live slot: pick a --box-base above {last}");
+    }
+    Ok(())
+}
+
+fn plan_with_config(
+    config: &Config,
+    args: &SelftestArgs,
+    programs: PathBuf,
+    sysfs: &Path,
+) -> anyhow::Result<Plan> {
+    let slot_cores = worker_cores(config, sysfs);
+    let live_boxes = owned_box_ids(config.box_base, slot_cores.len() as u32);
+    check_boxes(args.box_base, &live_boxes)?;
     let sandbox = SandboxConfig {
         isolate_bin: config.isolate.bin.clone(),
         taskset_bin: config.isolate.taskset.clone(),
         ..SandboxConfig::default()
     };
-    let core = args.core.or(cores.last().copied());
-    Plan {
+    let core = Some(spare_core(args.core, &slot_cores, sysfs)?);
+    Ok(Plan {
         languages: args.languages.clone().unwrap_or_else(|| config.languages_file.clone()),
         testlib: args.testlib.clone().unwrap_or_else(|| config.testlib_dir.clone()),
         programs,
         boxes: Boxes { base: args.box_base, core, sandbox, defaults: manifest::DEFAULTS },
-        live_boxes: owned_box_ids(config.box_base, cores.len() as u32),
-    }
+        live_boxes,
+    })
 }
 
 /// The plan from the flags and, when present, the daemon config at `config_path`.
@@ -87,23 +115,23 @@ pub fn plan(config_path: &Path, args: &SelftestArgs) -> anyhow::Result<Plan> {
         Some(dir) => dir.clone(),
         None => default_programs()?,
     };
-    let plan = match daemon_config(config_path, args)? {
-        Some(config) => plan_with_config(&config, args, programs),
-        None => Plan {
-            languages: args.languages.clone().unwrap_or_default(),
-            testlib: args.testlib.clone().unwrap_or_default(),
-            programs,
-            boxes: Boxes { core: args.core, defaults: manifest::DEFAULTS, ..Boxes::unpinned(args.box_base) },
-            live_boxes: Vec::new(),
-        },
-    };
-    let own = [plan.boxes.base, plan.boxes.base.saturating_add(1)];
-    if let (Some(id), Some(last)) =
-        (own.iter().find(|id| plan.live_boxes.contains(id)), plan.live_boxes.last())
-    {
-        anyhow::bail!("box {id} belongs to a live slot: pick a --box-base above {last}");
+    match daemon_config(config_path, args)? {
+        Some(config) => plan_with_config(&config, args, programs, Path::new(SYSFS_CPU)),
+        None => {
+            check_boxes(args.box_base, &[])?;
+            Ok(Plan {
+                languages: args.languages.clone().unwrap_or_default(),
+                testlib: args.testlib.clone().unwrap_or_default(),
+                programs,
+                boxes: Boxes {
+                    core: args.core,
+                    defaults: manifest::DEFAULTS,
+                    ..Boxes::unpinned(args.box_base)
+                },
+                live_boxes: Vec::new(),
+            })
+        }
     }
-    Ok(plan)
 }
 
 /// Prints each runtime isolate cannot reach; with `out`, writes the rewritten copy and returns its path.
@@ -144,29 +172,35 @@ impl Reporter for Cases {
     }
 }
 
-/// The row's verdict and its first case (time and memory).
+/// The row's statuses (`manifest::statuses`) and every case's report.
 fn judge_row(
     judge: &mut LocalJudge,
     problem: &Path,
     programs: &Path,
     row: &Row,
-) -> anyhow::Result<(String, Option<CaseReport>)> {
+) -> anyhow::Result<(Vec<String>, Vec<CaseReport>)> {
     let source = std::fs::read(programs.join(&row.file))
         .map_err(|e| anyhow::anyhow!("{}: {e}", programs.join(&row.file).display()))?;
     let jvm = judge.registry.get(&row.lang).is_some_and(|l| l.jvm);
     let mut cases = Cases::default();
     let outcome = judge.judge(problem, &manifest::submission(&row.lang, jvm, source), &mut cases)?;
-    let first = cases.0.into_iter().next();
-    Ok((manifest::verdict(&outcome, first.as_ref().map(|c| c.status.code())), first))
+    let codes: Vec<&str> = cases.0.iter().map(|c| c.status.code()).collect();
+    Ok((manifest::statuses(&outcome, &codes), cases.0))
 }
 
-fn print_row(row: &Row, got: &str, case: Option<&CaseReport>) {
-    let (time, memory) = case.map_or((0.0, 0), |c| (c.time_s, c.memory_kib));
-    let mark = if got == row.expect { "ok" } else { "MISMATCH" };
-    println!(
-        "{:<7} {:<26} {:<4} {:<4} {time:>6.3}s {memory:>7}K  {mark}",
-        row.lang, row.file, row.expect, got
-    );
+/// One code when every case has it, else the codes joined: `AC`, `AC,WA`, `CE`.
+fn short(statuses: &[String]) -> String {
+    let uniform = statuses.len() == manifest::CASES.len() && statuses.iter().all(|s| *s == statuses[0]);
+    if uniform { statuses[0].clone() } else { statuses.join(",") }
+}
+
+/// The row with the slowest case's time and the largest memory.
+fn print_row(row: &Row, got: &[String], cases: &[CaseReport]) {
+    let time = cases.iter().map(|c| c.time_s).fold(0.0, f64::max);
+    let memory = cases.iter().map(|c| c.memory_kib).max().unwrap_or(0);
+    let mark = if got == row.expected() { "ok" } else { "MISMATCH" };
+    let (want, got) = (short(&row.expected()), short(got));
+    println!("{:<7} {:<26} {want:<5} {got:<5} {time:>6.3}s {memory:>7}K  {mark}", row.lang, row.file);
 }
 
 /// Rows of languages the judge advertises are judged; the others are skipped.
@@ -181,17 +215,17 @@ fn run_rows(judge: &mut LocalJudge, programs: &Path, rows: &[Row]) -> anyhow::Re
     let work = tempfile::tempdir()?;
     let problem = work.path().join("aplusb");
     manifest::write_problem(&problem, &manifest::CASES)?;
-    println!("{:<7} {:<26} {:<4} {:<4} {:>7} {:>8}", "LANG", "FILE", "WANT", "GOT", "TIME", "MEM");
+    println!("{:<7} {:<26} {:<5} {:<5} {:>7} {:>8}", "LANG", "FILE", "WANT", "GOT", "TIME", "MEM");
     let mut tally = Tally::default();
     for row in rows {
         if judge.registry.get(&row.lang).is_none() {
             tally.skipped.insert(row.lang.clone());
             continue;
         }
-        let (got, case) = judge_row(judge, &problem, programs, row)?;
-        print_row(row, &got, case.as_ref());
+        let (got, cases) = judge_row(judge, &problem, programs, row)?;
+        print_row(row, &got, &cases);
         tally.judged += 1;
-        tally.mismatched += usize::from(got != row.expect);
+        tally.mismatched += usize::from(got != row.expected());
     }
     Ok(tally)
 }
@@ -217,7 +251,8 @@ pub fn selftest(plan: Plan, args: &SelftestArgs) -> anyhow::Result<bool> {
     let manifest_file = plan.programs.join("manifest.toml");
     let text = std::fs::read_to_string(&manifest_file)
         .map_err(|e| anyhow::anyhow!("{}: {e} (pass --programs)", manifest_file.display()))?;
-    let rows = Manifest::parse(&text)?.expanded();
+    let rows =
+        Manifest::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", manifest_file.display()))?.expanded();
     lower_priority(args.nice)?;
     let languages = host_copy(&plan.languages, args.host_languages.as_deref())?;
     print_placement(&plan, args.nice);
@@ -233,4 +268,52 @@ pub fn selftest(plan: Plan, args: &SelftestArgs) -> anyhow::Result<bool> {
     let result = if ok { "ok" } else { "FAIL" };
     println!("selftest: {} judged, {} mismatched: {result}", tally.judged, tally.mismatched);
     Ok(ok)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: SelftestArgs,
+    }
+
+    /// cpu0..cpu5, one thread per core (the production shape: slots on cores 2-5).
+    fn six_cores() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for cpu in 0..6 {
+            let topology = dir.path().join(format!("cpu{cpu}/topology"));
+            std::fs::create_dir_all(&topology).unwrap();
+            std::fs::write(topology.join("thread_siblings_list"), format!("{cpu}\n")).unwrap();
+        }
+        dir
+    }
+
+    fn plan_for(box_base: u32, flags: &[&str]) -> anyhow::Result<Plan> {
+        let text = format!(
+            "name = 'j'\nbridge_url = 'http://127.0.0.1:1'\nkey_file = '/k'\nproblem_data_root = '/d'\n\
+             cache_dir = '/c'\nlanguages_file = '/l'\ntestlib_dir = '/t'\ncores = [2, 3, 4, 5]\nbox_base = {box_base}\n"
+        );
+        let config = judge_daemon::config::parse(&text).unwrap();
+        let args = Cli::parse_from([&["selftest"][..], flags].concat()).args;
+        plan_with_config(&config, &args, "/p".into(), six_cores().path())
+    }
+
+    #[test]
+    fn the_selftest_never_takes_a_live_slots_box_or_core() {
+        let free = plan_for(0, &[]).unwrap();
+        assert_eq!((free.boxes.base, free.boxes.core), (900, Some(1)), "boxes 900-901 on the last free core");
+        assert!(plan_for(0, &["--core", "0"]).is_ok());
+        let refusals = [plan_for(0, &["--core", "3"]), plan_for(895, &[]), plan_for(0, &["--box-base", "7"])];
+        for refused in refusals {
+            assert!(refused.is_err(), "a slot's core or box was accepted");
+        }
+        assert!(
+            plan_for(0, &["--box-base", &u32::MAX.to_string()]).is_err(),
+            "the helper box would wrap to 0"
+        );
+    }
 }

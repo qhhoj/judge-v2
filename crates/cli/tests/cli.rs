@@ -137,27 +137,39 @@ mod with_isolate {
         assert!(out.stdout.contains("compile error"), "{}", out.stdout);
     }
 
-    /// A one-row manifest: PY3 a+b expected to get `expect`.
-    fn selftest_expecting(expect: &str) -> Finished {
+    /// selftest on a one-row manifest: `lang` judging `source` (as `sol.py`) is expected to get `expect`.
+    fn selftest_row(lang: &str, source: &str, expect: &str, extra: &[&str]) -> Finished {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("PY3")).unwrap();
-        std::fs::copy(format!("{ROOT}/tests/programs/PY3/ac.py"), dir.path().join("PY3/ac.py")).unwrap();
-        let row = format!("rows = [{{ lang = \"PY3\", file = \"PY3/ac.py\", expect = \"{expect}\" }}]\n");
+        std::fs::write(dir.path().join("sol.py"), source).unwrap();
+        let row = format!("rows = [{{ lang = \"{lang}\", file = \"sol.py\", expect = \"{expect}\" }}]\n");
         std::fs::write(dir.path().join("manifest.toml"), row).unwrap();
         let (languages, testlib) = (format!("{ROOT}/languages.toml"), format!("{ROOT}/assets/testlib"));
         let programs = dir.path().to_str().unwrap();
         let args = ["selftest", "--config", "/nonexistent", "--languages", &languages, "--testlib", &testlib];
         let base = box_base(26);
-        run_within(&[&args[..], &["--programs", programs, "--box-base", &base]].concat(), LIMIT)
+        run_within(&[&args[..], &["--programs", programs, "--box-base", &base], extra].concat(), LIMIT)
     }
 
+    const AC: &str = "a, b = map(int, input().split())\nprint(a + b)\n";
+
     #[test]
-    fn selftest_exits_0_when_verdicts_match_the_manifest_and_1_on_a_mismatch() {
-        let matching = selftest_expecting("AC");
+    fn selftest_exits_0_only_when_every_case_matches_and_every_required_language_ran() {
+        let failing = [
+            ("a mismatch", selftest_row("PY3", AC, "WA", &[]), "MISMATCH"),
+            ("AC then WA", selftest_row("PY3", "print(3)\n", "AC", &[]), "MISMATCH"),
+            (
+                "a required language absent",
+                selftest_row("PY3", AC, "AC", &["--require", "ZZZ"]),
+                "required but",
+            ),
+            ("nothing judged", selftest_row("ZZZ", AC, "AC", &[]), "0 judged"),
+        ];
+        for (what, out, says) in failing {
+            assert_eq!(out.code, Some(1), "{what}: {}{}", out.stdout, out.stderr);
+            assert!(out.stdout.contains(says), "{what}: {}", out.stdout);
+        }
+        let matching = selftest_row("PY3", AC, "AC", &[]);
         assert_eq!(matching.code, Some(0), "{}{}", matching.stdout, matching.stderr);
-        let mismatching = selftest_expecting("WA");
-        assert_eq!(mismatching.code, Some(1), "{}{}", mismatching.stdout, mismatching.stderr);
-        assert!(mismatching.stdout.contains("MISMATCH"), "{}", mismatching.stdout);
     }
 }
 

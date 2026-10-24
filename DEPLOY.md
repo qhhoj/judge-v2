@@ -270,9 +270,11 @@ systemctl show qhhoj-judge -p NoNewPrivileges                               # No
 `check-host.sh` must print `ok` on every line except two, which are expected now and become `ok` in Phase B:
 `judge key is 0400 root` (no key yet), and `TLS to bridge.qhhoj.internal:9990` if the bridge is not running
 yet. `selftest` judges every program of `tests/programs/manifest.toml` (shipped in the release) on this host and
-prints one line per row; a `MISMATCH` row is a verdict that differs here. It uses boxes 900-901 (refused when the
-config gives them to a slot), pinned to the last slot's core at nice 10, so it can run while the judge is live
-(`--box-base`, `--core`, `--nice` change that). If a language fails `selftest`, fix it (usually a missing package) before going on: every judge must
+prints one line per row; a `MISMATCH` row is a status, on any case, that differs here. It uses boxes 900-901 pinned
+to the last core no slot owns (core 0 or 1 when slots run on 2-5) at nice 10, so it can run while the judge is live
+and never shares a slot's core; it refuses to start when a box or `--core` is a slot's (`--box-base`, `--core`,
+`--nice` change them). It judges with the manifest's own limits (1 s, 64 MiB, a 64 KiB output limit) and no disk
+quota, because its expectations hold only under those: it does not check the config's `[limits]` or quota. If a language fails `selftest`, fix it (usually a missing package) before going on: every judge must
 offer every language in the list.
 
 `NoNewPrivileges` must be `no`: with `yes`, isolate cannot use its setuid bit and every run fails.

@@ -59,11 +59,12 @@ impl LocalJudge {
             // isolate mounts it by absolute path
             testlib_dir: testlib.canonicalize()?,
         };
+        let helper = boxes.base.checked_add(1).ok_or_else(|| anyhow::anyhow!("box ids overflow"))?;
         let scratch = work.path().join("scratch");
         std::fs::create_dir_all(&scratch)?;
         let env = JudgeEnv {
             solution: IsolateBox::open(&sandbox, boxes.base, boxes.core)?,
-            helper: IsolateBox::open(&sandbox, boxes.base + 1, boxes.core)?,
+            helper: IsolateBox::open(&sandbox, helper, boxes.core)?,
             artefacts: Arc::new(Artefacts::new(setup)),
             stamps: Arc::new(FsStamps),
             scratch,

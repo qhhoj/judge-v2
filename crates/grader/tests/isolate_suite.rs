@@ -157,8 +157,10 @@ fn judge(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Ve
     (outcome, cases.iter().map(|c| c.status.code().to_string()).collect())
 }
 
+/// "CE" for a compile error, the first case's status code when graded, else the outcome's debug text.
 fn summary((outcome, cases): (Outcome, Vec<String>)) -> String {
-    manifest::verdict(&outcome, cases.first().map(String::as_str))
+    let codes: Vec<&str> = cases.iter().map(String::as_str).collect();
+    manifest::statuses(&outcome, &codes).swap_remove(0)
 }
 
 fn program(file: &str) -> Vec<u8> {
@@ -188,10 +190,11 @@ fn every_manifest_row_gets_its_verdict() {
             skipped.insert(row.lang.clone());
             continue;
         }
-        let got = verdict(&mut s, "aplusb", &row.lang, &row.file);
+        let (outcome, cases) = judge(&mut s, "aplusb", &row.lang, program(&row.file));
+        let got = manifest::statuses(&outcome, &cases.iter().map(String::as_str).collect::<Vec<_>>());
         judged += 1;
-        if got != row.expect {
-            failures.push(format!("{} {}: expected {}, got {got}", row.lang, row.file, row.expect));
+        if got != row.expected() {
+            failures.push(format!("{} {}: expected {:?}, got {got:?}", row.lang, row.file, row.expected()));
         }
     }
     failures.dedup();

@@ -17,15 +17,33 @@ pub const DEFAULTS: GraderDefaults =
     GraderDefaults { default_output_limit: 64 << 10, default_output_prefix: 512, jvm_reserve_kib: 131_072 };
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Row {
     pub lang: String,
     /// Relative to the manifest's directory.
     pub file: String,
-    /// A case status code (`AC`, `TLE`, ...) or `CE`.
-    pub expect: String,
+    /// Every case's status code (`AC`, `TLE`, ...), or `CE`. Exactly one of `expect` and `cases`.
+    #[serde(default)]
+    expect: Option<String>,
+    /// One status code per case, for a program whose cases differ.
+    #[serde(default)]
+    cases: Option<Vec<String>>,
+}
+
+impl Row {
+    /// What `statuses` must equal: `["CE"]`, or one status code per case.
+    pub fn expected(&self) -> Vec<String> {
+        match (&self.expect, &self.cases) {
+            (_, Some(cases)) => cases.clone(),
+            (Some(ce), None) if ce == "CE" => vec![ce.clone()],
+            (Some(status), None) => vec![status.clone(); CASES.len()],
+            (None, None) => Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SameAs {
     lang: String,
     rows_of: String,
@@ -34,6 +52,7 @@ struct SameAs {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     rows: Vec<Row>,
     #[serde(default)]
@@ -41,8 +60,18 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn parse(text: &str) -> Result<Manifest, toml::de::Error> {
-        toml::from_str(text)
+    /// Refuses unknown keys and a row without exactly one of `expect` and `cases` (of one code per case).
+    pub fn parse(text: &str) -> Result<Manifest, String> {
+        let manifest: Manifest = toml::from_str(text).map_err(|e| e.to_string())?;
+        let malformed = |row: &&Row| match (&row.expect, &row.cases) {
+            (Some(_), None) => false,
+            (None, Some(cases)) => cases.len() != CASES.len(),
+            _ => true,
+        };
+        match manifest.rows.iter().find(malformed) {
+            Some(row) => Err(format!("{} {}: give `expect` or {} `cases`", row.lang, row.file, CASES.len())),
+            None => Ok(manifest),
+        }
     }
 
     /// The rows plus, per `same_as`, the named key's rows run under another key.
@@ -81,12 +110,12 @@ pub fn submission(lang: &str, jvm: bool, source: Vec<u8>) -> Submission {
     }
 }
 
-/// What a row's `expect` is compared with: `CE` for a compile error, the first case's status code when
+/// What a row's `expected()` is compared with: `["CE"]` for a compile error, every case's status code when
 /// graded, else the outcome's debug text.
-pub fn verdict(outcome: &Outcome, first_case: Option<&str>) -> String {
+pub fn statuses(outcome: &Outcome, cases: &[&str]) -> Vec<String> {
     match outcome {
-        Outcome::CompileError(_) => "CE".into(),
-        Outcome::Graded => first_case.unwrap_or("no cases").into(),
-        other => format!("{other:?}"),
+        Outcome::CompileError(_) => vec!["CE".into()],
+        Outcome::Graded => cases.iter().map(|code| code.to_string()).collect(),
+        other => vec![format!("{other:?}")],
     }
 }
