@@ -15,7 +15,9 @@ WORKDIR /src
 COPY rust-toolchain.toml ./
 RUN rustup toolchain install && rustup target add x86_64-unknown-linux-musl
 COPY . .
-RUN cargo build -j2 --release --locked --target x86_64-unknown-linux-musl -p judge-cli
+# the commit goes into Hello.build (.git is not in the build context)
+ARG REVISION=unknown
+RUN QHHOJ_JUDGE_REVISION="$REVISION" cargo build -j2 --release --locked --target x86_64-unknown-linux-musl -p judge-cli
 
 # ---- isolate 2.6, pinned to the commit of tag v2.6
 FROM ubuntu:24.04 AS isolate

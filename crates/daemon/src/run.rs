@@ -147,11 +147,21 @@ fn languages(config: &Config) -> anyhow::Result<(LanguageRegistry, HelloInfo, Ha
         .collect();
     let hello = HelloInfo {
         protocol_minor: judge_proto::PROTOCOL_MINOR,
-        build: env!("CARGO_PKG_VERSION").into(),
+        build: build_label(env!("CARGO_PKG_VERSION"), option_env!("QHHOJ_JUDGE_REVISION")),
         runtimes,
         features: FEATURES.map(String::from).to_vec(),
     };
     Ok((registry, hello, versions))
+}
+
+/// Hello.build: the release version, plus the first 12 hex digits of the commit when the build was
+/// given it (`QHHOJ_JUDGE_REVISION` at compile time: the image's `REVISION`, `build-release.sh`'s
+/// `git rev-parse`), so two builds of one release differ. Anything else (unset, `unknown`) gives the
+/// version alone. The commit adds at most 13 bytes, well inside the bridge's 200-byte label limit.
+fn build_label(version: &str, revision: Option<&str>) -> String {
+    let sha: String =
+        revision.unwrap_or_default().chars().take_while(char::is_ascii_hexdigit).take(12).collect();
+    if sha.is_empty() { version.to_string() } else { format!("{version}+{sha}") }
 }
 
 fn resolver(config: &Config, shared: &Shared) -> Resolver {
@@ -269,6 +279,15 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_build_carries_the_commit_when_it_is_known() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(build_label("2.3.9", Some(sha)), "2.3.9+0123456789ab");
+        for unknown in [None, Some(""), Some("unknown")] {
+            assert_eq!(build_label("2.3.9", unknown), "2.3.9");
+        }
+    }
 
     #[test]
     fn a_start_empties_the_cache_dirs() {
