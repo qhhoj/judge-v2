@@ -1,5 +1,5 @@
 name: 27-retry-cap
-summary: Final RETRY requeues without spending the requeue; the third RETRY ends the row as IE.
+summary: A Final RETRY with no transient reason (UNSPECIFIED, a failure) requeues without spending the requeue; the third ends the row as IE. Transient reasons are 27b and 27c, a mix of both 27d.
 applies_to: [bridge]
 timings: {resyncMs: 300}
 setup:
@@ -14,17 +14,17 @@ steps:
   - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
   - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
-  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_DATA_UNAVAILABLE}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_UNSPECIFIED}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
   - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
   - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
-  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_SANDBOX_FAILURE}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_UNSPECIFIED}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2}}}
   - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 3}}}}
   - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 1}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 1}}}
-  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_DATA_UNAVAILABLE}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_UNSPECIFIED}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2}}}
   - quiet: {to: j1, ms: 700}
 end_state:
