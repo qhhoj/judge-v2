@@ -107,7 +107,8 @@ impl Job {
 enum Event {
     Compiled(String),
     Started(bool, u32),
-    Case(CaseReport),
+    /// Batched together: one `case` call, or one `cases` call.
+    Cases(Vec<CaseReport>),
 }
 
 /// Runs on the blocking thread; forwards events to the async side.
@@ -129,7 +130,11 @@ impl Reporter for ChannelReporter {
     }
 
     fn case(&mut self, report: CaseReport) {
-        let _ = self.tx.send(Event::Case(report));
+        let _ = self.tx.send(Event::Cases(vec![report]));
+    }
+
+    fn cases(&mut self, reports: Vec<CaseReport>) {
+        let _ = self.tx.send(Event::Cases(reports));
     }
 
     /// Waits while the outboxes are over the watermark; false once the job is aborted.
@@ -306,10 +311,14 @@ impl Forwarder {
 
     fn on_event(&mut self, event: Event) {
         match event {
-            Event::Case(report) => {
-                self.metrics.case_seconds.observe(report.time_s);
-                let full = self.batcher.push(report, Instant::now());
-                self.push_cases(full);
+            Event::Cases(reports) => {
+                // One arrival time for the event: its cases are never split by the batch age.
+                let now = Instant::now();
+                for report in reports {
+                    self.metrics.case_seconds.observe(report.time_s);
+                    let full = self.batcher.push(report, now);
+                    self.push_cases(full);
+                }
             }
             Event::Compiled(log) => {
                 let seconds = self.started.elapsed().as_secs_f64();

@@ -212,8 +212,8 @@ fn wait_for_abort(reporter: &mut dyn Reporter, limit: Duration) -> bool {
     false
 }
 
-fn report_case(reporter: &mut dyn Reporter, c: &v1::Case) {
-    reporter.case(CaseReport {
+fn case_report(c: &v1::Case) -> CaseReport {
+    CaseReport {
         position: c.position,
         status: status(c.status),
         time_s: c.time_s,
@@ -225,7 +225,7 @@ fn report_case(reporter: &mut dyn Reporter, c: &v1::Case) {
         feedback: c.feedback.clone(),
         extended_feedback: c.extended_feedback.clone(),
         output_prefix: c.output_prefix.clone(),
-    });
+    }
 }
 
 impl Replay {
@@ -281,13 +281,12 @@ impl Replay {
         match act {
             Act::Compiled(log) => reporter.compiled(&log),
             Act::Started(pretested, count) => reporter.started(pretested, count),
+            // One `cases` call: the transcript's message boundary, whatever the host's scheduling.
             Act::Cases(cases) => {
-                for c in &cases {
-                    if !reporter.before_case() {
-                        return Some(Outcome::Aborted);
-                    }
-                    report_case(reporter, c);
+                if !cases.iter().all(|_| reporter.before_case()) {
+                    return Some(Outcome::Aborted);
                 }
+                reporter.cases(cases.iter().map(case_report).collect());
             }
             Act::Resume(ended) if !self.wait_for_resume(ended) => return self.gave_up("the resume"),
             Act::Resume(_) => {}
