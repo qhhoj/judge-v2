@@ -20,6 +20,23 @@ const DEFAULTS: GraderDefaults =
 const CACHE_BYTES: u64 = 4 << 30;
 const DATA_WAIT: Duration = Duration::from_millis(200);
 
+/// The two boxes a local judge uses (`base`, `base + 1`) and how they run.
+pub struct Boxes {
+    pub base: u32,
+    /// taskset pinning; `None`: any CPU.
+    pub core: Option<u32>,
+    /// isolate and taskset paths; meta files always go to the judge's own temporary directory.
+    pub sandbox: SandboxConfig,
+    pub defaults: GraderDefaults,
+}
+
+impl Boxes {
+    /// Unpinned, default isolate paths and the daemon's default limits; base 900 is no daemon's box.
+    pub fn unpinned(base: u32) -> Boxes {
+        Boxes { base, core: None, sandbox: SandboxConfig::default(), defaults: DEFAULTS }
+    }
+}
+
 pub struct LocalJudge {
     env: JudgeEnv,
     cache: Arc<DirCache>,
@@ -28,14 +45,13 @@ pub struct LocalJudge {
 }
 
 impl LocalJudge {
-    /// Boxes `box_base` and `box_base + 1`; the default 900 never touches a running daemon's boxes.
-    pub fn new(languages: &Path, testlib: &Path, box_base: u32) -> anyhow::Result<LocalJudge> {
+    pub fn new(languages: &Path, testlib: &Path, boxes: Boxes) -> anyhow::Result<LocalJudge> {
         let registry = LanguageRegistry::from_toml(&std::fs::read_to_string(languages)?)?;
         let versions = detect_versions(&registry);
         let registry = Arc::new(available(registry, &versions));
         let work = tempfile::tempdir()?;
         let cache = Arc::new(DirCache::new(work.path().join("cache"), CACHE_BYTES));
-        let sandbox = SandboxConfig { meta_dir: work.path().join("meta"), ..Default::default() };
+        let sandbox = SandboxConfig { meta_dir: work.path().join("meta"), ..boxes.sandbox };
         let setup = ArtefactSetup {
             cache: cache.clone(),
             registry: registry.clone(),
@@ -43,15 +59,16 @@ impl LocalJudge {
             // isolate mounts it by absolute path
             testlib_dir: testlib.canonicalize()?,
         };
+        let helper = boxes.base.checked_add(1).ok_or_else(|| anyhow::anyhow!("box ids overflow"))?;
         let scratch = work.path().join("scratch");
         std::fs::create_dir_all(&scratch)?;
         let env = JudgeEnv {
-            solution: IsolateBox::open(&sandbox, box_base, None)?,
-            helper: IsolateBox::open(&sandbox, box_base + 1, None)?,
+            solution: IsolateBox::open(&sandbox, boxes.base, boxes.core)?,
+            helper: IsolateBox::open(&sandbox, helper, boxes.core)?,
             artefacts: Arc::new(Artefacts::new(setup)),
             stamps: Arc::new(FsStamps),
             scratch,
-            defaults: DEFAULTS,
+            defaults: boxes.defaults,
         };
         Ok(LocalJudge { env, cache, registry, _work: work })
     }

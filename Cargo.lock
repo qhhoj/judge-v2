@@ -666,6 +666,7 @@ dependencies = [
  "judge-grader",
  "judge-problem",
  "judge-sandbox",
+ "libc",
  "serde_json",
  "tempfile",
  "tokio",

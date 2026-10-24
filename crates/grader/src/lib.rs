@@ -11,6 +11,7 @@ pub mod grade;
 pub mod interactor;
 pub mod judge;
 pub mod languages;
+pub mod manifest;
 pub mod output_only;
 pub mod program;
 pub mod report;

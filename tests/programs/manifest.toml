@@ -1,6 +1,8 @@
-# One row per (language, program, expected first-case status), judged on the a+b problem
-# (case 1: "1 2" -> "3", case 2: "4 5" -> "9"). `same_as` runs another key's rows under this key.
-# CE rows expect a compile error outcome. Run by crates/grader/tests/isolate_suite.rs.
+# One row per (language, program, expected status), judged on the a+b problem (case 1: "1 2" -> "3",
+# case 2: "4 5" -> "9") under the limits in crates/grader/src/manifest.rs. `expect` is every case's status;
+# `cases` gives one per case instead. CE rows expect a compile error outcome. `same_as` runs another key's
+# rows under this key. Run by crates/grader/tests/isolate_suite.rs and, on each judge host, by
+# `qhhoj-judge selftest` (this directory ships in the release).
 rows = [
   { lang = "C", file = "C/ac.c", expect = "AC" },
   { lang = "C", file = "C/wa.c", expect = "WA" },
@@ -69,7 +71,7 @@ rows = [
   { lang = "GAS64", file = "GAS64/ac.s", expect = "AC" },
   { lang = "GAS64", file = "GAS64/wa.s", expect = "WA" },
   { lang = "GAS64", file = "GAS64/rte.s", expect = "RTE" },
-  { lang = "TEXT", file = "TEXT/three.txt", expect = "AC" },
+  { lang = "TEXT", file = "TEXT/three.txt", cases = ["AC", "WA"] }, # the text is "3" for every case
 ]
 # Each `same_as` key runs every row of the named key (same files, same expectations) under its own
 # compiler: CPP20 alone had 13,294 submissions in two years. CPP03 has its own a+b row.

@@ -137,51 +137,39 @@ mod with_isolate {
         assert!(out.stdout.contains("compile error"), "{}", out.stdout);
     }
 
-    fn selftest(languages: &str, extra: &[&str], offset: u32) -> Finished {
-        let testlib = format!("{ROOT}/assets/testlib");
-        let base = box_base(offset);
-        let args = ["selftest", "--languages", languages, "--testlib", &testlib, "--box-base", &base];
-        run_within(&[&args[..], extra].concat(), LIMIT)
+    /// selftest on a one-row manifest: `lang` judging `source` (as `sol.py`) is expected to get `expect`.
+    fn selftest_row(lang: &str, source: &str, expect: &str, extra: &[&str]) -> Finished {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sol.py"), source).unwrap();
+        let row = format!("rows = [{{ lang = \"{lang}\", file = \"sol.py\", expect = \"{expect}\" }}]\n");
+        std::fs::write(dir.path().join("manifest.toml"), row).unwrap();
+        let (languages, testlib) = (format!("{ROOT}/languages.toml"), format!("{ROOT}/assets/testlib"));
+        let programs = dir.path().to_str().unwrap();
+        let args = ["selftest", "--config", "/nonexistent", "--languages", &languages, "--testlib", &testlib];
+        let base = box_base(26);
+        run_within(&[&args[..], &["--programs", programs, "--box-base", &base], extra].concat(), LIMIT)
     }
 
-    #[test]
-    fn selftest_passes_for_python_and_reports_absent_languages() {
-        let dir = tempfile::tempdir().unwrap();
-        let languages = dir.path().join("l.toml");
-        let shipped = std::fs::read_to_string(format!("{ROOT}/languages.toml")).unwrap();
-        let only_py3 = |block: &&str| block.contains("key = \"PY3\"");
-        let kept: String =
-            shipped.split("[[language]]").filter(only_py3).map(|b| format!("[[language]]{b}")).collect();
-        std::fs::write(&languages, kept).unwrap();
-        let languages = languages.to_str().unwrap();
-        let out = selftest(languages, &[], 26);
-        assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
-        assert!(out.stdout.contains("PY3 ok"), "{}", out.stdout);
-        assert!(
-            out.stdout.contains("C absent"),
-            "languages missing from the file are absent: {}",
-            out.stdout
-        );
-        let required = selftest(languages, &["--require", "PY3,C"], 26);
-        assert_eq!(
-            required.code,
-            Some(1),
-            "a required language that is absent fails selftest: {}",
-            required.stdout
-        );
-        assert!(required.stdout.contains("C absent (required)"), "{}", required.stdout);
-    }
+    const AC: &str = "a, b = map(int, input().split())\nprint(a + b)\n";
 
     #[test]
-    fn selftest_reports_a_failing_language() {
-        let dir = tempfile::tempdir().unwrap();
-        let languages = dir.path().join("l.toml");
-        // PY3 whose interpreter exists but never answers 3: a broken install must not read as ok.
-        let broken = "[[language]]\nkey='PY3'\nname='p'\nsource='main.py'\nrun=['/usr/bin/python3','-c','print(7)']\nversion=[]\n";
-        std::fs::write(&languages, broken).unwrap();
-        let out = selftest(languages.to_str().unwrap(), &[], 28);
-        assert_eq!(out.code, Some(1), "{}{}", out.stdout, out.stderr);
-        assert!(out.stdout.contains("PY3 FAIL"), "{}", out.stdout);
+    fn selftest_exits_0_only_when_every_case_matches_and_every_required_language_ran() {
+        let failing = [
+            ("a mismatch", selftest_row("PY3", AC, "WA", &[]), "MISMATCH"),
+            ("AC then WA", selftest_row("PY3", "print(3)\n", "AC", &[]), "MISMATCH"),
+            (
+                "a required language absent",
+                selftest_row("PY3", AC, "AC", &["--require", "ZZZ"]),
+                "required but",
+            ),
+            ("nothing judged", selftest_row("ZZZ", AC, "AC", &[]), "0 judged"),
+        ];
+        for (what, out, says) in failing {
+            assert_eq!(out.code, Some(1), "{what}: {}{}", out.stdout, out.stderr);
+            assert!(out.stdout.contains(says), "{what}: {}", out.stdout);
+        }
+        let matching = selftest_row("PY3", AC, "AC", &[]);
+        assert_eq!(matching.code, Some(0), "{}{}", matching.stdout, matching.stderr);
     }
 }
 

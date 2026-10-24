@@ -102,10 +102,10 @@ jobs:
           isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
       - name: isolate tests (one test thread, the tests share isolate boxes)
         run: cargo test --locked -p judge-sandbox -p judge-grader -p judge-daemon -p judge-cli --features isolate -- --test-threads=1
-      - name: selftest (host copy of languages.toml, every CI language required)
+      - name: selftest (the manifest again through the binary; host copy of languages.toml, every CI language required)
         run: |
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
-            --host-languages "$RUNNER_TEMP/languages.host.toml" \
+            --programs tests/programs --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
   # The container image (packaging/Containerfile). Pull requests only build it (so this can be a required check); pushes to main and v* tags also
   # push it to ghcr.io/qhhoj/judge-v2 (:sha-<12>, :main, and :vX.Y.Z on tags). The isolate selftest needs cgroup delegation, SYS_ADMIN and a tuned
@@ -135,6 +135,7 @@ jobs:
         run: |
           docker run --rm --entrypoint qhhoj-judge judge-image:smoke --version
           docker run --rm --entrypoint isolate judge-image:smoke --version
+          docker run --rm --entrypoint test judge-image:smoke -f /opt/qhhoj-judge/current/tests/programs/manifest.toml
           docker run --rm --entrypoint /usr/local/lib/kotlinc/bin/kotlinc -e JAVA_HOME=/usr/lib/jvm/default-java judge-image:smoke -version
           docker image inspect judge-image:smoke --format '{{ index .Config.Labels "org.opencontainers.image.revision" }} {{ .Size }} bytes'
       - name: tags
@@ -187,6 +188,8 @@ jobs:
           else
             RELEASE_SUFFIX="+${GITHUB_SHA::12}" bash packaging/build-release.sh
           fi
+      - name: the selftest manifest is in the tarball
+        run: tar -tzf target/release-pkg/*.tar.gz | grep '/tests/programs/manifest\.toml$'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qhhoj-judge

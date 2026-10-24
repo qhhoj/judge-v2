@@ -1,6 +1,6 @@
 //! `qhhoj-judge run`: judge one source against a local problem directory.
 
-use crate::local::LocalJudge;
+use crate::local::{Boxes, LocalJudge};
 use judge_grader::judge::{Outcome, Submission, SubmissionSource};
 use judge_grader::report::{CaseReport, Reporter};
 use std::path::PathBuf;
@@ -65,7 +65,7 @@ pub fn outcome_text(outcome: &Outcome) -> String {
 
 /// True when the submission was graded (whatever the verdicts).
 pub fn run(args: RunArgs) -> anyhow::Result<bool> {
-    let mut judge = LocalJudge::new(&args.languages, &args.testlib, args.box_base)?;
+    let mut judge = LocalJudge::new(&args.languages, &args.testlib, Boxes::unpinned(args.box_base))?;
     let submission = Submission {
         language_key: args.lang,
         source: SubmissionSource::File(args.source),

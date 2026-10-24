@@ -1,6 +1,6 @@
 //! `qhhoj-judge generate`: build the tests of a Polygon standard package locally, with the daemon's code.
 
-use crate::local::LocalJudge;
+use crate::local::{Boxes, LocalJudge};
 use anyhow::Context;
 use judge_daemon::wire::{generation_plan, v1};
 use judge_grader::generate::{Control, GenerationFailure, GenerationJob, GenerationPlan};
@@ -53,7 +53,7 @@ pub fn failure_text(failure: &GenerationFailure) -> String {
 pub fn generate(args: GenerateArgs) -> anyhow::Result<bool> {
     let plan = read_plan(&args.plan)?;
     let deadline = Instant::now() + Duration::from_secs(plan.deadline_s.into());
-    let mut judge = LocalJudge::new(&args.languages, &args.testlib, args.box_base)?;
+    let mut judge = LocalJudge::new(&args.languages, &args.testlib, Boxes::unpinned(args.box_base))?;
     let job = GenerationJob { plan, bundle_zip: args.bundle, result_zip: args.out };
     let abort = AtomicBool::new(false);
     match judge.generate(&job, &Control { deadline, abort: &abort }) {

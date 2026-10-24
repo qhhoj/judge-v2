@@ -58,6 +58,7 @@ RUN useradd --system isolate \
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge
 COPY languages.toml LICENSE DEPLOY.md /opt/qhhoj-judge/current/
 COPY assets/testlib /opt/qhhoj-judge/current/assets/testlib
+COPY tests/programs /opt/qhhoj-judge/current/tests/programs
 COPY packaging /opt/qhhoj-judge/current/packaging
 RUN ln -s /opt/qhhoj-judge/current/qhhoj-judge /usr/local/bin/qhhoj-judge \
     && ln -s /opt/qhhoj-judge/current/packaging/cg-setup.sh /usr/local/bin/cg-setup.sh \

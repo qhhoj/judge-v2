@@ -69,6 +69,10 @@ in the per-run outbox, and ends with the session that assigned it (the judge can
 - Caps: `max_total_bytes` over inputs and answers (`STAGE_JOB`, `OUTPUT_LIMIT`), `max_upload_bytes` over the zip,
   `deadline_s` from receipt (`JOB_TIME_LIMIT`), all checked between runs.
 
+`qhhoj-judge selftest [--require KEYS]` judges every row of `tests/programs/manifest.toml` (shipped next to the
+binary) on this host, on spare boxes and a core no slot owns, and exits 1 when any case's status differs (DEPLOY.md
+step 10).
+
 `qhhoj-judge generate --bundle b.zip --plan plan.json --out tests.zip [--languages ... --testlib ...]` runs the same
 code locally; the plan is a `GenerateTests` message as proto3 JSON (camelCase). It prints the output path, or the
 failure and exits 1. Isolate tests: `crates/grader/tests/generate_isolate.rs` (fixture bundle in

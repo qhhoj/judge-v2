@@ -6,10 +6,9 @@ mod common;
 
 use common::{box_id, sandbox, testlib_dir};
 use judge_grader::artefacts::{ArtefactSetup, Artefacts};
-use judge_grader::judge::{
-    GraderDefaults, JudgeEnv, Outcome, Submission, SubmissionSource, judge_submission,
-};
+use judge_grader::judge::{JudgeEnv, Outcome, judge_submission};
 use judge_grader::languages::{LanguageRegistry, host_languages};
+use judge_grader::manifest::{self, Manifest};
 use judge_grader::report::{CaseReport, Reporter};
 use judge_problem::data_version::{DataError, FsStamps, WaitPolicy};
 use judge_problem::dir_cache::DirCache;
@@ -24,44 +23,9 @@ const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const SUBMISSION_LIMIT: Duration = Duration::from_secs(240);
 const SOLUTION_BOX: u32 = 40;
 
-#[derive(serde::Deserialize, Clone)]
-struct Row {
-    lang: String,
-    file: String,
-    expect: String,
-}
-
-#[derive(serde::Deserialize)]
-struct SameAs {
-    lang: String,
-    rows_of: String,
-    #[serde(default)]
-    except: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct Manifest {
-    rows: Vec<Row>,
-    #[serde(default)]
-    same_as: Vec<SameAs>,
-}
-
-impl Manifest {
-    fn load() -> Manifest {
-        let text = std::fs::read_to_string(format!("{ROOT}/tests/programs/manifest.toml")).unwrap();
-        toml::from_str(&text).unwrap()
-    }
-
-    /// The rows plus, per `same_as`, the named key's rows run under another key.
-    fn expanded(&self) -> Vec<Row> {
-        let mut rows = self.rows.clone();
-        for alias in &self.same_as {
-            let copies =
-                self.rows.iter().filter(|r| r.lang == alias.rows_of && !alias.except.contains(&r.file));
-            rows.extend(copies.map(|r| Row { lang: alias.lang.clone(), ..r.clone() }).collect::<Vec<_>>());
-        }
-        rows
-    }
+fn manifest() -> Manifest {
+    Manifest::parse(&std::fs::read_to_string(format!("{ROOT}/tests/programs/manifest.toml")).unwrap())
+        .unwrap()
 }
 
 #[derive(Default)]
@@ -108,15 +72,7 @@ fn has_runtime(registry: &LanguageRegistry, key: &str) -> bool {
 }
 
 fn write_problem(root: &Path, code: &str, cases: &[(&str, &str)]) {
-    let dir = root.join(code);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut init = String::from("test_cases:\n");
-    for (i, (input, output)) in cases.iter().enumerate() {
-        std::fs::write(dir.join(format!("{i}.in")), input).unwrap();
-        std::fs::write(dir.join(format!("{i}.out")), output).unwrap();
-        init.push_str(&format!("- {{in: {i}.in, out: {i}.out, points: 1}}\n"));
-    }
-    std::fs::write(dir.join("init.yml"), init).unwrap();
+    manifest::write_problem(&root.join(code), cases).unwrap();
 }
 
 /// A problem with extra files and its own init.yml.
@@ -154,7 +110,7 @@ fn host_registry() -> LanguageRegistry {
 
 fn suite() -> Suite {
     let dirs: Vec<_> = (0..4).map(|_| tempfile::tempdir().unwrap()).collect();
-    write_problem(dirs[0].path(), "aplusb", &[("1 2\n", "3\n"), ("4 5\n", "9\n")]);
+    write_problem(dirs[0].path(), "aplusb", &manifest::CASES);
     write_problem(dirs[0].path(), "secure", &[("", "ok\n")]);
     let registry = host_registry();
     let cache = Arc::new(DirCache::new(dirs[1].path().into(), 4 << 30));
@@ -171,11 +127,7 @@ fn suite() -> Suite {
         artefacts: Arc::new(Artefacts::new(setup)),
         stamps: Arc::new(FsStamps),
         scratch: dirs[3].path().into(),
-        defaults: GraderDefaults {
-            default_output_limit: 64 << 10,
-            default_output_prefix: 512,
-            jvm_reserve_kib: 131_072,
-        },
+        defaults: manifest::DEFAULTS,
     };
     let wait = WaitPolicy { timeout: Duration::from_millis(100), poll: Duration::from_millis(20) };
     let resolver = Resolver {
@@ -192,14 +144,7 @@ fn suite() -> Suite {
 fn judge_cases(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Vec<CaseReport>) {
     let _watchdog = Watchdog::start(format!("{lang} on {code}"), SUBMISSION_LIMIT);
     let jvm = s.registry.get(lang).is_some_and(|l| l.jvm);
-    let submission = Submission {
-        language_key: lang.into(),
-        source: SubmissionSource::Inline(source),
-        time_limit_s: 1.0,
-        memory_kib: if jvm { 262_144 } else { 65_536 },
-        short_circuit: false,
-        pretests_only: false,
-    };
+    let submission = manifest::submission(lang, jvm, source);
     let problem = s.resolver.resolve(code, 0).unwrap();
     let mut cases = Cases::default();
     let outcome = judge_submission(&mut s.env, &problem, &submission, &mut cases);
@@ -214,11 +159,8 @@ fn judge(s: &mut Suite, code: &str, lang: &str, source: Vec<u8>) -> (Outcome, Ve
 
 /// "CE" for a compile error, the first case's status code when graded, else the outcome's debug text.
 fn summary((outcome, cases): (Outcome, Vec<String>)) -> String {
-    match outcome {
-        Outcome::CompileError(_) => "CE".into(),
-        Outcome::Graded => cases[0].clone(),
-        other => format!("{other:?}"),
-    }
+    let codes: Vec<&str> = cases.iter().map(String::as_str).collect();
+    manifest::statuses(&outcome, &codes).swap_remove(0)
 }
 
 fn program(file: &str) -> Vec<u8> {
@@ -240,7 +182,7 @@ fn every_manifest_row_gets_its_verdict() {
     let mut s = suite();
     let mut failures = Vec::new();
     let (mut skipped, mut judged) = (std::collections::BTreeSet::new(), 0);
-    for row in &Manifest::load().expanded() {
+    for row in &manifest().expanded() {
         if !has_runtime(&s.registry, &row.lang) {
             if required.contains(&row.lang) {
                 failures.push(format!("{} required but absent", row.lang));
@@ -248,10 +190,11 @@ fn every_manifest_row_gets_its_verdict() {
             skipped.insert(row.lang.clone());
             continue;
         }
-        let got = verdict(&mut s, "aplusb", &row.lang, &row.file);
+        let (outcome, cases) = judge(&mut s, "aplusb", &row.lang, program(&row.file));
+        let got = manifest::statuses(&outcome, &cases.iter().map(String::as_str).collect::<Vec<_>>());
         judged += 1;
-        if got != row.expect {
-            failures.push(format!("{} {}: expected {}, got {got}", row.lang, row.file, row.expect));
+        if got != row.expected() {
+            failures.push(format!("{} {}: expected {:?}, got {got:?}", row.lang, row.file, row.expected()));
         }
     }
     failures.dedup();
@@ -262,9 +205,9 @@ fn every_manifest_row_gets_its_verdict() {
 
 #[test]
 fn every_required_language_is_in_the_manifest() {
-    let manifest = Manifest::load().expanded();
+    let rows = manifest().expanded();
     for key in required_keys() {
-        assert!(manifest.iter().any(|row| row.lang == key), "{key} is required but has no manifest row");
+        assert!(rows.iter().any(|row| row.lang == key), "{key} is required but has no manifest row");
     }
 }
 
