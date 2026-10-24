@@ -102,11 +102,14 @@ fn init_box(config: &SandboxConfig, id: u32, room: Room) -> Result<PathBuf, Sand
 }
 
 /// False when isolate cannot set `config.disk_quota` under its box root (no user quotas there).
-/// Opens box `id` with the quota and cleans it again.
+/// Opens box `id` with the quota and cleans it again, also when the quota was refused (isolate leaves the box).
 pub fn disk_quota_works(config: &SandboxConfig, id: u32) -> Result<bool, SandboxError> {
     match IsolateBox::open(config, id, None) {
         Ok(_) => Ok(true),
-        Err(SandboxError::Isolate(message)) if message.contains(NO_DISK_QUOTA) => Ok(false),
+        Err(SandboxError::Isolate(message)) if message.contains(NO_DISK_QUOTA) => {
+            let _ = cleanup_box(config, id);
+            Ok(false)
+        }
         Err(error) => Err(error),
     }
 }
@@ -460,6 +463,8 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
         assert!(disk_quota_works(&config, 3).unwrap());
         std::fs::write(dir.path().join("no-quota"), "").unwrap();
         assert!(!disk_quota_works(&config, 3).unwrap());
+        let last = calls(dir.path()).pop().unwrap();
+        assert_eq!(last, "--cg -b3 --cleanup", "a refused probe leaves its box behind");
         let broken = SandboxConfig { isolate_bin: "/nonexistent/isolate".into(), ..config };
         assert!(disk_quota_works(&broken, 3).is_err(), "isolate missing is an error, not \"no quotas\"");
     }

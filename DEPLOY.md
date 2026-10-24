@@ -427,8 +427,8 @@ layer is not set up; `test result: ok` with no `skip:` lines is the pass.
   `judge_sandbox_failures_total`, `judge_reconnects_total`, `judge_slots_busy`).
 - **Update to a new release:** unpack it into `/opt/qhhoj-judge/releases/<new>` as in step 8, run
   `sha256sum -c SHA256SUMS`, then `sudo -u qhhoj-judge /opt/qhhoj-judge/releases/<new>/qhhoj-judge check-config`
-  (the new daemon's start checks on this host's config: it must print `ok`, else that release would refuse to
-  start) and `selftest` (step 10) from the new directory (`--languages` and `--testlib` of the
+  (the new daemon's config, pinning and disk-bound checks on this host's config: it must print `ok` and
+  `disk bound Quota`; `selftest` covers the languages file) and `selftest` (step 10) from the new directory (`--languages` and `--testlib` of the
   new release; its programs are found next to its binary), then
   `ln -sfn releases/<new> /opt/qhhoj-judge/current && systemctl restart qhhoj-judge`. A restart drains:
   it takes no new work and lets running submissions finish (up to 120 s). Agree on a time with the site

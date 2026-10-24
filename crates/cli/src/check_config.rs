@@ -1,6 +1,6 @@
-//! `check-config`: the daemon's own start checks (the config, the boxes' pinning, the disk bound on the box
-//! root) without starting it. An install runs it with the new binary before it switches `current`, so a config
-//! the daemon would refuse at every start, in a restart loop, fails before the switch.
+//! `check-config`: the daemon's config, pinning and disk-bound checks (the bound on the box root) without starting
+//! it; `selftest` covers the languages file. An install runs it with the new binary before it switches `current`,
+//! so a config these checks refuse fails before the switch, not in a restart loop after it.
 
 use judge_daemon::cores::{SYSFS_CPU, worker_cores};
 use judge_sandbox::boxes::owned_box_ids;

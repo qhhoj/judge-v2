@@ -28,7 +28,7 @@ enum Command {
     Generate(generate_cmd::GenerateArgs),
     /// Judge every conformance manifest row on this host and compare the verdicts.
     Selftest(selftest::SelftestArgs),
-    /// Run the daemon's start checks (config, pinning, disk bound) and exit; 0 when the daemon would start.
+    /// Run the daemon's config, pinning and disk-bound checks and print the bound; non-zero when one fails.
     CheckConfig(check_config::CheckConfigArgs),
     /// Print the isolate config lines that pin every box to its worker's core (DEPLOY.md).
     IsolateCpus,
