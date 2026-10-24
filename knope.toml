@@ -18,10 +18,12 @@ type = "PrepareRelease"
 [[workflows.steps]]
 type = "Command"
 command = "cargo metadata --format-version 1 > /dev/null" # refreshes Cargo.lock
+shell = true # knope runs commands without a shell by default; `>` needs one
 
 [[workflows.steps]]
 type = "Command"
 command = "git add -A && git commit -m \"chore: release $version\""
+shell = true # `&&` and the quoted message need a shell
 variables = { "$version" = "Version" }
 
 [[workflows]]
