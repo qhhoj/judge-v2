@@ -6,6 +6,9 @@
 //! (one predicate per rule); reading a manager's exit as a score in `score`; carrying a jury file out of the
 //! helper box before a checker resets it in `files`.
 
+pub mod channel;
+#[cfg(test)]
+mod fake_isolate;
 pub mod files;
 pub mod run;
 pub mod score;

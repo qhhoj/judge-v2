@@ -54,6 +54,9 @@ pub struct RunSpec {
     pub stdio: Stdio,
     pub env: Vec<(String, String)>,
     pub dirs: Vec<String>,
+    /// `--inherit-fds`: the box keeps the fds the command was started with (only `command_with_channel` sets it;
+    /// isolate otherwise closes every fd above 2).
+    pub inherit_fds: bool,
 }
 
 /// Most cgroup room a run gets above its memory limit for the page cache of the files it writes.
@@ -99,6 +102,9 @@ pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path) -> Vec<String> {
     // file it does not map are still counted (`Meta::memory_kib`); this only takes away the easy place.
     args.push("--dir=dev/shm=".into());
     args.extend(spec.dirs.iter().map(|d| format!("--dir={d}")));
+    if spec.inherit_fds {
+        args.push("--inherit-fds".into());
+    }
     args.extend(["--run".into(), "--".into()]);
     args.extend(spec.argv.iter().cloned());
     args
@@ -120,6 +126,7 @@ mod tests {
             },
             env: vec![],
             dirs: vec!["/opt/jdk".into()],
+            inherit_fds: false,
         }
     }
 
@@ -145,5 +152,14 @@ mod tests {
         assert!(has(&args, &format!("--cg-mem={}", 8192 + small.fsize_kib)), "{args:?}");
         let huge = Limits::for_solution(1.0, 8192, 1, 1 << 30);
         assert_eq!(cgroup_memory_kib(&huge), 8192 + PAGE_CACHE_ROOM_MAX_KIB);
+    }
+
+    #[test]
+    fn inherited_fds_are_asked_for_only_by_a_channel_run() {
+        let plain = isolate_args(0, &spec(), Path::new("/m"));
+        assert!(!has(&plain, "--inherit-fds"));
+        let channel = isolate_args(0, &RunSpec { inherit_fds: true, ..spec() }, Path::new("/m"));
+        let run = channel.iter().position(|a| a == "--run").unwrap();
+        assert_eq!(channel[run - 1], "--inherit-fds", "an isolate option, before --run");
     }
 }

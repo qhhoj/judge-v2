@@ -4,6 +4,7 @@
 //! RETRY).
 
 use crate::error::GradeError;
+use crate::session::channel::RingChannel;
 use judge_sandbox::IsolateBox;
 use judge_sandbox::error::SandboxError;
 use judge_sandbox::spec::{Limits, RunSpec};
@@ -12,18 +13,24 @@ use std::time::{Duration, Instant};
 
 /// Host-side margin past the manager's own wall limit before the isolate processes are killed.
 const DEADLINE_SLACK: Duration = Duration::from_secs(5);
-/// isolate's own exit status for an internal error (1 is "the program failed").
-const ISOLATE_FAILURE: i32 = 2;
+/// isolate's documented exit statuses for a run it carried out: 0 (the program exited 0) and 1 (the program
+/// failed; the meta file says how). Anything else means isolate did not run properly and its meta file does not
+/// describe the run: 2 is isolate's own error, 126/127 come from the channel mover shell or `taskset` failing to
+/// exec it, and a signal killed it.
+const ISOLATE_RAN: [i32; 2] = [0, 1];
 const POLL: Duration = Duration::from_millis(2);
 /// isolate resets signal dispositions inside the box, so a jury program is started through a shell that
 /// ignores SIGPIPE and execs it: a last write to a contestant that already exited fails with EPIPE, and the
 /// jury program still reaches its own verdict instead of dying.
 const IGNORE_SIGPIPE: [&str; 3] = ["/bin/sh", "-c", "trap '' PIPE; exec \"$0\" \"$@\""];
 
-/// How the manager and the contestant are joined. `StdioPipes`: two pipes, each side's stdin reads what the other
-/// writes to its stdout (interactive problems).
+/// How the manager and the contestant are joined.
 pub enum ChannelPlan {
+    /// Two pipes, each side's stdin reads what the other writes to its stdout (interactive problems).
     StdioPipes,
+    /// The split channel on fds 3/4/5 of each box (`channel`): the manager gets `jury`, the contestant
+    /// `contestant`. Both runs must set `inherit_fds`. Every daemon copy is dropped when the spawn returns.
+    Ring(RingChannel),
 }
 
 /// One member of a session: the box it runs in and its run.
@@ -55,6 +62,7 @@ pub fn spawn_session(
 ) -> Result<Session, GradeError> {
     match channel {
         ChannelPlan::StdioPipes => spawn_piped(manager, contestant),
+        ChannelPlan::Ring(ring) => spawn_ring(manager, contestant, ring),
     }
 }
 
@@ -85,15 +93,37 @@ fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<Session,
     }
 }
 
+/// Both command lines are built before either is spawned, so a refused one leaves no isolate running; a failed
+/// second spawn kills and reaps the first. `ring` is consumed: its fds move into the two commands and close in the
+/// daemon when the commands drop, so a box never keeps a peer's doorbell open.
+fn spawn_ring(
+    manager: &MemberSpec,
+    contestant: &MemberSpec,
+    ring: RingChannel,
+) -> Result<Session, GradeError> {
+    let RingChannel { jury, contestant: contestant_fds } = ring;
+    let mut manager_command = manager.sandbox.command_with_channel(manager.run, jury)?;
+    let mut contestant_command = contestant.sandbox.command_with_channel(contestant.run, contestant_fds)?;
+    let mut manager_child = manager_command.spawn()?;
+    drop(manager_command); // the daemon's copies of the jury's fds close now
+    match contestant_command.spawn() {
+        Ok(child) => Ok(Session { manager: manager_child, contestant: child }),
+        Err(error) => {
+            let _ = manager_child.kill();
+            let _ = manager_child.wait();
+            Err(error.into())
+        }
+    }
+}
+
 /// Waits for every member; the manager is killed first at the deadline.
 pub fn wait_all(session: &mut Session, deadline: Instant) -> Result<(), GradeError> {
     wait_children(&mut [&mut session.manager, &mut session.contestant], deadline)
 }
 
 /// Polls every child until all exited. Past the deadline all are killed in order, reaped, and the session is an
-/// error. isolate exits 2 on its own failures, which is an error too, because its meta file then does not
-/// describe the run. An isolate killed by a signal leaves its meta file missing or empty, which `read_meta`
-/// refuses.
+/// error. An isolate that did not run properly (any status but `ISOLATE_RAN`) is an error too, because its meta
+/// file then does not describe the run.
 fn wait_children(children: &mut [&mut Child], deadline: Instant) -> Result<(), GradeError> {
     let mut statuses: Vec<Option<ExitStatus>> = vec![None; children.len()];
     loop {
@@ -122,7 +152,9 @@ fn kill_all(children: &mut [&mut Child]) -> Result<(), GradeError> {
 }
 
 fn refuse_isolate_failure(statuses: &[Option<ExitStatus>]) -> Result<(), GradeError> {
-    match statuses.iter().flatten().find(|status| status.code() == Some(ISOLATE_FAILURE)) {
+    let isolate_failed =
+        |status: &&ExitStatus| !status.code().is_some_and(|code| ISOLATE_RAN.contains(&code));
+    match statuses.iter().flatten().find(isolate_failed) {
         Some(status) => Err(SandboxError::Isolate(format!("isolate exited with {status}")).into()),
         None => Ok(()),
     }
@@ -131,6 +163,8 @@ fn refuse_isolate_failure(statuses: &[Option<ExitStatus>]) -> Result<(), GradeEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::channel::RingChannel;
+    use crate::session::fake_isolate::fake_box;
 
     fn spawn(program: &str, args: &[&str]) -> Child {
         std::process::Command::new(program).args(args).spawn().unwrap()
@@ -168,6 +202,24 @@ mod tests {
     }
 
     #[test]
+    fn any_status_but_exit_0_or_1_is_an_isolate_failure() {
+        for script in ["exit 3", "exit 255", "kill -KILL $$"] {
+            let (mut a, mut b) = (spawn("true", &[]), spawn("sh", &["-c", script]));
+            let result = wait_children(&mut [&mut a, &mut b], Instant::now() + Duration::from_secs(60));
+            assert!(matches!(result, Err(GradeError::Sandbox(_))), "{script}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_mover_that_cannot_exec_isolate_is_an_error() {
+        for code in ["126", "127"] {
+            let (mut a, mut b) = (spawn("true", &[]), spawn("sh", &["-c", &format!("exit {code}")]));
+            let result = wait_children(&mut [&mut a, &mut b], Instant::now() + Duration::from_secs(60));
+            assert!(matches!(result, Err(GradeError::Sandbox(_))), "exit {code}: {result:?}");
+        }
+    }
+
+    #[test]
     fn any_number_of_children_is_waited_for() {
         let mut children: Vec<Child> = (0..3).map(|_| spawn("true", &[])).collect();
         let mut refs: Vec<&mut Child> = children.iter_mut().collect();
@@ -181,5 +233,99 @@ mod tests {
             ignoring_sigpipe(vec!["/bin/sh".into(), "-c".into(), "kill -PIPE $$; echo survived".into()]);
         let output = std::process::Command::new(&argv[0]).args(&argv[1..]).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&output.stdout), "survived\n");
+    }
+
+    fn sleeping_run() -> RunSpec {
+        RunSpec {
+            argv: vec!["/bin/sleep".into(), "30".into()],
+            limits: Limits::for_solution(1.0, 65_536, 1, 1 << 20),
+            stdio: judge_sandbox::spec::Stdio::default(),
+            env: vec![],
+            dirs: vec![],
+            inherit_fds: true,
+        }
+    }
+
+    fn two_fake_boxes() -> (Vec<tempfile::TempDir>, IsolateBox, IsolateBox) {
+        let dirs: Vec<_> = (0..2).map(|_| tempfile::tempdir().unwrap()).collect();
+        let manager_box = fake_box(dirs[0].path(), 7);
+        let contestant_box = fake_box(dirs[1].path(), 8);
+        (dirs, manager_box, contestant_box)
+    }
+
+    /// Both boxes opened through the fake, which is then deleted: the mover's `exec` of isolate finds nothing.
+    fn two_boxes_with_missing_isolate() -> (Vec<tempfile::TempDir>, IsolateBox, IsolateBox) {
+        let (dirs, manager_box, contestant_box) = two_fake_boxes();
+        for dir in &dirs {
+            std::fs::remove_file(dir.path().join("isolate")).unwrap();
+        }
+        (dirs, manager_box, contestant_box)
+    }
+
+    #[test]
+    fn a_ring_session_whose_second_member_is_refused_starts_neither() {
+        let (dirs, manager_box, contestant_box) = two_fake_boxes();
+        let manager_run = sleeping_run();
+        let contestant_run = RunSpec { inherit_fds: false, ..sleeping_run() }; // command_with_channel refuses it
+        let started = Instant::now();
+        let result = spawn_session(
+            &MemberSpec { sandbox: &manager_box, run: &manager_run },
+            &MemberSpec { sandbox: &contestant_box, run: &contestant_run },
+            ChannelPlan::Ring(RingChannel::create().unwrap()),
+        );
+        assert!(matches!(result, Err(GradeError::Sandbox(_))));
+        assert!(started.elapsed() < Duration::from_secs(5), "no member was started and waited out");
+        // A started manager logs `--run` only once its shell has been scheduled: give it a bounded time to do so.
+        let manager_calls =
+            wait_for_log_to_contain(&dirs[0].path().join("calls"), "--run", Duration::from_millis(500));
+        assert!(!manager_calls.contains("--run"), "the manager never started: {manager_calls}");
+    }
+
+    /// Polls the file until it contains `needle` or the timeout passes; returns the last content read.
+    fn wait_for_log_to_contain(path: &std::path::Path, needle: &str, timeout: Duration) -> String {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            if content.contains(needle) || Instant::now() >= deadline {
+                return content;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn an_isolate_binary_missing_behind_the_mover_is_a_sandbox_error() {
+        let (_dirs, manager_box, contestant_box) = two_boxes_with_missing_isolate();
+        let run = sleeping_run();
+        let mut session = spawn_session(
+            &MemberSpec { sandbox: &manager_box, run: &run },
+            &MemberSpec { sandbox: &contestant_box, run: &run },
+            ChannelPlan::Ring(RingChannel::create().unwrap()),
+        )
+        .expect("the spawn itself succeeds: the command is /bin/sh");
+        let waited = wait_all(&mut session, Instant::now() + Duration::from_secs(10));
+        assert!(matches!(waited, Err(GradeError::Sandbox(SandboxError::Isolate(_)))), "{waited:?}");
+    }
+
+    #[test]
+    fn a_ring_session_whose_isolate_writes_no_meta_is_a_sandbox_failure_not_a_stale_verdict() {
+        let (dirs, manager_box, contestant_box) = two_fake_boxes();
+        for (dir, sandbox) in dirs.iter().zip([&manager_box, &contestant_box]) {
+            std::fs::write(dir.path().join("quick"), "").unwrap();
+            let stale = dir.path().join("meta").join(format!("{}.meta", sandbox.id()));
+            std::fs::write(stale, "status:TO\ntime:1.100\ntime-wall:1.200\n").unwrap();
+        }
+        let run = sleeping_run();
+        let mut session = spawn_session(
+            &MemberSpec { sandbox: &manager_box, run: &run },
+            &MemberSpec { sandbox: &contestant_box, run: &run },
+            ChannelPlan::Ring(RingChannel::create().unwrap()),
+        )
+        .unwrap();
+        wait_all(&mut session, Instant::now() + Duration::from_secs(10)).unwrap();
+        for sandbox in [&manager_box, &contestant_box] {
+            let meta = sandbox.read_meta();
+            assert!(matches!(meta, Err(SandboxError::Meta(_))), "box {}: {meta:?}", sandbox.id());
+        }
     }
 }

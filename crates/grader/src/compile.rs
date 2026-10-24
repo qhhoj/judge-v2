@@ -126,6 +126,7 @@ fn run_compiler(
         stdio: Stdio { stdin: Some("/dev/null".into()), stdout: Some(LOG.into()), stderr: Some(ERR.into()) },
         env: job.env.clone(),
         dirs: job.dirs.clone(),
+        inherit_fds: false,
     };
     let meta = sandbox.run(&spec)?;
     let mut log = read_log(sandbox, LOG);
@@ -238,6 +239,7 @@ mod tests {
                 stdio: Stdio::default(),
                 env: vec![],
                 dirs,
+                inherit_fds: false,
             };
             isolate_args(0, &spec, Path::new("/m"))
                 .into_iter()

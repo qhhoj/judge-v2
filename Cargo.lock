@@ -707,6 +707,7 @@ dependencies = [
  "judge-sandbox",
  "libc",
  "regex",
+ "rustix",
  "serde",
  "serde_norway",
  "sha2",
@@ -760,6 +761,7 @@ name = "judge-sandbox"
 version = "2.3.9"
 dependencies = [
  "libc",
+ "rustix",
  "tempfile",
  "thiserror 2.0.21",
 ]
