@@ -14,3 +14,4 @@ One line per decision: what, and why.
 - Scratch is not supported: it needs its own runtime, and its problems are refused with `RETRY RUNTIME_MISSING`.
 - The vendored testlib is C++ only: Pascal and Java checkers that include testlib do not compile.
 - A contestant's unreadable OUTPUT zip is WA on every case: it is the contestant's mistake, not a judge fault.
+- `check-config` runs the daemon's start checks without starting it, probing the quota on a spare box: an install runs it before switching, so a config the new release refuses fails before the switch, not in a restart loop.
