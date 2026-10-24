@@ -14,3 +14,5 @@ One line per decision: what, and why.
 - Scratch is not supported: it needs its own runtime, and its problems are refused with `RETRY RUNTIME_MISSING`.
 - The vendored testlib is C++ only: Pascal and Java checkers that include testlib do not compile.
 - A contestant's unreadable OUTPUT zip is WA on every case: it is the contestant's mistake, not a judge fault.
+- Releases publish only from a signed tag on main (2026-10-24, bug hunt infra): `packaging/check-release-tag.sh` gates the GitHub Release and the `:vX.Y.Z` image on an annotated `vX.Y.Z` tag whose signature GitHub verified, pointing at the built commit, which is on main. The tarball and every pushed image carry a build provenance attestation (`actions/attest-build-provenance`); installs verify it (`gh attestation verify`, DEPLOY.md step 8). Why: any `v*` tag published an unsigned release that hosts checked only against a checksum from the same release (P2-4).
+- The image build pins protoc and `rustup-init` by sha256, and CI passes `github.base_ref` to scripts through `env` only. Why: downloads ran unchecked, and an expression in `run:` is interpolated into the shell (P3-2, P3-4).

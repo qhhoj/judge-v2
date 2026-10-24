@@ -208,6 +208,9 @@ Download the release from the private judge-v2 repository (needs `gh auth login`
 ```sh
 VER=<version>                                     # e.g. 2.0.1
 cd /tmp && gh release download v$VER -R qhhoj/judge-v2
+# built by this repository's CI from the signed tag v$VER (a recent gh: 2.103 works); refuse the release if it fails
+gh attestation verify qhhoj-judge-$VER.tar.gz -R qhhoj/judge-v2 \
+  --cert-identity "https://github.com/qhhoj/judge-v2/.github/workflows/ci.yml@refs/tags/v$VER"
 sha256sum -c qhhoj-judge-$VER.tar.gz.sha256       # OK
 tar -xzf qhhoj-judge-$VER.tar.gz -C /opt/qhhoj-judge/releases/
 mv /opt/qhhoj-judge/releases/qhhoj-judge-$VER /opt/qhhoj-judge/releases/$VER
