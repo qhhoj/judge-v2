@@ -322,7 +322,7 @@ the judge starts with `/etc/qhhoj-judge/config.toml` (config, `bridge-ca.pem` an
 read from the config's `key_file`, so mount it and set an absolute path). Add `--security-opt apparmor=unconfined` if the
 host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local disk, never NFS. A volume there passes
 the start check as a filesystem of its own even when it is a directory on the host's disk: give it a size
-bound or a `disk_quota` (§"Disk quota on the box root").
+bound or a `disk_quota` (section "Disk quota on the box root").
 
 ## Box isolation (cpuset and disk quota)
 
