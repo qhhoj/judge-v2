@@ -14,3 +14,4 @@ One line per decision: what, and why.
 - Scratch is not supported: it needs its own runtime, and its problems are refused with `RETRY RUNTIME_MISSING`.
 - The vendored testlib is C++ only: Pascal and Java checkers that include testlib do not compile.
 - A contestant's unreadable OUTPUT zip is WA on every case: it is the contestant's mistake, not a judge fault.
+- A conformance step waits 5 s of time the host ran the test, not 5 s of wall clock (extension capped at 60 s): a starved host must not fail a scenario, and a hung peer on a healthy host still fails in 5 s.
