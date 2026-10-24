@@ -25,6 +25,11 @@ pub trait Reporter {
     fn compiled(&mut self, log: &str);
     fn started(&mut self, pretested: bool, case_count: u32);
     fn case(&mut self, report: CaseReport);
+    /// Several cases that belong in one message (the daemon then batches them together whatever the clock).
+    /// Grading reports one `case` at a time and never calls this; a scripted runner (the conformance replay) does.
+    fn cases(&mut self, reports: Vec<CaseReport>) {
+        reports.into_iter().for_each(|report| self.case(report));
+    }
     /// Called before each case; false stops grading (abort). May block for backpressure.
     fn before_case(&mut self) -> bool;
 }
