@@ -14,3 +14,4 @@ One line per decision: what, and why.
 - Scratch is not supported: it needs its own runtime, and its problems are refused with `RETRY RUNTIME_MISSING`.
 - The vendored testlib is C++ only: Pascal and Java checkers that include testlib do not compile.
 - A contestant's unreadable OUTPUT zip is WA on every case: it is the contestant's mistake, not a judge fault.
+- Scenario 28 assigns and acks s2 before it assigns s1: s1's 300 ms accept clock must not run across s2's dispatch and Accepted write, which a slow host or database stretches past 300 ms.
