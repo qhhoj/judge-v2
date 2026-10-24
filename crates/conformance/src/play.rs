@@ -3,15 +3,17 @@
 use std::{future::Future, time::Duration};
 
 use judge_proto::v1::judge_link_server::JudgeLinkServer;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 
-use crate::{fake_bridge, scenario::Scenario, transcript_judge};
+use crate::{fake_bridge, host_stall, scenario::Scenario, transcript_judge};
 
 const SELF_PLAY_MAX_MESSAGE: usize = 8 * 1024 * 1024;
 
-/// The longest a player waits for the other side's next message.
+/// The longest a player waits for the other side's next message, not counting host stalls.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Host stalls extend a wait by at most this, so a host that never runs the process again still fails the step.
+pub const MAX_STALL_EXTENSION: Duration = Duration::from_secs(60);
 
 /// The key every scenario judge authenticates with (the backend runner stores its sha256).
 pub fn key_of(judge: &str) -> String {
@@ -36,8 +38,33 @@ pub fn code_of(status: &str) -> Result<tonic::Code, String> {
     })
 }
 
+/// `future`'s output within `STEP_TIMEOUT` of time the host ran this process: each time the deadline passes,
+/// it moves out by the host stall measured since the wait began (`host_stall`), up to `MAX_STALL_EXTENSION`.
 pub async fn within<T>(what: &str, future: impl Future<Output = T>) -> Result<T, String> {
-    tokio::time::timeout(STEP_TIMEOUT, future).await.map_err(|_| format!("timed out waiting for {what}"))
+    let (began, stalled_before) = (Instant::now(), host_stall::stalled());
+    let mut deadline = began + STEP_TIMEOUT;
+    tokio::pin!(future);
+    loop {
+        if let Ok(output) = tokio::time::timeout_at(deadline, &mut future).await {
+            return Ok(output);
+        }
+        if let Ok(output) = tokio::time::timeout(host_stall::SETTLE, &mut future).await {
+            return Ok(output);
+        }
+        let stall = (host_stall::stalled() - stalled_before).min(MAX_STALL_EXTENSION);
+        let extended = began + STEP_TIMEOUT + stall;
+        if extended <= deadline {
+            return Err(format!(
+                "timed out waiting for {what} ({} ms of it a host stall)",
+                stall.as_millis()
+            ));
+        }
+        eprintln!(
+            "waiting for {what}: the host stalled this process {} ms, wait extended",
+            stall.as_millis()
+        );
+        deadline = extended;
+    }
 }
 
 /// Plays both roles of `scenario` against each other; Err names the first mismatch.
