@@ -254,7 +254,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "conformance"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "judge-proto",
  "prost",
@@ -658,7 +658,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "judge-cli"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "judge-daemon"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "conformance",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "judge-grader"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "hex",
  "judge-problem",
@@ -719,14 +719,14 @@ dependencies = [
 
 [[package]]
 name = "judge-interface"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "judge-problem"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "hex",
  "libc",
@@ -741,7 +741,7 @@ dependencies = [
 
 [[package]]
 name = "judge-proto"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "judge-sandbox"
-version = "2.3.9"
+version = "2.4.0"
 dependencies = [
  "libc",
  "rustix",

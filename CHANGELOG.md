@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.4.0 (2026-10-24)
+
+### Features
+
+- The daemon refuses to start when nothing bounds what runs write to isolate's box root: `[isolate] disk_quota` must be set and settable, or the box root must be a filesystem of its own (`allow_unbounded_disk` for loopback dev stacks only). A configured quota isolate cannot set is now a start error, not a warning. JAVA, JAVA8 and KOTLIN pin `-XX:MaxRAM` (javac too), so the JVM heap no longer depends on the host's RAM.
+- Report the CPU of the custom checker and the interactor per case as `Case.jury_time_s` (additive proto field, protocol minor 4). Built-in checkers report 0; verdicts, scores and limits are unchanged.
+- `selftest` judges every row of the conformance manifest (`tests/programs/manifest.toml`, now shipped in the release tarball and the image) on the host and exits 1 when any case's status differs. It runs on boxes 900-901 pinned to a core no slot owns, at nice 10 (`--box-base`, `--core`, `--nice`), and refuses a slot's box or core; languages the judge does not advertise are skipped unless `--require`d. Manifest rows may give per-case statuses (`cases`), unknown keys are refused, and the limits and parser move to `judge_grader::manifest`, shared with the isolate suite, which now also checks every case.
+
+### Fixes
+
+- Agent skill configuration (issue tracker, triage labels, domain docs) in CLAUDE.md and docs/agents/; docs only.
+- Hello.build is the version plus the commit (`2.3.9+<12 hex>`) when the build knows it (the image's `REVISION`, `build-release.sh`), else the version alone, so the bridge can tell two builds of one release apart.
+- Internal: the sandbox can start a manager and a contestant joined by a sealed shared-memory channel on fds 3-5 (isolate `--inherit-fds`), refusing to start while the daemon holds an inheritable fd. Not used by grading yet.
+- `qhhoj-judge check-config` runs the daemon's config, pinning and disk-bound checks (the quota probed on a spare box) and exits non-zero when one fails, so an install can check a config before switching to a release.
+- Internal: `Reporter::cases` reports several cases as one arrival for the daemon's batcher (default: one `case` call each). Only the conformance replay uses it, so a transcript's Cases message is no longer split by the 100 ms batch age on a starved host. Grading is unchanged.
+- Internal: a conformance step's 5 s wait no longer counts time the host did not run the test process (at most 60 s more), so a starved CI host no longer fails a scenario. No runtime change.
+- Internal: the data-version wait tests move the stamp and the upload marker between two polls through a scripted stamp source instead of a sleeping thread, so a starved host no longer fails them. No runtime change.
+- Point to the shared domain glossary; time out a hung apt step in the isolate CI job.
+- Internal: new `judge-interface` crate (split signature): header grammar v1 with line/column refusals, roles from compiler symbol tables, the interface log and the generated C++ glue. Not used by grading yet.
+- Docs for the protocol, grading, operations and architecture; comments cite repo paths instead of unreachable documents; a CI grep keeps it so.
+- Test that a JVM in a box pinned to one core sees one processor, so JAVA, JAVA8 and KOTLIN size their JIT threads the same on every host; `languages.toml` notes why no `-XX:ActiveProcessorCount` is needed.
+- A case, batch or pretest checker of a kind this judge does not grade (bridged `type: cms`, ...) is refused at init as `RETRY UNSUPPORTED` (`checker.<type>`), as a problem-wide one already was, instead of an internal error while grading.
+- PyPy 3 compiles and runs pin `PYPY_GC_NURSERY=4M` and `PYPY_GC_MAX_DELTA=2GB`, so a PyPy verdict near the memory limit no longer depends on the judge host's CPU cache (PyPy sized its nursery from 1 MiB to 130 MiB) or RAM. Compile runs now get the language's `env` too.
+- Releases publish only from a signed tag on main and carry build provenance attestations (tarball and image); the image build pins protoc and rustup-init by checksum.
+- Protocol contract: RetryReason documents how the bridge treats each reason. Conformance 27 pins the RETRY cap on UNSPECIFIED (a failure). The new 27b pins that transient reasons (DATA_UNAVAILABLE, RUNTIME_MISSING, SANDBOX_FAILURE) never spend it, 27c that they end as IE once the bridge's deferral window has passed, and 27d that a transient RETRY between failures neither spends nor resets the cap. No scenario depends on how fast a run cycle is. The protocol and decision docs state the new rule. The judge sends the same messages as before.
+
 ## 2.3.9 (2026-10-23)
 
 ### Fixes
