@@ -15,7 +15,7 @@ and `conformance` (test support, no prefix). The binary is `qhhoj-judge`, built 
 | `sandbox` | isolate wrapper: init, run, cleanup, meta parsing, verdict classification, box ids |
 | `grader` | languages, compile, run one case, built-in and bridged checkers, interactor, signature, output-only, test generation |
 | `daemon` | config, gRPC link, worker pool, outbox, batcher, caches, metrics; the library behind the binary |
-| `cli` | package `judge-cli`, the `qhhoj-judge` binary: the daemon (default), `run`, `generate`, `selftest`, `isolate-cpus` |
+| `cli` | package `judge-cli`, the `qhhoj-judge` binary: the daemon (default), `run`, `generate`, `selftest`, `check-config`, `isolate-cpus` |
 | `judge-proto` | tonic and prost types generated from `proto/` at build time (nothing generated is checked in) |
 | `conformance` | the scenario player and scripted fake bridge that pin the protocol (`proto/conformance`) |
 | `interface` | parser for the split-signature header grammar; not used by grading yet |

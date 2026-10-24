@@ -115,6 +115,10 @@ in the per-run outbox, and ends with the session that assigned it (the judge can
 binary) on this host, on spare boxes and a core no slot owns, and exits 1 when any case's status differs (DEPLOY.md
 step 10).
 
+`qhhoj-judge check-config [--probe-box N]` runs the daemon's start checks (the config, the boxes' pinning, the disk
+bound on the box root, its quota probed on spare box 900) and exits 0 only when the daemon would start: an install
+runs it with the new binary before switching to it.
+
 `qhhoj-judge generate --bundle b.zip --plan plan.json --out tests.zip [--languages ... --testlib ...]` runs the same
 code locally; the plan is a `GenerateTests` message as proto3 JSON (camelCase). It prints the output path, or the
 failure and exits 1. Isolate tests: `crates/grader/tests/generate_isolate.rs` (fixture bundle in
