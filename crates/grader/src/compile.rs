@@ -27,6 +27,7 @@ pub struct CompileJob {
     pub files: Vec<SourceFile>,
     pub limits: Limits,
     pub dirs: Vec<String>,
+    pub env: Vec<(String, String)>,
     /// Only these box files go into the program snapshot (None: everything but the logs).
     pub keep: Option<Vec<String>>,
     /// A compile error decided from the source alone: `build` returns it without touching the box.
@@ -61,6 +62,7 @@ impl CompileJob {
             files: vec![SourceFile { name: language.source_name(source), bytes: source.to_vec() }],
             limits,
             dirs: language.compile_dirs.clone(),
+            env: language.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             keep: None,
             refusal: language.class_source_refusal(source),
         }
@@ -122,7 +124,7 @@ fn run_compiler(
         argv: argv.to_vec(),
         limits: job.limits.clone(),
         stdio: Stdio { stdin: Some("/dev/null".into()), stdout: Some(LOG.into()), stderr: Some(ERR.into()) },
-        env: vec![],
+        env: job.env.clone(),
         dirs: job.dirs.clone(),
     };
     let meta = sandbox.run(&spec)?;
