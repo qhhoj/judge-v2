@@ -19,8 +19,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: the PR adds a change file
+        env:
+          BASE: ${{ github.base_ref }}
         run: |
-          git diff --name-only --diff-filter=A "origin/${{ github.base_ref }}...HEAD" -- '.changeset/*.md' | grep -v '^.changeset/README.md$' | grep -q . \
+          git diff --name-only --diff-filter=A "origin/$BASE...HEAD" -- '.changeset/*.md' | grep -v '^.changeset/README.md$' | grep -q . \
             || { echo "no new .changeset/*.md: run knope document-change"; exit 1; }
   rust:
     runs-on: ubuntu-24.04
@@ -61,6 +63,8 @@ jobs:
         run: bash packaging/check-unit.sh
       - name: check-host.sh fails each broken host setting
         run: bash packaging/check-host.test.sh
+      - name: check-release-tag.sh refuses every tag but a signed one on main
+        run: bash packaging/check-release-tag.test.sh
   # By hand only (see the header): needs sudo, systemd and cgroup v2 delegation.
   isolate-suite:
     if: github.event_name == 'workflow_dispatch'
@@ -115,14 +119,17 @@ jobs:
             --programs tests/programs --host-languages "$RUNNER_TEMP/languages.host.toml" \
             --require "$JUDGE_SUITE_REQUIRE"
   # The container image (packaging/Containerfile). Pull requests only build it (so this can be a required check); pushes to main and v* tags also
-  # push it to ghcr.io/qhhoj/judge-v2 (:sha-<12>, :main, and :vX.Y.Z on tags). The isolate selftest needs cgroup delegation, SYS_ADMIN and a tuned
-  # host, so it is not run here: the smoke test checks the binary and isolate only.
+  # push it to ghcr.io/qhhoj/judge-v2 (:sha-<12>, :main, and :vX.Y.Z on a tag that check-release-tag.sh accepts) with a build provenance
+  # attestation (`gh attestation verify oci://ghcr.io/qhhoj/judge-v2:<tag> -R qhhoj/judge-v2`). The isolate selftest needs cgroup
+  # delegation, SYS_ADMIN and a tuned host, so it is not run here: the smoke test checks the binary and isolate only.
   image:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+      id-token: write # attestation signing
+      attestations: write
     env:
       IMAGE: ghcr.io/qhhoj/judge-v2
     steps:
@@ -145,6 +152,11 @@ jobs:
           docker run --rm --entrypoint test judge-image:smoke -f /opt/qhhoj-judge/current/tests/programs/manifest.toml
           docker run --rm --entrypoint /usr/local/lib/kotlinc/bin/kotlinc -e JAVA_HOME=/usr/lib/jvm/default-java judge-image:smoke -version
           docker image inspect judge-image:smoke --format '{{ index .Config.Labels "org.opencontainers.image.revision" }} {{ .Size }} bytes'
+      - name: a release tag is signed and on main
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash packaging/check-release-tag.sh "$GITHUB_REF_NAME"
       - name: tags
         if: github.event_name != 'pull_request'
         id: tags
@@ -162,6 +174,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: push (layers come from the cache)
         if: github.event_name != 'pull_request'
+        id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -170,8 +183,16 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
           build-args: REVISION=${{ github.sha }}
           cache-from: type=gha
-  # The release tarball (static musl binary + packaging + DEPLOY.md) as a workflow artifact; on a v* tag it is also
-  # published as a GitHub Release (tarball + .sha256).
+      - name: attest the image
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+  # The release tarball (static musl binary + packaging + DEPLOY.md) as a workflow artifact; on a v* tag that check-release-tag.sh accepts
+  # (annotated, GitHub-verified signature, on main) it is also published as a GitHub Release (tarball + .sha256) with a build provenance
+  # attestation: `gh attestation verify qhhoj-judge-<ver>.tar.gz -R qhhoj/judge-v2` before installing (DEPLOY.md step 8).
   release:
     runs-on: ubuntu-24.04
     needs: rust
@@ -179,8 +200,15 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write # gh release create
+      id-token: write # attestation signing
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: a release tag is signed and on main
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash packaging/check-release-tag.sh "$GITHUB_REF_NAME"
       - uses: ./.github/actions/setup-protoc
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -201,6 +229,11 @@ jobs:
         with:
           name: qhhoj-judge
           path: target/release-pkg/*.tar.gz
+      - name: attest the tarball (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: target/release-pkg/*.tar.gz
       - name: publish the GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
