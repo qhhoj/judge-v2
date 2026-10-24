@@ -86,17 +86,17 @@ messages, so a replayed or resumed message cannot lose batch state.
 
 ## Limits
 
-The bridge sends its limits in `Welcome.limits`; the judge stays inside them, and they can only lower these defaults.
+The bridge sends its limits in `Welcome.limits`; the judge stays inside them, and they can only lower the judge's own caps below.
 
 | Limit | Value |
 |---|---|
-| Message size (bridge receive) | 4 MiB; `Hello` 256 KiB |
+| Message size | 4 MiB; `Hello` 256 KiB (bridge receive; the judge accepts 4 MiB) |
 | Connections | at most 256 total, at most 8 unauthenticated per address |
-| Streams per connection | one `Connect` plus at most `slots` concurrent `FetchSource` |
+| Streams per connection | the bridge allows 1 `Connect` plus 2 per slot (at most 129) concurrent HTTP/2 streams |
 | Rate | at most 1000 messages/s per session, then the stream is closed |
 | Cases | at most 256 per message, at most 10000 per submission |
 | Text | log 64 KiB; feedback 50 B; extended feedback and output prefix 512 B (clipped, not rejected) |
-| Inline source | at most 1 MiB; a file-only submission comes through `FetchSource` |
+| Inline source | the bridge accepts source up to 64 KiB (65536 characters); the judge's own cap on an inline `Assign.source` is 1 MiB. A file-only submission comes through `FetchSource` |
 | Timings | `Hello` 15 s, `Accepted` 20 s, ping 10 s, idle 60 s (paused while a message is handled), resync 30 s, grace 30 s |
 
 ## Source and generation transfer

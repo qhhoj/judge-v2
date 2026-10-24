@@ -14,7 +14,7 @@ fn every_scenario_loads_and_its_messages_parse() {
     assert_eq!(names.len(), scenarios.len(), "names are unique");
 }
 
-/// Preflight C2: after the bridge aborts, voids or drops a run, the judge ends it with
+/// After the bridge aborts, voids or drops a run, the judge ends it with
 /// Final{ABORTED}, and the generation-2 Assign comes only after that Final.
 #[test]
 fn a_released_run_holds_its_slot_until_the_judges_final() {

@@ -368,7 +368,7 @@ fn grade_interactive(
 
 /// TEXT answers every case with the source. An OUTPUT zip that cannot be opened is graded as
 /// `UnreadableOutputs` (every case WA, the contestant's mistake); one over `MAX_OUTPUT_ENTRIES` stays IE
-/// (a zip of that many entries is judge-side abuse, not a contestant mistake).
+/// (the cap bounds the work one zip can cost).
 fn grade_outputs(
     env: &mut JudgeEnv,
     problem: &ResolvedProblem,

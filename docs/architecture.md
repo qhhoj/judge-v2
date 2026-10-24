@@ -20,7 +20,7 @@ and `conformance` (test support, no prefix). The binary is `qhhoj-judge`, built 
 | `conformance` | the scenario player and scripted fake bridge that pin the protocol (`proto/conformance`) |
 | `interface` | parser for the split-signature header grammar; not used by grading yet |
 
-Dependencies run `problem` -> `sandbox` -> `grader` -> `daemon` -> `cli`; `judge-proto` is used by `daemon` and
+`grader` uses `problem` and `sandbox`, `daemon` uses `grader`, and `cli` uses `daemon`; `judge-proto` is used by `daemon` and
 `conformance`.
 
 ## One Judging, from the bridge message to the reported Verdict
@@ -60,7 +60,8 @@ Summarised here; the full rules (order MLE, OLE, TLE, memory counters, JVM reser
 [grading.md](grading.md#verdict-rules).
 
 - A run is classified by isolate status, memory counters and output size; the checker only sees runs that ended normally.
-- A case that is not AC skips the rest of its batch; `short_circuit` skips every later case.
+- A case that is not AC skips the rest of its batch; `short_circuit` skips every later case; a failed case or batch worth
+  0 points stops the run even without it.
 - Contestant mistakes (an unreadable OUTPUT zip, a compile error) are WA or CE. Judge faults are internal errors or
   `RETRY`, never a wrong verdict.
 

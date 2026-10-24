@@ -43,13 +43,13 @@ Time is the CPU time from the meta file; wall time only stops sleeping or blocke
 The program's memory is `Meta::memory_kib` (`sandbox/src/meta.rs`): the cgroup peak (`cg-mem`) less the page cache of the
 run's own input and output files, but never below the peak resident set (`max-rss`) and never above the cgroup peak.
 Pages the program holds without mapping them (tmpfs, memfd, pipes) therefore count; page cache of its own files does
-not. An OOM kill reports the cgroup peak. When isolate reported one counter only, that one is used.
+not. An OOM kill reports the cgroup peak; a run that timed out reports the smaller of the two counters. When isolate reported one counter only, that one is used.
 
 The cgroup limit is the memory limit plus room for the page cache of what the run writes (one output cap, at most
 64 MiB, `spec::cgroup_memory_kib`), so a small-memory program with a large output is not OOM-killed for its page cache.
 
-JVM languages (`jvm = true`) get the cgroup limit plus `limits.jvm_reserve_kib` (default 128 MiB, in the config), with
-`-Xmx` equal to the memory limit. A `java.lang.OutOfMemoryError` on stderr turns RTE or IR into MLE. Jury programs
+JVM languages (`jvm = true`) get the memory limit raised by `limits.jvm_reserve_kib` (default 128 MiB, in the config), for
+the MLE check and the cgroup alike, with `-Xmx` equal to the problem's memory limit. A `java.lang.OutOfMemoryError` on stderr turns RTE or IR into MLE. Jury programs
 that are JVM languages keep a fixed 128 MiB reserve outside their heap.
 
 ### Uncaught exceptions
@@ -61,12 +61,13 @@ becomes RTE named by the exception.
 ### Output limits
 
 `output_limit_length` (bytes; the case's value, else the problem's, else `limits.default_output_limit`) becomes
-isolate's `--fsize`, rounded up to KiB. Only `output_prefix_length` bytes (at most 512) of the output are ever sent back.
+isolate's `--fsize`, rounded up to KiB plus 1 KiB of slack. Only `output_prefix_length` bytes (at most 512) of the output are ever sent back.
 
 ## Cases, batches and points
 
 - A case that is not AC skips the rest of its batch (SC). With `short_circuit`, any case that is not AC skips every
-  later case. A pretest run grades only `pretest_test_cases`.
+  later case. Even without `short_circuit`, a failed case or batch worth 0 points stops all later cases
+  (`problem/src/short_circuit.rs`). A pretest run grades only `pretest_test_cases`.
 - Each case reports `points` and `total`. A batched case carries the batch total; the bridge scores a batch by its
   weakest case.
 - A refused feature (generator, `nobigmath`, a checker kind not graded here, a non-testlib interactor, per-case checker

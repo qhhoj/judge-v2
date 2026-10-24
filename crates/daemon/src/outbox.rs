@@ -1,4 +1,4 @@
-//! Per-assignment numbered messages kept until the bridge acks them (docs/protocol.md#reconnect-and-resume, #delivery).
+//! Per-assignment numbered messages kept until the bridge acks them (docs/protocol.md#reconnect-and-resume, #delivery-at-least-once-exactly-once-effect).
 
 use crate::batcher::MAX_BATCH_CASES;
 use judge_grader::judge::Outcome;

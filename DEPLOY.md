@@ -260,7 +260,7 @@ From the second session, open a **new** SSH connection to prove you can still ge
 ### 10. Verify
 
 ```sh
-DAY_ONE_LANGUAGES='<the Day-one languages row of "Fixed values" above>'   # a comma list, written once, there
+DAY_ONE_LANGUAGES=$(sed -n 's/^| Day-one languages | `\(.*\)` |$/\1/p' /opt/qhhoj-judge/current/DEPLOY.md)   # the row of "Fixed values"
 sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
   --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # last line ends in ok
 bash /opt/qhhoj-judge/current/packaging/check-host.sh --bridge bridge.qhhoj.internal:9990

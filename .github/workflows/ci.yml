@@ -36,7 +36,7 @@ jobs:
       - name: no references to documents outside the repo
         # Comments cite an in-repo doc path (docs/*.md#heading) or give the reason; spec sections, preflight, plan and task ids point nowhere.
         run: |
-          if git grep -nE '§|preflight|Task [0-9]+|[Pp]lan [A-D0-9]\b|Review Focus|legacy-judge-usage|split-and-communication' -- . ':!CHANGELOG.md' ':!.github' ':!Cargo.lock'; then
+          if git grep -nE '§|[Pp]reflight|Task [0-9]+|[Pp]lan [A-D0-9]\b|Review Focus|legacy-judge-usage|split-and-communication' -- . ':!CHANGELOG.md' ':!.github' ':!Cargo.lock'; then
             echo "dangling reference: cite a path under docs/ or state the reason"; exit 1
           fi
       - run: cargo fmt --all --check
