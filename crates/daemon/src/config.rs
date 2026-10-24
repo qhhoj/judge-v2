@@ -81,6 +81,9 @@ pub struct IsolatePaths {
     pub config: PathBuf,
     /// Off when absent. Needs user quotas on isolate's box root (DEPLOY.md).
     pub disk_quota: Option<DiskQuotaConfig>,
+    /// Dev and test stacks only (loopback bridge): start with no `disk_quota` on a box root that shares the
+    /// cache's or `/`'s filesystem, where one run can fill the disk.
+    pub allow_unbounded_disk: bool,
 }
 
 impl Default for IsolatePaths {
@@ -90,6 +93,7 @@ impl Default for IsolatePaths {
             taskset: "/usr/bin/taskset".into(),
             config: "/usr/local/etc/isolate".into(),
             disk_quota: None,
+            allow_unbounded_disk: false,
         }
     }
 }
@@ -163,6 +167,9 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
     }
     if config.control_dir.is_some() && !is_loopback_url(&config.bridge_url) {
         return Err(invalid("control_dir is for local test stacks only"));
+    }
+    if config.isolate.allow_unbounded_disk && !is_loopback_url(&config.bridge_url) {
+        return Err(invalid("isolate.allow_unbounded_disk is for local test stacks only"));
     }
     validate_disk_quota(config.isolate.disk_quota)
 }

@@ -16,7 +16,7 @@ use judge_daemon::gates::Gates;
 use judge_daemon::generation::GrpcGeneration;
 use judge_daemon::link::{Connection, LinkContext, SlotPool, run_link};
 use judge_daemon::metrics::Metrics;
-use judge_daemon::outbox::{AssignmentRef, OUTBOX_WATERMARK, Outboxes};
+use judge_daemon::outbox::{AssignmentRef, Body, Envelope, OUTBOX_WATERMARK, Outboxes};
 use judge_daemon::pool::Pool;
 use judge_daemon::source::{GrpcFetch, SourceFetch};
 use judge_daemon::wire::{HelloInfo, JudgeMessage, judge_message, v1};
@@ -55,15 +55,16 @@ const HOLD_LIMIT: Duration = Duration::from_secs(5);
 const WAIT_LIMIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(5);
 
-/// One thing the grading reports, in transcript order. `Resume`: wait until the link has reconnected and
-/// been welcomed again. `Drain`: start the daemon's drain. `Hold`: no Final in the transcript, keep the slot.
+/// One thing the grading reports, in transcript order. `Resume(n)`: wait until the link's `n`-th session (the
+/// dropped one) has ended and a new one is welcomed. `Drain`: start the daemon's drain. `Hold`: no Final in the transcript, keep
+/// the slot.
 #[derive(Clone)]
 enum Act {
     Compiled(String),
     Started(bool, u32),
     Cases(Vec<v1::Case>),
     Final(i32, String, i32),
-    Resume,
+    Resume(u64),
     Drain,
     Hold,
 }
@@ -104,6 +105,10 @@ fn key(r: Option<v1::AssignmentRef>) -> String {
     r.map(|r| format!("{}#{}", r.submission_id, r.generation)).unwrap_or_default()
 }
 
+fn ref_key(r: AssignmentRef) -> String {
+    format!("{}#{}", r.submission_id, r.generation)
+}
+
 /// ("id#generation", act) of a per-assignment judge message.
 fn act_of(body: judge_message::Body) -> Option<(String, Option<Act>)> {
     use judge_message::Body as J;
@@ -129,9 +134,12 @@ struct Scripts {
 impl Scripts {
     fn of(scenario: &Scenario) -> Self {
         let (bindings, mut scripts) = (scenario.sample_bindings(), Scripts::default());
+        // Every open is one session of the link (refused or not), and the link counts each session's end.
+        let mut opens = 0;
         for step in &scenario.steps {
             match step {
-                Step::Drop { .. } => scripts.add_to_unfinished(Act::Resume),
+                Step::Open { .. } => opens += 1,
+                Step::Drop { .. } => scripts.add_to_unfinished(Act::Resume(opens)),
                 Step::Judge { message, .. } => {
                     if let Ok(JudgeMessage { body: Some(body) }) = parse_judge(message, &bindings) {
                         scripts.judge(body);
@@ -168,17 +176,24 @@ impl Scripts {
         }
     }
 
-    fn queue(mut self) -> VecDeque<Vec<Act>> {
-        self.order.iter().map(|id| self.acts.remove(id).unwrap_or_default()).collect()
+    fn queue(mut self) -> ScriptQueue {
+        let script = |id: &String| (id.clone(), self.acts.remove(id).unwrap_or_default());
+        self.order.iter().map(script).collect()
     }
 }
 
-/// Replays the transcript's grading, one script per run in acceptance order.
+/// Per accepted assignment ("id#generation"), its acts, in acceptance order.
+type ScriptQueue = VecDeque<(String, Vec<Act>)>;
+
+/// Replays the transcript's grading: each run takes the first script, in acceptance order, of an assignment
+/// still running. A run the daemon ended before its runner started (an abort or a resume `DROP` during the
+/// source fetch or the data wait) never takes one, so its script is skipped.
 struct Replay {
-    queue: Arc<Mutex<VecDeque<Vec<Act>>>>,
+    queue: Arc<Mutex<ScriptQueue>>,
     runs: Arc<AtomicUsize>,
     reconnects: Arc<Metrics>,
     connection: Arc<RwLock<Option<Connection>>>,
+    outboxes: Arc<Outboxes>,
     drain: Arc<watch::Sender<bool>>,
     /// Waits that ran out (a daemon that never resumed or never aborted).
     failures: Arc<Mutex<Vec<String>>>,
@@ -214,11 +229,38 @@ fn report_case(reporter: &mut dyn Reporter, c: &v1::Case) {
 }
 
 impl Replay {
-    /// True once the link has reconnected and been welcomed again, within `WAIT_LIMIT`.
-    fn wait_for_resume(&self, reconnects_before: u64) -> bool {
+    /// True once the link's `ended`-th session has ended and a new one is welcomed, within `WAIT_LIMIT`. Counted
+    /// from the daemon's start, not the run's: a run may start after the drop it is to wait out.
+    fn wait_for_resume(&self, ended: u64) -> bool {
         let welcomed = || self.connection.try_read().map(|c| c.is_some()).unwrap_or(false);
         let started = std::time::Instant::now();
-        while self.reconnects.reconnects.get() <= reconnects_before || !welcomed() {
+        while self.reconnects.reconnects.get() < ended || !welcomed() {
+            if started.elapsed() >= WAIT_LIMIT {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+
+    /// The script of the run that is starting: the first one whose assignment has an outbox and no Final yet.
+    fn script(&self) -> Vec<Act> {
+        let running = |r: &AssignmentRef| {
+            let finished = |e: &Envelope| matches!(e.body, Body::Final { .. });
+            !self.outboxes.pending_after(r, 0).iter().any(finished)
+        };
+        let live: Vec<String> = self.outboxes.refs().into_iter().filter(running).map(ref_key).collect();
+        let mut queue = self.queue.lock().unwrap();
+        let first = queue.iter().position(|(id, _)| live.contains(id));
+        first.and_then(|at| queue.remove(at)).map(|(_, acts)| acts).unwrap_or_default()
+    }
+
+    /// True once the bridge has acked every message the daemon queued, within `WAIT_LIMIT`. A transcript's
+    /// `draining` follows the bridge's ack of the run's `accepted`, and the run starts before that goes out.
+    fn wait_for_acks(&self) -> bool {
+        let acked = |r: &AssignmentRef| self.outboxes.pending_after(r, 0).is_empty();
+        let started = std::time::Instant::now();
+        while !self.outboxes.refs().iter().all(acked) {
             if started.elapsed() >= WAIT_LIMIT {
                 return false;
             }
@@ -235,7 +277,7 @@ impl Replay {
     }
 
     /// Plays one act; Some ends the run with that outcome.
-    fn play(&self, act: Act, reporter: &mut dyn Reporter, reconnects_before: u64) -> Option<Outcome> {
+    fn play(&self, act: Act, reporter: &mut dyn Reporter) -> Option<Outcome> {
         match act {
             Act::Compiled(log) => reporter.compiled(&log),
             Act::Started(pretested, count) => reporter.started(pretested, count),
@@ -247,8 +289,9 @@ impl Replay {
                     report_case(reporter, c);
                 }
             }
-            Act::Resume if !self.wait_for_resume(reconnects_before) => return self.gave_up("the resume"),
-            Act::Resume => {}
+            Act::Resume(ended) if !self.wait_for_resume(ended) => return self.gave_up("the resume"),
+            Act::Resume(_) => {}
+            Act::Drain if !self.wait_for_acks() => return self.gave_up("the acks before the drain"),
             Act::Drain => drop(self.drain.send(true)),
             Act::Hold => {
                 wait_for_abort(reporter, HOLD_LIMIT);
@@ -269,11 +312,7 @@ impl Replay {
 impl Runner for Replay {
     fn run(&mut self, _p: &ResolvedProblem, _s: &Submission, reporter: &mut dyn Reporter) -> Outcome {
         self.runs.fetch_add(1, Ordering::SeqCst);
-        let acts = self.queue.lock().unwrap().pop_front().unwrap_or_default();
-        let reconnects_before = self.reconnects.reconnects.get();
-        acts.into_iter()
-            .find_map(|act| self.play(act, reporter, reconnects_before))
-            .unwrap_or(Outcome::Graded)
+        self.script().into_iter().find_map(|act| self.play(act, reporter)).unwrap_or(Outcome::Graded)
     }
 }
 
@@ -304,7 +343,11 @@ fn data_root(scenario: &Scenario) -> tempfile::TempDir {
 
 /// `28b`: `hold-ack` exists until generation 1's `Final{ABORTED}` has been sent, which the next Assign
 /// (another ref) proves. Generation 1 may come and go between two polls: abort and assign arrive together.
-fn hold_ack_until_aborted(gates: &Path, outboxes: Arc<Outboxes>, r: AssignmentRef) {
+fn hold_ack_until_aborted(scenario: &Scenario, gates: &Path, outboxes: Arc<Outboxes>) {
+    if !scenario.name.starts_with("28b-") {
+        return;
+    }
+    let r = AssignmentRef { submission_id: scenario.sample_bindings()["s1"].clone(), generation: 1 };
     let hold = gates.join("hold-ack");
     std::fs::write(&hold, "").unwrap();
     tokio::spawn(async move {
@@ -451,13 +494,11 @@ fn start_judge(scenario: &Scenario, url: &str) -> Result<Judge, String> {
         runs: runs.clone(),
         reconnects: w.metrics.clone(),
         connection: w.connection.clone(),
+        outboxes: w.outboxes.clone(),
         drain: drain.clone(),
     };
     let pool = pool(scenario, &w, &dirs, &replay);
-    if scenario.name.starts_with("28b-") {
-        let first = AssignmentRef { submission_id: scenario.sample_bindings()["s1"].clone(), generation: 1 };
-        hold_ack_until_aborted(dirs[3].path(), w.outboxes.clone(), first);
-    }
+    hold_ack_until_aborted(scenario, dirs[3].path(), w.outboxes.clone());
     let fetch = Arc::new(GrpcFetch { config: w.config.clone(), connection: w.connection.clone() });
     let probe_errors = spawn_probes(fetch, scenario, runs);
     let (stop, stop_rx) = watch::channel(false);

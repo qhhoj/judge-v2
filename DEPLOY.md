@@ -317,12 +317,14 @@ podman run --rm --cgroupns=private --systemd=always --cap-add=SYS_ADMIN --cap-ad
 The entrypoint (`cg-setup.sh`) prepares the cgroup, then runs the command you give; with no command
 the judge starts with `/etc/qhhoj-judge/config.toml` (config, `bridge-ca.pem` and the key, see steps 7 and 8; the key file is
 read from the config's `key_file`, so mount it and set an absolute path). Add `--security-opt apparmor=unconfined` if the
-host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local disk, never NFS.
+host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local disk, never NFS. A volume there passes
+the start check as a filesystem of its own even when it is a directory on the host's disk: give it a size
+bound or a `disk_quota` (§"Disk quota on the box root").
 
 ## Box isolation (cpuset and disk quota)
 
-Both are off until you do the steps below; without them the judge still runs, with a warning at start.
-Do them on a new host in Phase A after step 8, and on a running host in an agreed deploy window.
+Do both on a new host in Phase A after step 8, and on a running host in an agreed deploy window. Without the
+cpuset lines the judge runs with a warning. Without a disk bound it refuses to start (see below).
 
 ### CPU pinning by cpuset
 
@@ -386,9 +388,16 @@ output) and the most the run may write (its output limit; a compile's snapshot l
 covers the rest: `headroom_kib` must be at least 131072 (a stderr or other file at the 64 MiB output cap,
 plus 64 MiB for a compiler's temporary files), `headroom_inodes` at least 256.
 
-`systemctl start qhhoj-judge`; when the box root has no user quotas the journal says
-`isolate's box root has no user quotas` once and runs go without a quota. isolate keeps a box uid's last
-limits on the filesystem: after removing `disk_quota`, recreate the image (or clear them with `setquota`).
+`systemctl start qhhoj-judge`; the journal says `every box has a disk quota`. At start the judge refuses to run
+when nothing bounds the box root:
+
+- `disk_quota` set but isolate cannot set it (the box root has no user quotas): refused;
+- no `disk_quota` and the box root on the filesystem of `/` or of `cache_dir`: refused;
+- no `disk_quota` and the box root on a filesystem of its own: runs, with a warning (layer 1 only).
+
+`[isolate] allow_unbounded_disk = true` skips the check; it is accepted only with a loopback `bridge_url`, for dev
+and test stacks. isolate keeps a box uid's last limits on the filesystem: after removing `disk_quota`, recreate
+the image (or clear them with `setquota`).
 
 ### Verify on the host
 

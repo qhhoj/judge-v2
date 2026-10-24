@@ -5,7 +5,7 @@ mod common;
 use common::{installed, language_or_skip, registry, sandbox, sandbox_on};
 use judge_grader::compile::{BuildOutcome, CompileJob, build, program_for};
 use judge_grader::error::GradeError;
-use judge_grader::run_case::{CaseIo, CaseLimits, Runnable, run_case};
+use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
 use judge_sandbox::classify::RunVerdict;
 
 const LIMITS: CaseLimits = CaseLimits { time_limit_s: 2.0, memory_kib: 262_144, jvm_reserve_kib: 131_072 };
@@ -81,28 +81,56 @@ fn a_compiler_missing_in_the_box_is_a_judge_error_not_a_compile_error() {
 const PRINT_PROCESSORS: &str = "public class Main { public static void main(String[] a) { \
     System.out.println(Runtime.getRuntime().availableProcessors()); } }\n";
 
-#[test]
-fn a_jvm_in_a_box_pinned_to_one_core_sees_one_processor_on_any_host() {
-    // isolate's `time` sums every thread of the box, the JIT's too: the JVM must size them from the box's core.
+/// Allocates about 600 MiB of short-lived arrays, a few of them kept alive.
+const ALLOCATE: &str = "public class Main { public static void main(String[] a) { long sum = 0; \
+    int[][] keep = new int[64][]; for (long done = 0; done < (600L << 20); ) { \
+    int[] x = new int[256 + (int) (done % 4096)]; x[0] = (int) done; sum += x[0]; keep[(int) (done % 64)] = x; \
+    done += x.length * 4L + 16; } System.out.println(sum); } }\n";
+
+/// Runs `source` as JAVA with the shipped run flags, after `first_flags` (right behind the `java` binary), in
+/// a box pinned to core 0. None (skip) without a JVM.
+fn run_java(offset: u32, source: &str, first_flags: &[&str]) -> Option<(CaseRun, String)> {
     let language = registry().get("JAVA").unwrap().clone();
     let (snapshot, meta, io) =
         (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let mut program = program_for(&language, snapshot.path(), PRINT_PROCESSORS.as_bytes());
+    let mut program = program_for(&language, snapshot.path(), source.as_bytes());
     if !std::path::Path::new(&program.run[0]).exists() {
-        return eprintln!("skip: JAVA (runtime not installed on this host)");
+        eprintln!("skip: JAVA (runtime not installed on this host)");
+        return None;
     }
     // The source launcher stands in for javac (a JRE-only host): the shipped run flags, Main.java compiled in memory.
     *program.run.last_mut().unwrap() = "Main.java".into();
-    std::fs::write(snapshot.path().join("Main.java"), PRINT_PROCESSORS).unwrap();
+    program.run.splice(1..1, first_flags.iter().map(|flag| flag.to_string()));
+    std::fs::write(snapshot.path().join("Main.java"), source).unwrap();
     let input = io.path().join("in");
     std::fs::write(&input, "").unwrap();
     let file = std::fs::File::open(&input).unwrap();
     let case_io = CaseIo { input: &file, output_cap: 1 << 20, file_io: None };
     let limits = CaseLimits { time_limit_s: 10.0, ..LIMITS };
     let out = io.path().join("out");
-    let mut sandbox = sandbox_on(47, meta.path(), Some(0));
+    let mut sandbox = sandbox_on(offset, meta.path(), Some(0));
     let run =
         run_case(&mut sandbox, &Runnable { program: &program, limits: &limits }, &case_io, &out).unwrap();
+    Some((run, std::fs::read_to_string(&out).unwrap()))
+}
+
+#[test]
+fn a_jvm_in_a_box_pinned_to_one_core_sees_one_processor_on_any_host() {
+    // isolate's `time` sums every thread of the box, the JIT's too: the JVM must size them from the box's core.
+    let Some((run, stdout)) = run_java(47, PRINT_PROCESSORS, &[]) else { return };
     assert_eq!(run.verdict, RunVerdict::Ok);
-    assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "1");
+    assert_eq!(stdout.trim(), "1");
+}
+
+#[test]
+fn a_jvm_reports_the_same_memory_whatever_the_hosts_ram() {
+    // The JVM sizes its initial heap, and so its young generation and GC count, from the host's RAM. A
+    // `-XX:MaxRAM` before the shipped flags stands in for a host of that size.
+    let memory_on = |host_ram: &str| {
+        let (run, _) = run_java(48, ALLOCATE, &[&format!("-XX:MaxRAM={host_ram}")])?;
+        assert_eq!(run.verdict, RunVerdict::Ok, "{host_ram} host");
+        Some(run.memory_kib)
+    };
+    let (Some(small), Some(large)) = (memory_on("2g"), memory_on("64g")) else { return };
+    assert!(small.abs_diff(large) * 10 < large, "{small} KiB on a 2 GiB host, {large} KiB on a 64 GiB host");
 }

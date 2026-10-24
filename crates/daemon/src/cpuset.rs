@@ -33,7 +33,7 @@ pub fn isolate_cpus_lines(box_base: u32, cores: &[u32]) -> String {
 }
 
 /// `key = value` settings of an isolate config, comments and blank lines skipped.
-fn settings(isolate_config: &str) -> impl Iterator<Item = (&str, &str)> {
+pub(crate) fn settings(isolate_config: &str) -> impl Iterator<Item = (&str, &str)> {
     isolate_config
         .lines()
         .map(str::trim)

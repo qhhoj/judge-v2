@@ -143,11 +143,15 @@ testlib_flag = "-Fu/testlib"
 key = "JAVA"
 name = "Java"
 source = "{class}.java"
-compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-encoding", "UTF-8", "{class}.java"]
+compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-J-XX:MaxRAM=14311944k", "-encoding", "UTF-8", "{class}.java"]
 compile_processes = 128
+# The JVM sizes its initial heap, and so its young generation and GC count, from the host's RAM (isolate mounts no
+# /sys, so not from the box's cgroup). -XX:MaxRAM fixes that input on every host to the RAM of the production host
+# that judged since 2026-10-10 (14311944 kB): its heap flags stay as they were, and reported memory and time stop
+# depending on the host. javac gets the same pin.
 # isolate's `time` sums every thread of the box, the JIT's too; each box runs under `taskset -c <core>`, so the JVM
 # sizes them from 1 CPU on any host (2 compilers; 12 on 16 unpinned cores): no -XX:ActiveProcessorCount needed.
-run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
+run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-XX:MaxRAM=14311944k", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
@@ -162,11 +166,15 @@ exception_marker = "Exception in thread"
 key = "JAVA8"
 name = "Java 8 (alias of the installed JDK)"
 source = "{class}.java"
-compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-encoding", "UTF-8", "{class}.java"]
+compile = ["/usr/lib/jvm/default-java/bin/javac", "-J-XX:+UseSerialGC", "-J-XX:MaxRAM=14311944k", "-encoding", "UTF-8", "{class}.java"]
 compile_processes = 128
+# The JVM sizes its initial heap, and so its young generation and GC count, from the host's RAM (isolate mounts no
+# /sys, so not from the box's cgroup). -XX:MaxRAM fixes that input on every host to the RAM of the production host
+# that judged since 2026-10-10 (14311944 kB): its heap flags stay as they were, and reported memory and time stop
+# depending on the host. javac gets the same pin.
 # isolate's `time` sums every thread of the box, the JIT's too; each box runs under `taskset -c <core>`, so the JVM
 # sizes them from 1 CPU on any host (2 compilers; 12 on 16 unpinned cores): no -XX:ActiveProcessorCount needed.
-run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
+run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-XX:MaxRAM=14311944k", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
@@ -184,9 +192,13 @@ source = "main.kt"
 compile = ["/usr/bin/env", "JAVA_HOME=/usr/lib/jvm/default-java", "/usr/local/lib/kotlinc/bin/kotlinc", "main.kt", "-include-runtime", "-d", "main.jar"]
 compile_limits = { time_s = 30.0, wall_s = 60.0, memory_kib = 2097152 }
 compile_processes = 128
+# The JVM sizes its initial heap, and so its young generation and GC count, from the host's RAM (isolate mounts no
+# /sys, so not from the box's cgroup). -XX:MaxRAM fixes that input on every host to the RAM of the production host
+# that judged since 2026-10-10 (14311944 kB): its heap flags stay as they were, and reported memory and time stop
+# depending on the host. kotlinc's launcher pins its own heap (-Xmx512M -Xms128M).
 # isolate's `time` sums every thread of the box, the JIT's too; each box runs under `taskset -c <core>`, so the JVM
 # sizes them from 1 CPU on any host (2 compilers; 12 on 16 unpinned cores): no -XX:ActiveProcessorCount needed.
-run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-Xss64m", "-XX:+UseSerialGC", "-jar", "main.jar"]
+run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-XX:MaxRAM=14311944k", "-Xss64m", "-XX:+UseSerialGC", "-jar", "main.jar"]
 processes = 64
 jvm = true
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
