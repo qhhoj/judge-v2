@@ -1,5 +1,5 @@
 name: 27-retry-cap
-summary: A Final RETRY with no transient reason (UNSPECIFIED, a failure) requeues without spending the requeue; the third ends the row as IE. Transient reasons are 27b.
+summary: A Final RETRY with no transient reason (UNSPECIFIED, a failure) requeues without spending the requeue; the third ends the row as IE. Transient reasons are 27b and 27c, a mix of both 27d.
 applies_to: [bridge]
 timings: {resyncMs: 300}
 setup:

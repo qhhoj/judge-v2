@@ -1,7 +1,7 @@
 name: 27b-transient-retry
-summary: A Final RETRY with a transient reason (DATA_UNAVAILABLE, SANDBOX_FAILURE, RUNTIME_MISSING) requeues without spending a RETRY, past the cap of 27; the row ends as IE only once it has waited the bridge's whole deferral window.
+summary: A Final RETRY with a transient reason (DATA_UNAVAILABLE, SANDBOX_FAILURE, RUNTIME_MISSING) requeues without spending a RETRY; three of them, past the cap of 27, still get a fourth Assign, which grades. The window bound is 27c.
 applies_to: [bridge]
-timings: {resyncMs: 300, deferralBackoffMs: 0, deferralMaxBackoffMs: 0, deferralWindowMs: 3000}
+timings: {resyncMs: 300, deferralBackoffMs: 0, deferralMaxBackoffMs: 0, deferralWindowMs: 600000}
 setup:
   judges: [{name: j1}]
   problems: [{code: p1}]
@@ -30,11 +30,13 @@ steps:
   - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 4}}}}
   - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 1}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 1}}}
-  - wait: {ms: 3100}
-  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_DATA_UNAVAILABLE}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 2, caseCount: 1}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 2}}}
-  - quiet: {to: j1, ms: 700}
+  - judge: {from: j1, message: {cases: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 3, cases: [{position: 1, status: STATUS_AC, timeS: 0.01, memoryKib: "1024", points: 1, total: 1}]}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 3}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 4, outcome: OUTCOME_GRADED}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 4}}}
 end_state:
   submissions:
-    s1: {status: IE, result: IE, requeueCount: 0, retryCount: 0, judgeGeneration: 4}
+    s1: {status: D, result: AC, requeueCount: 0, retryCount: 0, judgeGeneration: 4}
   gradedJobs: 1
