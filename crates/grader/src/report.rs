@@ -1,4 +1,4 @@
-//! What one graded case reports, and where grading events go (spec §3.2 `CaseResults`).
+//! What one graded case reports, and where grading events go (the proto's `CaseResults`).
 
 use judge_problem::verdict::Status;
 
@@ -20,7 +20,7 @@ pub struct CaseReport {
     pub output_prefix: String,
 }
 
-/// Where grading events go. The daemon's implementation feeds the outbox (Task 27).
+/// Where grading events go. The daemon's implementation feeds the outbox.
 pub trait Reporter {
     fn compiled(&mut self, log: &str);
     fn started(&mut self, pretested: bool, case_count: u32);

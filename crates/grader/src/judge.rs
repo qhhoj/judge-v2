@@ -1,4 +1,4 @@
-//! One submission: plan, build, choose the checker, grade (spec §2 "assignment lifetime").
+//! One submission: plan, build, choose the checker, grade (docs/grading.md#assignment-lifetime).
 //!
 //! Refusals come first and never touch a box: an init.yml feature this judge does not grade is
 //! `RETRY UNSUPPORTED`; a language key with no runtime here (SCRATCH, or a key the daemon removed at
@@ -318,7 +318,7 @@ fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {
 }
 
 /// An interactive problem compiles only the checker its `interactive.checker` names: the top-level and
-/// per-case checkers of a legacy interactive problem are never compiled or run (preflight M13).
+/// per-case checkers of a legacy interactive problem are never compiled or run.
 fn grade_program(
     env: &mut JudgeEnv,
     problem: &ResolvedProblem,
@@ -368,7 +368,7 @@ fn grade_interactive(
 
 /// TEXT answers every case with the source. An OUTPUT zip that cannot be opened is graded as
 /// `UnreadableOutputs` (every case WA, the contestant's mistake); one over `MAX_OUTPUT_ENTRIES` stays IE
-/// (preflight M10).
+/// (a zip of that many entries is judge-side abuse, not a contestant mistake).
 fn grade_outputs(
     env: &mut JudgeEnv,
     problem: &ResolvedProblem,

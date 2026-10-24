@@ -217,7 +217,7 @@ impl CaseJudge for OutputCases<'_> {
     }
 }
 
-/// WA with `UNREADABLE_ZIP`: the contestant's mistake, so not IE (spec §2 keeps IE for judge faults).
+/// WA with `UNREADABLE_ZIP`: the contestant's mistake, so not IE (IE is kept for judge faults, docs/grading.md#verdict-rules).
 fn unreadable_output() -> CaseVerdict {
     CaseVerdict::failed(Status::Wa, 0.0, 0, UNREADABLE_ZIP.into())
 }

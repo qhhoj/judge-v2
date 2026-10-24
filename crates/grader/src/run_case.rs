@@ -1,4 +1,4 @@
-//! One case of the solution in a fresh box (Review Focus 1).
+//! One case of the solution in a fresh box (every run starts from a fresh `--init`, docs/grading.md#box-lifecycle).
 
 use crate::error::GradeError;
 use crate::file_io::SolutionFileIo;
@@ -227,7 +227,7 @@ fn stderr_tail(sandbox: &IsolateBox) -> String {
 }
 
 /// JVM OutOfMemoryError → MLE; an uncaught exception (the language's marker on stderr) → RTE named by
-/// the exception (DMOJ reports these as RTE, not IR; spec §11).
+/// the exception (DMOJ reports these as RTE, not IR; docs/grading.md#uncaught-exceptions).
 pub(crate) fn refine(verdict: RunVerdict, program: &Program, sandbox: &IsolateBox) -> RunVerdict {
     if !matches!(verdict, RunVerdict::Rte { .. } | RunVerdict::Ir { .. }) || !keeps_stderr(program) {
         return verdict;

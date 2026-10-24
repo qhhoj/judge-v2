@@ -1,4 +1,4 @@
-//! isolate meta → run verdict (spec §2 "Verdict from isolate meta", Review Focus 2).
+//! isolate meta → run verdict (docs/grading.md#verdict-rules).
 
 use crate::meta::Meta;
 use crate::spec::Limits;

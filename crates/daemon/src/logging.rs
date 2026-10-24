@@ -1,4 +1,4 @@
-//! JSON lines to stdout; journald stores them (spec §7 "Logs").
+//! JSON lines to stdout; journald stores them (docs/operations.md#logs).
 
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;

@@ -1,4 +1,4 @@
-//! Per-assignment numbered messages kept until the bridge acks them (spec §3.6, §3.7).
+//! Per-assignment numbered messages kept until the bridge acks them (docs/protocol.md#reconnect-and-resume, #delivery).
 
 use crate::batcher::MAX_BATCH_CASES;
 use judge_grader::judge::Outcome;
@@ -12,7 +12,7 @@ pub const OUTBOX_WATERMARK: usize = 8 << 20;
 const MAX_CASES_PER_MESSAGE: usize = 256;
 const MAX_LOG_BYTES: usize = 64 << 10;
 
-/// The bridge's `Welcome.limits` the judge stays inside (preflight M1); they can only lower the spec defaults.
+/// The bridge's `Welcome.limits` the judge stays inside; they can only lower these defaults (docs/protocol.md#limits).
 #[derive(Debug)]
 pub struct WireLimits {
     max_cases: AtomicUsize,
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(
             boxes.limits().clip_log(&"x".repeat(70_000)).len(),
             64 << 10,
-            "never above the spec's 64 KiB"
+            "never above the 64 KiB default"
         );
         boxes.limits().update(256, 3);
         boxes.open(&r());

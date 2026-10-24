@@ -18,7 +18,7 @@ pub struct Program {
     pub jvm: bool,
     pub dirs: Vec<String>,
     pub env: Vec<(String, String)>,
-    /// From the language: stderr text of an uncaught exception (Task 14).
+    /// From the language: stderr text of an uncaught exception.
     pub exception_marker: Option<String>,
     pub exception_style: ExceptionStyle,
     /// Holds a cached artefact (checker, interactor) alive while in use.

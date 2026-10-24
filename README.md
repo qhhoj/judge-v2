@@ -3,23 +3,65 @@
 ## Judge daemon
 
 `qhhoj-judge` grades submissions in ioi/isolate (cgroups v2) and talks to the bridge over gRPC (`proto/qhhoj/judge/v1/judge.proto`).
-Crates: `problem` (init.yml, case plan, data version, caches) → `sandbox` (isolate) → `grader` (languages, compile, run, checkers) → `daemon` (link, workers, metrics) → `cli` (the binary).
+Docs: [architecture](docs/architecture.md) (start here), [protocol](docs/protocol.md), [grading](docs/grading.md),
+[operations](docs/operations.md), [decisions](docs/decisions.md), [DEPLOY.md](DEPLOY.md) for a new host,
+[proto/README.md](proto/README.md) for the message lifecycle.
+
+Crates (all 8; naming rule in the architecture page):
+- `problem`: init.yml, case plan, verdict codes, data version, problem resolve.
+- `sandbox`: the isolate wrapper and run classification.
+- `grader`: languages, compile, run, checkers, interactors, test generation.
+- `daemon`: link to the bridge, worker pool, outbox, metrics.
+- `cli`: the `qhhoj-judge` binary.
+- `judge-proto`: generated protocol types.
+- `conformance`: the scenario player and fake bridge that pin the protocol.
+- `interface`: split-signature header parser; not used by grading yet.
+
 Tests: `cargo test --workspace`; the isolate suite: `cargo test -p judge-grader --features isolate -- --test-threads=1` (needs isolate 2.x with `isolate.service`; serialise runs with `flock -o`, never plain `flock`, see CONTRIBUTING.md).
+
+## Run one grade locally
+
+On a host with isolate set up (DEPLOY.md steps 1-3), with the repository's `languages.toml` and `assets/testlib`:
+
+```sh
+qhhoj-judge run --problem path/to/problem-dir --lang CPP17 \
+  --languages languages.toml --testlib assets/testlib sol.cpp
+```
+
+`--problem` is a directory holding `init.yml` and its case files. It prints the compiler log and one line per case
+(status, time, memory, points). Add `--time` (seconds) and `--memory` (KiB) to change the limits, and `--box-base` if
+boxes 900 and 901 are in use. `qhhoj-judge selftest` judges every row of `tests/programs/manifest.toml` on the host.
+
+## Add a language
+
+1. `languages.toml`: a `[[language]]` entry (the header explains each field and the placeholders).
+2. `tests/programs/<KEY>/`: an accepted a+b program and, as for the other languages, a wrong, slow, memory, crash and
+   compile-error program.
+3. `tests/programs/manifest.toml`: one row per program with its expected status (`same_as` reuses another key's rows).
+4. `packaging/Containerfile`: install the compiler or runtime.
+5. `DEPLOY.md`: the apt line in step 3 and the "Day-one languages" row of "Fixed values" (the one place that list is
+   written); also `JUDGE_SUITE_REQUIRE` in `.github/workflows/ci.yml`.
+
+The backend keeps its own language list: add the key there too, or no problem will allow it.
 
 ## Problem-author code (custom checkers, interactors, signature graders)
 
-All of it is compiled and run inside isolate, never on the host, with its own limits: a checker or interactor gets
-max(10 s, 2 x TL) CPU and 1 GiB with one process; the interactor's wall is the solution's wall + 2 s. Helpers are
-compiled once per content hash (`artefacts`) with `/testlib` mounted read-only. The interactor and the solution are
-joined by two pipes whose ends belong to the two isolate children only. A signature problem compiles the
-contestant's file with the header, links it with the entry under an unguessable name, and keeps only the binary.
-An interactive problem is judged by its interactor alone unless `interactive.checker` names a checker (feature
-`interactive.checker`): then, once the interactor accepts a case, that checker reads the interactor's `tout` as
-the output and decides the case. The top-level and per-case checkers of an interactive problem are never run. A
-bridged checker's `files` may be a list: the source first, then headers compiled beside it (a package's own
-`testlib.h` among them, found before the vendored one). A checker's or interactor's testlib `points N` is N points
-of the case, or N percent of it with `treat_checker_points_as_percentage: true` (a bridged checker's arg, or a key of
-`interactive`, feature `interactive.percentage`); N of 0 or less is a wrong answer.
+All of it is compiled and run inside isolate, never on the host.
+
+- **Limits:** a checker or interactor gets max(10 s, 2 x TL) CPU and 1 GiB with one process; the interactor's wall is
+  the solution's wall + 2 s.
+- **Compile:** helpers are compiled once per content hash (`artefacts`) with `/testlib` mounted read-only. A bridged
+  checker's `files` may be a list: the source first, then headers compiled beside it (a package's own `testlib.h`
+  among them, found before the vendored one).
+- **Interactive:** the interactor and the solution are joined by two pipes whose ends belong to the two isolate
+  children only. The interactor alone judges the problem unless `interactive.checker` names a checker (feature
+  `interactive.checker`): then, once the interactor accepts a case, that checker reads the interactor's `tout` as the
+  output and decides the case. The top-level and per-case checkers of an interactive problem are never run.
+- **Signature:** the contestant's file is compiled with the header and linked with the entry under an unguessable
+  name; only the binary is kept.
+- **Testlib points:** `points N` is N points of the case, or N percent of it with `treat_checker_points_as_percentage:
+  true` (a bridged checker's arg, or a key of `interactive`, feature `interactive.percentage`); N of 0 or less is a
+  wrong answer.
 
 `assets/testlib/testlib.h` is vendored unmodified from MikeMirzayanov/testlib tag 0.9.41 (MIT, see
 `assets/testlib/LICENSE`, `VERSION`, `SHA256SUMS`). `assets/testlib/testlib_themis_cms.h`, the testlib 0.9.37

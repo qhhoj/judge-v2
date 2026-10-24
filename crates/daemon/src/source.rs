@@ -1,4 +1,4 @@
-//! File-only submissions (OUTPUT zips) come over FetchSource, naming the live session (spec §3.9 row 90).
+//! File-only submissions (OUTPUT zips) come over FetchSource, naming the live session (docs/protocol.md#source-and-generation-transfer).
 
 use crate::config::Config;
 use crate::link::{Connection, MAX_MESSAGE, authed};

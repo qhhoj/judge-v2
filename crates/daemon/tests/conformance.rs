@@ -1,6 +1,6 @@
-//! Plan A's judge-role scenarios, played by the real daemon (link, outbox, acks, resume, pool, worker)
-//! against plan A's fake bridge. Only grading is replaced: `Replay` reports what the transcript's judge
-//! steps say the grading produced (spec §8: a stub sandbox and a scripted fake bridge).
+//! The judge-role scenarios of `proto/conformance`, played by the real daemon (link, outbox, acks, resume, pool, worker)
+//! against the scripted fake bridge of the `conformance` crate. Only grading is replaced: `Replay` reports what the transcript's judge
+//! steps say the grading produced (a stub sandbox and a scripted fake bridge).
 //!
 //! Harness adaptations (the scenarios are authoritative and are never edited):
 //! - `Hello.protocol_minor`, build, slots and runtimes come from the scenario's first `hello`.
@@ -474,7 +474,7 @@ fn start_judge(scenario: &Scenario, url: &str) -> Result<Judge, String> {
     Ok(Judge { link, stop, probe_errors, replay_failures, _dirs: dirs })
 }
 
-/// Plan A's fake bridge on a loopback port: its URL, what it hears, and the server task.
+/// The scripted fake bridge on a loopback port: its URL, what it hears, and the server task.
 async fn start_bridge(
     scenario: &Scenario,
 ) -> Result<(String, mpsc::UnboundedReceiver<Incoming>, tokio::task::JoinHandle<()>), String> {
@@ -512,7 +512,7 @@ async fn every_judge_scenario_passes_against_the_daemon() {
     let judge_side: Vec<&Scenario> =
         scenarios.iter().filter(|s| s.applies_to.contains(&Role::Judge)).collect();
     let names: Vec<&str> = judge_side.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(names, JUDGE_SCENARIOS, "plan A's judge-role set changed");
+    assert_eq!(names, JUDGE_SCENARIOS, "the judge-role scenario set changed");
     let mut failures = Vec::new();
     for scenario in judge_side {
         if let Err(error) = play(scenario).await {

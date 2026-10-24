@@ -1,4 +1,5 @@
-//! The bridge role of a transcript: a tonic `JudgeLink` server that sends the
+//! The scenario-player fake bridge (the daemon's own scripted one is `crates/daemon/tests/support/fake_bridge.rs`,
+//! for tests that need to drive the daemon step by step). The bridge role of a transcript: a tonic `JudgeLink` server that sends the
 //! scenario's `bridge` steps and checks its `judge` steps. judge-v2 points its
 //! daemon at it; self-play points the transcript judge at it. It also checks what the
 //! scenario cannot say as a message: the judge's key on every call, that a `fetch` step

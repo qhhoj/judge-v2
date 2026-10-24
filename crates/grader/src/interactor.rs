@@ -1,4 +1,4 @@
-//! Interactive problems: two isolate runs joined by two pipes (spec §2 "Interactor").
+//! Interactive problems: two isolate runs joined by two pipes (docs/grading.md#checkers).
 //!
 //! The solution runs in its box and the interactor, which is problem-author code, in the helper box.
 //! The daemon only creates the pipes and hands one end of each to a child as its stdio; it never reads or

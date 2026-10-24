@@ -1,4 +1,4 @@
-//! Prometheus text on loopback (spec §7 "Metrics").
+//! Prometheus text on loopback (docs/operations.md#metrics).
 
 use judge_grader::judge::{Outcome, RetryReason};
 use prometheus::{

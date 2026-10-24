@@ -1,4 +1,4 @@
-//! Checkers: built-in ones run here over capped files; custom ones run in isolate (Task 19).
+//! Checkers: built-in ones run here over capped files; custom ones run in isolate.
 
 pub mod custom;
 pub mod easy;

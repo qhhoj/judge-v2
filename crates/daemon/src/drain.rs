@@ -1,4 +1,4 @@
-//! SIGTERM drain: finish what the judge holds, up to a deadline (spec §7 "Drain").
+//! SIGTERM drain: finish what the judge holds, up to a deadline (docs/operations.md#drain).
 
 use std::time::{Duration, Instant};
 

@@ -1,4 +1,4 @@
-//! Wires the daemon together (spec §2, §7): config → logs → languages this host can run → fresh cache
+//! Wires the daemon together (docs/architecture.md): config → logs → languages this host can run → fresh cache
 //! dirs → owned boxes cleaned → workers → metrics → link; on SIGTERM or SIGINT it drains and stops.
 
 use crate::config::{Config, load};

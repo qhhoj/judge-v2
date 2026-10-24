@@ -1,4 +1,4 @@
-//! `/etc/qhhoj-judge/config.toml` (spec §7 "Config").
+//! `/etc/qhhoj-judge/config.toml` (docs/operations.md#config).
 
 use judge_problem::plan::MAX_OUTPUT_LIMIT;
 use serde::Deserialize;
@@ -133,7 +133,7 @@ pub struct Config {
     pub drain_timeout_s: u64,
     #[serde(default = "default_data_wait")]
     pub data_wait_ms: u64,
-    /// Dev and e2e only: hold files `hold-ack`, `hold-begin`, `hold-end` (Review Focus 6).
+    /// Dev and e2e only: hold files `hold-ack`, `hold-begin`, `hold-end` (see `gates.rs`).
     #[serde(default)]
     pub control_dir: Option<PathBuf>,
     #[serde(default)]
@@ -144,7 +144,7 @@ pub struct Config {
     pub isolate: IsolatePaths,
 }
 
-/// Parsed with `http::Uri`; a URL with userinfo (`http://localhost:1@evil.com`) is never loopback (preflight M8).
+/// Parsed with `http::Uri`; a URL with userinfo (`http://localhost:1@evil.com`) is never loopback.
 pub fn is_loopback_url(url: &str) -> bool {
     let Ok(uri) = url.parse::<http::Uri>() else { return false };
     let Some(authority) = uri.authority() else { return false };

@@ -1,4 +1,4 @@
-//! Submissions that are outputs, not programs (spec §5 TEXT and OUTPUT).
+//! Submissions that are outputs, not programs (docs/grading.md#languages).
 
 use crate::error::GradeError;
 use std::collections::{HashMap, HashSet};
@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// An OUTPUT zip with more entries than this is refused (IE), preflight M10.
+/// An OUTPUT zip with more entries than this is refused (IE): the cap bounds the work one zip can cost.
 pub const MAX_OUTPUT_ENTRIES: usize = 10_000;
 
 /// The zip, opened once per submission, with its file entries indexed: by full path (`sub/1.out`) and by

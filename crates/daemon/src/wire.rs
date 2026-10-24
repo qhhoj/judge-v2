@@ -1,4 +1,4 @@
-//! The only place that knows proto types (plan A's `judge_proto::v1`).
+//! Converts bridge messages to and from grader types (`judge_proto::v1` on one side, `Assignment` and `Body` on the other).
 
 use crate::outbox::{AssignmentRef, Body, Envelope};
 use judge_grader::generate::{
@@ -71,7 +71,7 @@ pub enum BridgeEvent {
     Ack(AssignmentRef, u32),
     Disconnect,
     Error(String),
-    /// A oneof member this minor does not know (a newer bridge): ignored (spec §3.3).
+    /// A oneof member this minor does not know (a newer bridge): ignored (docs/protocol.md#versioning).
     Unknown,
 }
 

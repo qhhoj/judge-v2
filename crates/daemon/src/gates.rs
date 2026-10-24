@@ -1,4 +1,6 @@
-//! Dev-only hold points for the real-backend J7 journey (Review Focus 6). Config refuses them off loopback.
+//! Dev-only gates: while a hold file (`hold-ack`, `hold-begin` or `hold-end`) exists in `control_dir`, a Judging pauses
+//! before `Accepted`, `GradingStarted` or `Final`, so the real-backend end-to-end journey can abort or rejudge it
+//! mid-run. Config refuses them off loopback.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

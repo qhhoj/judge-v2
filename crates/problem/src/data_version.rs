@@ -1,4 +1,4 @@
-//! `<code>/.data-version`: written last by the backend (temp + rename), read here (spec §2).
+//! `<code>/.data-version`: written last by the backend (temp + rename), read here (docs/grading.md#caching-and-data-version).
 
 use crate::init::InitError;
 use std::io::Read;
@@ -44,7 +44,7 @@ pub struct WaitPolicy {
     pub poll: Duration,
 }
 
-/// Opens a problem file once, never through a symlink (preflight I11), and judges the opened handle:
+/// Opens a problem file once, never through a symlink, and judges the opened handle:
 /// a symlink planted on the data root must not copy the judge key or another box's files into a box.
 /// `O_NONBLOCK` keeps a planted FIFO from hanging the open; the `fstat` of the handle then refuses it.
 pub fn regular_file(path: &Path) -> Result<std::fs::File, DataError> {
