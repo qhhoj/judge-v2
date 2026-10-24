@@ -17,8 +17,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Reports `cases` AC cases, waiting `pause` before each (source "together": all in one `cases` call); records
-/// what it was given.
+/// Reports `cases` AC cases, waiting `pause` before each; records what it was given.
 struct Scripted {
     cases: u32,
     pause: Duration,
@@ -43,34 +42,26 @@ impl Runner for Scripted {
             .push(format!("{} v{} {source}", submission.language_key, problem.data_version_used));
         reporter.compiled("");
         reporter.started(false, self.cases);
-        if source == "together" {
-            reporter.cases((1..=self.cases).map(ac_case).collect());
-            return Outcome::Graded;
-        }
         for position in 1..=self.cases {
             std::thread::sleep(self.pause);
             if !reporter.before_case() && source != "stubborn" {
                 return Outcome::Aborted;
             }
-            reporter.case(ac_case(position));
+            reporter.case(CaseReport {
+                position,
+                status: Status::Ac,
+                time_s: 0.0,
+                jury_time_s: 0.0,
+                memory_kib: 0,
+                points: 1.0,
+                total: 1.0,
+                batch: None,
+                feedback: String::new(),
+                extended_feedback: String::new(),
+                output_prefix: String::new(),
+            });
         }
         Outcome::Graded
-    }
-}
-
-fn ac_case(position: u32) -> CaseReport {
-    CaseReport {
-        position,
-        status: Status::Ac,
-        time_s: 0.0,
-        jury_time_s: 0.0,
-        memory_kib: 0,
-        points: 1.0,
-        total: 1.0,
-        batch: None,
-        feedback: String::new(),
-        extended_feedback: String::new(),
-        output_prefix: String::new(),
     }
 }
 
@@ -422,18 +413,4 @@ async fn the_slot_is_released_before_the_final_is_pushed() {
     process(&w.deps, Box::new(Scripted { cases: 1, pause: Duration::ZERO, seen }), job).await;
     assert_eq!(*at_release.lock().unwrap(), Some(false), "released while no Final was visible");
     assert!(matches!(final_of(&w, "order").await, Body::Final { outcome: Outcome::Graded, .. }));
-}
-
-#[tokio::test]
-async fn cases_reported_together_go_out_in_one_message() {
-    let w = world(1, 3, Duration::ZERO);
-    let mut a = assignment("together", "p", 5);
-    a.source = b"together".to_vec();
-    w.pool.assign(a).unwrap();
-    final_of(&w, "together").await;
-    let cases: Vec<usize> = bodies(&w, "together")
-        .into_iter()
-        .filter_map(|b| if let Body::Cases(c) = b { Some(c.len()) } else { None })
-        .collect();
-    assert_eq!(cases, [3], "one Cases message with all three");
 }

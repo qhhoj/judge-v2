@@ -371,3 +371,45 @@ fn final_log(outcome: &Outcome) -> String {
         Outcome::Graded | Outcome::Aborted => String::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::outbox::OUTBOX_WATERMARK;
+    use judge_problem::verdict::Status;
+
+    fn ac(position: u32) -> CaseReport {
+        CaseReport {
+            position,
+            status: Status::Ac,
+            time_s: 0.0,
+            jury_time_s: 0.0,
+            memory_kib: 0,
+            points: 1.0,
+            total: 1.0,
+            batch: None,
+            feedback: String::new(),
+            extended_feedback: String::new(),
+            output_prefix: String::new(),
+        }
+    }
+
+    /// The sizes of the `Cases` events on the channel, in order.
+    fn case_events(rx: &mut mpsc::UnboundedReceiver<Event>) -> Vec<usize> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|event| if let Event::Cases(c) = event { Some(c.len()) } else { None })
+            .collect()
+    }
+
+    #[test]
+    fn cases_is_one_event_and_case_stays_one_event_per_report() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let outboxes = Arc::new(Outboxes::new(OUTBOX_WATERMARK));
+        let abort = Arc::new(AtomicBool::new(false));
+        let mut reporter = ChannelReporter { tx, abort, outboxes, gates: Gates::default() };
+        reporter.cases(vec![ac(1), ac(2), ac(3)]);
+        reporter.case(ac(4));
+        reporter.case(ac(5));
+        assert_eq!(case_events(&mut rx), [3, 1, 1]);
+    }
+}
