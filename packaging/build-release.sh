@@ -7,6 +7,8 @@ cd "$root"
 workspace_version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
 version="${1:-$workspace_version}${RELEASE_SUFFIX:-}"
 rustup target add x86_64-unknown-linux-musl >/dev/null
+# the commit goes into Hello.build, so two builds of one version differ
+export QHHOJ_JUDGE_REVISION="${QHHOJ_JUDGE_REVISION:-$(git rev-parse HEAD 2>/dev/null || true)}"
 cargo build -j2 --release --locked --target x86_64-unknown-linux-musl -p judge-cli
 stage="target/release-pkg/qhhoj-judge-$version"
 rm -rf "$stage" && mkdir -p "$stage/packaging" "$stage/assets" "$stage/tests"
