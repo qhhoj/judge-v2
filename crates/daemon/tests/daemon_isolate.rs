@@ -33,7 +33,7 @@ fn config_text(url: &str, dirs: &[tempfile::TempDir]) -> String {
     format!(
         "name = 'j1'\nbridge_url = '{url}'\nkey_file = '{}'\nproblem_data_root = '{}'\ncache_dir = '{}'\n\
          languages_file = '{}'\ntestlib_dir = '{}'\nslots = 1\ncores = [0]\nbox_base = {}\n\
-         metrics_listen = '127.0.0.1:0'\ndrain_timeout_s = 5\n",
+         metrics_listen = '127.0.0.1:0'\ndrain_timeout_s = 5\n[isolate]\nallow_unbounded_disk = true\n",
         dirs[0].path().join("key").display(),
         dirs[1].path().display(),
         dirs[2].path().display(),

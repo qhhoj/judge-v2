@@ -4,6 +4,7 @@
 use crate::config::{Config, load};
 use crate::cores::{SYSFS_CPU, worker_cores};
 use crate::cpuset::{Pinning, host_pinning};
+use crate::disk_bound::{self, DiskBound};
 use crate::drain::wait_until;
 use crate::gates::Gates;
 use crate::generation::GrpcGeneration;
@@ -74,13 +75,15 @@ fn sandbox_config(config: &Config) -> SandboxConfig {
     }
 }
 
-/// The sandbox config, without its disk quota (warned once) when isolate's box root cannot take one.
+/// The sandbox config; refuses to start when nothing bounds what the runs write to isolate's box root.
 fn checked_sandbox(config: &Config) -> anyhow::Result<SandboxConfig> {
-    let mut sandbox = sandbox_config(config);
-    if sandbox.disk_quota.is_some() && !disk_quota_works(&sandbox, config.box_base)? {
-        tracing::warn!("isolate's box root has no user quotas: runs get no disk quota (DEPLOY.md)");
-        sandbox.disk_quota = None;
-    }
+    let sandbox = sandbox_config(config);
+    let bound = match sandbox.disk_quota {
+        Some(_) if disk_quota_works(&sandbox, config.box_base)? => DiskBound::Quota,
+        Some(_) => anyhow::bail!("isolate.disk_quota is set but the box root has no user quotas (DEPLOY.md)"),
+        None => disk_bound::without_quota(config)?,
+    };
+    bound.log();
     Ok(sandbox)
 }
 
@@ -280,5 +283,27 @@ mod tests {
             assert_eq!(std::fs::read_dir(dir.path().join(name)).unwrap().count(), 0, "{name} is empty");
         }
         assert!(dir.path().join("keep.txt").exists(), "only the daemon's own dirs are reset");
+    }
+
+    #[test]
+    fn a_start_without_a_size_bound_on_the_box_root_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let box_root = dir.path().join("boxes");
+        std::fs::create_dir(&box_root).unwrap();
+        std::fs::write(dir.path().join("isolate"), format!("box_root = {}\n", box_root.display())).unwrap();
+        let mut config = crate::config::parse(crate::config::tests_support::MIN).unwrap();
+        (config.cache_dir, config.isolate.config) = (dir.path().into(), dir.path().join("isolate"));
+        assert!(
+            checked_sandbox(&config).is_err(),
+            "no disk quota and the box root on the cache's filesystem"
+        );
+        config.isolate.allow_unbounded_disk = true;
+        assert!(checked_sandbox(&config).is_ok(), "the dev escape hatch");
+        config.isolate.allow_unbounded_disk = false;
+        let Ok(own) = tempfile::tempdir_in("/dev/shm") else {
+            return eprintln!("skip: no /dev/shm on this host");
+        };
+        std::fs::write(dir.path().join("isolate"), format!("box_root = {}\n", own.path().display())).unwrap();
+        assert!(checked_sandbox(&config).is_ok(), "a box root on a filesystem of its own (tmpfs)");
     }
 }

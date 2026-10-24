@@ -5,6 +5,7 @@ pub mod batcher;
 pub mod config;
 pub mod cores;
 pub mod cpuset;
+pub mod disk_bound;
 pub mod drain;
 pub mod gates;
 pub mod generation;
