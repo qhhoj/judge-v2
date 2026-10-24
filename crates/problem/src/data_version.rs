@@ -134,6 +134,7 @@ pub fn wait_for_stamp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
     use std::time::{Duration, Instant};
 
     fn quick() -> WaitPolicy {
@@ -186,19 +187,50 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(300));
     }
 
+    /// Real stamps, plus a hook that runs before the n-th `read` and the n-th marker check (each counted
+    /// from 1), so an uploader's step lands between two polls of the wait without a racing thread.
+    #[derive(Default)]
+    struct ScriptedStamps {
+        reads: AtomicUsize,
+        marker_checks: AtomicUsize,
+        before_read: Option<Box<dyn Fn(usize) + Send + Sync>>,
+        before_marker_check: Option<Box<dyn Fn(usize) + Send + Sync>>,
+    }
+
+    impl StampSource for ScriptedStamps {
+        fn read(&self, dir: &Path) -> Result<Option<u64>, DataError> {
+            let n = self.reads.fetch_add(1, SeqCst) + 1;
+            self.before_read.as_ref().inspect(|hook| hook(n));
+            FsStamps.read(dir)
+        }
+
+        fn upload_in_progress(&self, dir: &Path) -> bool {
+            let n = self.marker_checks.fetch_add(1, SeqCst) + 1;
+            self.before_marker_check.as_ref().inspect(|hook| hook(n));
+            FsStamps.upload_in_progress(dir)
+        }
+    }
+
+    /// The scripted sources decide when the stamp moves, so the deadline is only a backstop here.
+    fn backstop() -> WaitPolicy {
+        WaitPolicy { timeout: Duration::from_secs(60), poll: Duration::from_millis(1) }
+    }
+
     #[test]
     fn a_stamp_that_catches_up_is_used() {
         let dir = tempfile::tempdir().unwrap();
         let stamp = dir.path().join(".data-version");
         std::fs::write(&stamp, "1").unwrap();
-        let writer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(60));
-            let temp = stamp.with_extension("tmp");
-            std::fs::write(&temp, "2\n").unwrap();
-            std::fs::rename(temp, stamp).unwrap();
-        });
-        assert_eq!(wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap(), 2);
-        writer.join().unwrap();
+        let before_read = move |n: usize| {
+            if n == 2 {
+                let temp = stamp.with_extension("tmp");
+                std::fs::write(&temp, "2\n").unwrap();
+                std::fs::rename(&temp, &stamp).unwrap();
+            }
+        };
+        let stamps = ScriptedStamps { before_read: Some(Box::new(before_read)), ..Default::default() };
+        assert_eq!(wait_for_stamp(dir.path(), 2, &backstop(), &stamps).unwrap(), 2);
+        assert_eq!(stamps.reads.load(SeqCst), 2, "waited on stamp 1, used stamp 2 on the next poll");
     }
 
     #[test]
@@ -209,12 +241,15 @@ mod tests {
         std::fs::write(&marker, "").unwrap();
         let error = wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap_err();
         assert_eq!(error, DataError::Unavailable { assigned: 2, found: Some(2) });
-        let remover = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(60));
-            std::fs::remove_file(marker).unwrap();
-        });
-        assert_eq!(wait_for_stamp(dir.path(), 2, &quick(), &FsStamps).unwrap(), 2);
-        remover.join().unwrap();
+        let before_marker_check = move |n: usize| {
+            if n == 2 {
+                std::fs::remove_file(&marker).unwrap();
+            }
+        };
+        let stamps =
+            ScriptedStamps { before_marker_check: Some(Box::new(before_marker_check)), ..Default::default() };
+        assert_eq!(wait_for_stamp(dir.path(), 2, &backstop(), &stamps).unwrap(), 2);
+        assert_eq!(stamps.marker_checks.load(SeqCst), 2, "held while the marker was there");
     }
 
     #[test]
