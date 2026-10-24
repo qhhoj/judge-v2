@@ -18,8 +18,13 @@ pub fn box_id(offset: u32) -> u32 {
 }
 
 pub fn sandbox(offset: u32, meta: &Path) -> IsolateBox {
+    sandbox_on(offset, meta, None)
+}
+
+/// A box whose runs are pinned to `core`, as the daemon pins every box to its worker's core.
+pub fn sandbox_on(offset: u32, meta: &Path, core: Option<u32>) -> IsolateBox {
     let config = SandboxConfig { meta_dir: meta.into(), ..SandboxConfig::default() };
-    IsolateBox::open(&config, box_id(offset), None).unwrap()
+    IsolateBox::open(&config, box_id(offset), core).unwrap()
 }
 
 /// True when every absolute program the language compiles or runs exists on this host.
