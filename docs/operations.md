@@ -63,7 +63,8 @@ JSON lines to stdout, which journald stores, with fields such as `judge`, `submi
 ## Update and rollback
 
 1. Unpack the release tarball (or pull the image) next to the running one.
-2. Run `qhhoj-judge selftest --config ... --require <the day-one languages>` and confirm every line is `ok`
+2. Run the new binary's `qhhoj-judge check-config --config ...` (the daemon's start checks; it must print `ok`),
+   then `qhhoj-judge selftest --config ... --require <the day-one languages>` and confirm every line is `ok`
    (the list is in DEPLOY.md).
 3. Point the `current` symlink at the new release and `systemctl restart qhhoj-judge`; the restart drains the old process.
 4. Roll hosts one at a time, waiting for each to show online.
