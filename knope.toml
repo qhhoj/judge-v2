@@ -18,6 +18,7 @@ type = "PrepareRelease"
 [[workflows.steps]]
 type = "Command"
 command = "cargo metadata --format-version 1 > /dev/null" # refreshes Cargo.lock
+shell = true # knope runs commands without a shell by default; `>` needs one
 
 [[workflows.steps]]
 type = "Command"
