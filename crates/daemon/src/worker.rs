@@ -1,4 +1,4 @@
-//! One assignment from Assign to Final (spec §2 "Daemon").
+//! One assignment from Assign to Final (docs/grading.md#assignment-lifetime).
 //!
 //! Lifecycle: gate `ack` → abort check → `Accepted` → source → resolve → grade (gate `begin` before
 //! `GradingStarted`) → flush cases → gate `end` → `Final`. The outcome is taken only once the runner has
@@ -83,7 +83,7 @@ pub struct WorkerDeps {
 }
 
 /// Frees the job's pool slot; called right before `Final` is pushed, so the slot is free by the time
-/// the bridge can see the Final and send the next Assign (preflight C2).
+/// the bridge can see the Final and send the next Assign (otherwise a fast bridge would meet SLOTS_FULL).
 pub type Release = Arc<dyn Fn() + Send + Sync>;
 
 /// What a slot's worker task takes from the pool.
@@ -141,11 +141,11 @@ impl Reporter for ChannelReporter {
     }
 }
 
-/// One job on this slot's runner. The outbox was opened by `Pool::assign` (preflight M2).
+/// One job on this slot's runner. The outbox was opened by `Pool::assign`, so acks that arrive before the worker starts find it.
 pub async fn process(deps: &WorkerDeps, runner: Box<dyn Runner>, job: Job) -> Box<dyn Runner> {
     deps.gates.wait(Stage::Ack, &job.abort).await;
     if job.aborted() {
-        // Aborted or dropped before Accepted: only Final{ABORTED}, at seq 1 (preflight C2/C3).
+        // Aborted or dropped before Accepted: only Final{ABORTED}, at seq 1 (docs/protocol.md#reconnect-and-resume: every killed run ends with a Final).
         finish(deps, &job, Outcome::Aborted, 0).await;
         return runner;
     }
@@ -267,7 +267,7 @@ async fn grade(
     (runner, outcome)
 }
 
-/// Turns grading events into outbox messages, coalescing cases (spec §3.5).
+/// Turns grading events into outbox messages, coalescing cases (docs/protocol.md#flow-control).
 struct Forwarder {
     outboxes: Arc<Outboxes>,
     metrics: Arc<Metrics>,
@@ -335,7 +335,7 @@ impl Forwarder {
 }
 
 /// A job whose abort flag is set ends with `Final{ABORTED}` whatever the runner returned:
-/// the bridge frees that slot only on this Final (preflight C2).
+/// the bridge frees that slot only on this Final (docs/protocol.md#reconnect-and-resume).
 async fn finish(deps: &WorkerDeps, job: &Job, outcome: Outcome, data_version_used: u64) {
     let r = &job.assignment.r;
     deps.gates.wait(Stage::End, &job.abort).await;

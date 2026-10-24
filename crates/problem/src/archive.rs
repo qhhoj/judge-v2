@@ -1,4 +1,4 @@
-//! Zip extraction under limits: no traversal, no symlinks, no lying sizes (spec §2).
+//! Zip extraction under limits: no traversal, no symlinks, no lying sizes (docs/grading.md#caching-and-data-version).
 
 use crate::data_version::DataError;
 use std::io::Read;
@@ -17,7 +17,7 @@ impl Default for ZipLimits {
 }
 
 impl ZipLimits {
-    /// One archive may fill at most half the cache (preflight M15).
+    /// One archive may fill at most half the cache, so one upload cannot evict everything else.
     pub fn for_cache(cache_max_bytes: u64) -> Self {
         let default = ZipLimits::default();
         ZipLimits { max_total_bytes: default.max_total_bytes.min(cache_max_bytes / 2), ..default }

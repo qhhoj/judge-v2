@@ -1,4 +1,4 @@
-//! The init.yml subset `compileInitYaml` emits (spec §1). Unknown keys are refused by name.
+//! The init.yml subset `compileInitYaml` emits (docs/grading.md; the backend's `compileInitYaml` writes it). Unknown keys are refused by name.
 
 use serde::Deserialize;
 use serde_norway::{Mapping, Value};
@@ -14,27 +14,37 @@ pub enum InitError {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InitYaml {
+    /// Name of the zip in the problem directory holding the case files. None: the case files lie loose beside init.yml.
     #[serde(default)]
     pub archive: Option<String>,
+    /// The cases (and batches of cases) of a full run, in order.
     #[serde(default)]
     pub test_cases: Vec<CaseEntry>,
+    /// The cases a pretest run grades instead of `test_cases`.
     #[serde(default)]
     pub pretest_test_cases: Vec<CaseEntry>,
+    /// Most bytes of output a run may write; a case may override it. Absent: the judge's `default_output_limit`.
     #[serde(default)]
     pub output_limit_length: Option<u64>,
+    /// Bytes of output sent back as the case's output prefix (at most 512); a case may override it.
     #[serde(default)]
     pub output_prefix_length: Option<u64>,
+    /// How output is compared with the answer: a built-in name or `{name, args}`. Absent: `standard`. Unknown `args` keys are ignored, not refused.
     #[serde(default)]
     pub checker: Option<CheckerSpec>,
+    /// The program reads and writes these files instead of stdin and stdout.
     #[serde(default)]
     pub file_io: Option<FileIo>,
+    /// The submission is a set of outputs, not a program (language kind `text` or `output_zip`).
     #[serde(default)]
     pub output_only: bool,
+    /// An interactive problem: an interactor program talks to the solution over pipes.
     #[serde(default)]
     pub interactive: Option<InteractiveSpec>,
+    /// Flags: `unicode` makes token comparison UTF-8 aware; `nobigmath` is refused (UNSUPPORTED).
     #[serde(default)]
     pub hints: Vec<String>,
-    /// Parsed only to answer `UNSUPPORTED`: no legacy problem uses a generator (legacy-judge-usage.md).
+    /// Parsed only to answer `UNSUPPORTED`: no legacy problem uses a generator (none of the old site's problems used one).
     #[serde(default)]
     pub generator: Option<Value>,
     #[serde(default)]
@@ -42,9 +52,8 @@ pub struct InitYaml {
 }
 
 /// `signature_grader {entry, header, allow_main, split, cores}`: the contestant writes functions, `entry` holds
-/// `main` (Task 34). `split` runs the contestant in its own box behind generated glue and `cores: 2` asks for a
-/// paired lane (docs/split-and-communication.md §4, §6). The backend writes both only when set, so a legacy
-/// init.yml is byte-identical.
+/// `main`. `split` runs the contestant in its own box behind generated glue and `cores: 2` asks for a
+/// second core for the contestant. The backend writes both only when set, so a legacy init.yml is byte-identical.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignatureSpec {
@@ -61,20 +70,29 @@ pub struct SignatureSpec {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseEntry {
+    /// Input file name (inside the archive, or loose beside init.yml).
     #[serde(rename = "in", default)]
     pub input: Option<String>,
+    /// Answer file name.
     #[serde(default)]
     pub out: Option<String>,
+    /// Points of this case, or of this batch (a batch is all-or-nothing by its weakest case).
     #[serde(default)]
     pub points: Option<f64>,
+    /// The cases of a batch. Present: this entry is a batch and has no `in`/`out` of its own.
     #[serde(default)]
     pub batched: Option<Vec<CaseEntry>>,
+    /// Overrides the problem-wide output limit for this case.
     #[serde(default)]
     pub output_limit_length: Option<u64>,
+    /// Overrides the problem-wide output prefix length for this case.
     #[serde(default)]
     pub output_prefix_length: Option<u64>,
+    /// Overrides the problem-wide checker for this case (a batch's checker is inherited by its cases). Every case must
+    /// resolve to the same checker, otherwise the problem is UNSUPPORTED (`checker.per_case`).
     #[serde(default)]
     pub checker: Option<CheckerSpec>,
+    /// Parsed only to answer UNSUPPORTED: arguments of a generator, which this judge does not run.
     #[serde(default)]
     pub generator_args: Option<Vec<String>>,
 }
@@ -100,9 +118,12 @@ pub struct FileIo {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InteractiveSpec {
+    /// The interactor source (the first file) and headers compiled beside it.
     pub files: FilesSpec,
+    /// Interactor flavour; only `testlib` is graded.
     #[serde(rename = "type")]
     pub kind: String,
+    /// Language key the interactor is compiled with.
     pub lang: String,
     /// Polygon's checker of an interactive problem: run on the interactor's `tout` once the interactor
     /// accepts, and its verdict decides the case. Absent, the interactor alone decides (every legacy
@@ -151,7 +172,7 @@ impl CheckerSpec {
 
 const GRADED_CUSTOM_CHECKERS: [&str; 3] = ["testlib", "default", "themis"];
 
-/// Hello features of split signature (docs/split-and-communication.md §3.3): one-core lane and paired lane.
+/// Hello features of split signature one-core and two-core (paired) variants.
 pub const SPLIT_FEATURE: &str = "signature.split";
 pub const SPLIT_PAIRED_FEATURE: &str = "signature.split.paired";
 
@@ -176,8 +197,8 @@ impl ModeKey {
         }
     }
 
-    /// The session modes (§2) must be the only mode of their file. Legacy modes keep every combination that
-    /// parsed before them (§3.1): refusing those waits for a query proving no stored problem has one.
+    /// The session modes must be the only mode of their file. Legacy modes keep every combination that
+    /// parsed before them: refusing those waits for a query proving no stored problem has one.
     fn is_exclusive(self) -> bool {
         matches!(self, ModeKey::SignatureSplit)
     }
@@ -209,8 +230,8 @@ impl InitYaml {
         [interactive, signature, output_only, file_io].into_iter().flatten().collect()
     }
 
-    /// A split problem until this judge grades split signature (plan 05 removes the one-core case, plan 12 the
-    /// paired one): requeued, never graded by the one-process path.
+    /// A split problem until this judge grades split signature (the one-core and paired variants are not
+    /// graded yet): requeued, never graded by the one-process path.
     fn split_feature(&self) -> Option<&'static str> {
         let spec = self.signature_grader.as_ref().filter(|spec| spec.split)?;
         Some(if spec.cores == Some(2) { SPLIT_PAIRED_FEATURE } else { SPLIT_FEATURE })
@@ -255,7 +276,7 @@ fn unknown_field(message: &str) -> Option<String> {
 const RESERVED_BOX_NAMES: [&str; 4] = ["input", "output", "main", ".stderr"];
 
 /// A `file_io` name is a plain file name inside the box: not empty, no leading `.`, no `/` or `\`,
-/// not a reserved box name. `Path::join` with an absolute or `../` name would leave the box (preflight C4).
+/// not a reserved box name. `Path::join` with an absolute or `../` name would leave the box.
 pub fn is_plain_box_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
@@ -272,7 +293,7 @@ fn check_file_io(file_io: &FileIo) -> Result<(), InitError> {
     Ok(())
 }
 
-/// The split options' own rules (§3.1): two `main`s cannot be linked, `cores` only means something with `split`.
+/// The split options' own rules: two `main`s cannot be linked, `cores` only means something with `split`.
 fn check_signature(spec: &SignatureSpec) -> Result<(), InitError> {
     let refused = |what: String| Err(InitError::Unsupported(what));
     if spec.split && spec.allow_main {

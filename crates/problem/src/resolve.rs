@@ -1,4 +1,4 @@
-//! Finds a problem's init.yml and case files for one assignment (spec §2 "Caching and versioning").
+//! Finds a problem's init.yml and case files for one assignment (docs/grading.md#caching-and-data-version).
 
 use crate::archive::{ZipLimits, extract_zip};
 use crate::code::problem_dir;
@@ -22,14 +22,14 @@ pub struct ResolvedProblem {
 }
 
 /// A name inside a problem directory: `/`-separated segments, each non-empty, not starting with `.`
-/// (so never `..` or a dotfile), no `\\` (the `archive.rs` rule; legacy zips store `tests/1.in`, preflight I17).
+/// (so never `..` or a dotfile), no `\\` (the `archive.rs` rule; legacy zips store `tests/1.in`).
 fn is_relative_name(name: &str) -> bool {
     !name.is_empty()
         && !name.contains('\\')
         && name.split('/').all(|seg| !seg.is_empty() && !seg.starts_with('.'))
 }
 
-/// Opens `base/name` once and judges the opened handle (preflight I11): the last segment is opened with
+/// Opens `base/name` once and judges the opened handle: the last segment is opened with
 /// `O_NOFOLLOW`, the handle must be a regular file, and the kernel's own path for the handle must be exactly
 /// `base/name`, so no directory on the way was a symlink. Nothing is checked by path and then reopened.
 fn open_beneath(base: &Path, name: &str) -> Result<File, DataError> {

@@ -214,6 +214,9 @@ message GradingStarted {
   uint32 case_count = 4;
 }
 
+// Per-case verdict codes: AC accepted, WA wrong answer, TLE time limit, MLE memory limit, OLE output limit,
+// IR invalid return (non-zero exit code), RTE runtime error (a signal or an uncaught exception), SC skipped
+// (short-circuited by an earlier case or batch).
 enum Status {
   STATUS_UNSPECIFIED = 0;
   STATUS_AC = 1;

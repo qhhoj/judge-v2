@@ -157,7 +157,7 @@ compile_dirs = ["{jdk_etc}"]
 version = ["/usr/lib/jvm/default-java/bin/javac", "-version"]
 exception_marker = "Exception in thread"
 
-# JAVA8: 0 submissions in 2 years (legacy-judge-usage.md) but allowed on every problem: an alias of JAVA's JDK.
+# JAVA8: no submissions in two years on the old site, but allowed on every problem: an alias of JAVA's JDK.
 [[language]]
 key = "JAVA8"
 name = "Java 8 (alias of the installed JDK)"

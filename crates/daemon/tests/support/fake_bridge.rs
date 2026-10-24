@@ -1,4 +1,5 @@
-//! A scripted bridge: records what the judge sends, lets the test send per session.
+//! A scripted bridge: records what the judge sends, lets the test send per session. Imperative, for tests that drive the
+//! daemon step by step; scenario files are played by `crates/conformance/src/fake_bridge.rs`.
 use judge_proto::v1::judge_link_server::{JudgeLink, JudgeLinkServer};
 use judge_proto::v1::{
     BridgeMessage, Chunk, FetchSourceRequest, GenerationRequest, JudgeMessage, UploadChunk, UploadReceipt,

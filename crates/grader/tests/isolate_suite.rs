@@ -98,7 +98,7 @@ impl Suite {
     }
 }
 
-/// The shipped file with every runtime behind `/etc/alternatives` resolved (preflight I18).
+/// The shipped file with every runtime behind `/etc/alternatives` resolved (the box has no `/etc`).
 fn host_registry() -> LanguageRegistry {
     let text = std::fs::read_to_string(format!("{ROOT}/languages.toml")).unwrap();
     let (host, rewrites) = host_languages(&text, &LanguageRegistry::from_toml(&text).unwrap());

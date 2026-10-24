@@ -1,4 +1,4 @@
-//! One isolate run: limits, stdio and the command (spec §6).
+//! One isolate run: limits, stdio and the command (docs/grading.md#box-lifecycle).
 
 use std::path::Path;
 

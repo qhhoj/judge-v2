@@ -1,4 +1,4 @@
-//! `bridged` checkers: problem-author code compiled and run inside the helper box (spec §2 "Custom").
+//! `bridged` checkers: problem-author code compiled and run inside the helper box (docs/grading.md#checkers).
 //! It never runs on the host; it sees only copies of the case input, the output and the answer.
 
 use super::identical::PRESENTATION_ERROR;
@@ -72,7 +72,7 @@ pub fn clip_text(text: &str, max: usize) -> String {
     text[..end].to_string()
 }
 
-/// Time max(10 s, 2 x TL), 1 GiB, one process (spec §5).
+/// Time max(10 s, 2 x TL), 1 GiB, one process (docs/grading.md#checkers).
 pub fn checker_limits(solution_time_limit_s: f64) -> Limits {
     let time = (2.0 * solution_time_limit_s).max(10.0);
     Limits {

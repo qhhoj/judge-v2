@@ -1,4 +1,4 @@
-//! N slots, one worker task per slot (spec §2 "Daemon", §3.5 credit).
+//! N slots, one worker task per slot (docs/architecture.md; the bridge sends at most `slots` assignments, docs/protocol.md#flow-control).
 
 use crate::generation::{GenerationAssignment, process_generation};
 use crate::link::{SlotPool, SlotsFull};
@@ -41,7 +41,7 @@ impl Pool {
     }
 
     /// Informational: the bridge stops assigning once it sees `Draining`, and an Assign that crossed
-    /// that message is still accepted while a slot is free (preflight I2).
+    /// that message is still accepted while a slot is free (docs/operations.md#drain).
     pub fn set_draining(&self) {
         self.draining.store(true, Ordering::SeqCst);
     }
@@ -137,7 +137,7 @@ fn release(running: &Arc<Mutex<Option<Running>>>, work: &Work) -> Release {
 }
 
 impl SlotPool for Pool {
-    /// Refuses only when no slot is free; draining does not refuse (preflight I2).
+    /// Refuses only when no slot is free; draining does not refuse (docs/operations.md#drain).
     /// A repeated Assign for a ref this judge already holds is ignored: a second run would reset its outbox.
     fn assign(&self, assignment: Assignment) -> Result<(), SlotsFull> {
         if self.outboxes.contains(&assignment.r) {

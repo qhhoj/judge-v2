@@ -1,4 +1,4 @@
-//! init.yml checker → a checker (spec §2 "Checkers").
+//! init.yml checker → a checker (docs/grading.md#checkers).
 
 use super::custom::PartialPoints;
 use super::easy::Easy;

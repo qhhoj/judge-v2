@@ -1,4 +1,4 @@
-//! One worker per physical core, SMT siblings excluded, the first core left to the daemon (spec §2).
+//! One worker per physical core, SMT siblings excluded, the first core left to the daemon (docs/operations.md#config).
 
 use crate::config::Config;
 use std::collections::BTreeSet;

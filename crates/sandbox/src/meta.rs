@@ -51,6 +51,16 @@ fn number<T: std::str::FromStr>(key: &str, value: &str) -> Result<T, SandboxErro
     value.parse().map_err(|_| SandboxError::Meta(format!("{key}:{value}")))
 }
 
+/// One `key:value` line of isolate's meta file. Keys read here:
+/// - `status`: `TO` timed out (CPU or wall), `SG` killed by a signal, `RE` exited non-zero, `XX` isolate itself failed;
+///   absent when the run ended with exit code 0
+/// - `exitcode`, `exitsig`: the exit code, or the signal that killed the run
+/// - `time`, `time-wall`: CPU and wall seconds
+/// - `cg-mem`: peak memory of the whole cgroup; `max-rss`: peak resident set of the largest process
+/// - `cg-oom-killed`: `1` when the cgroup's memory limit killed the run
+/// - `message`: isolate's text for a non-zero status
+///
+/// Other keys (context switches, `killed`) are ignored.
 fn apply(meta: &mut Meta, key: &str, value: &str) -> Result<(), SandboxError> {
     match key {
         "status" => meta.status = Some(value.to_string()),

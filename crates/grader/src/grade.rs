@@ -1,4 +1,4 @@
-//! Walks the case plan: short-circuit, points, clipping (spec §2, §3.8).
+//! Walks the case plan: short-circuit, points, clipping (docs/grading.md#cases-batches-and-points, limits in docs/protocol.md#limits).
 //!
 //! DMOJ semantics: a case that is not AC skips the rest of its batch (SC); with the submission's
 //! `short_circuit` it skips every later case. A failed case worth 0 points (a pretest) skips every later case. The plan already holds the run's cases.

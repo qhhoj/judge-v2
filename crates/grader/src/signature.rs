@@ -1,4 +1,4 @@
-//! `signature_grader`: contestant functions linked with the problem's `entry` (legacy-judge-usage.md §3).
+//! `signature_grader`: contestant functions linked with the problem's `entry` (the legacy judge's signature grader).
 //! Everything is compiled inside the box with compile limits; the box keeps only the linked binary.
 
 use crate::artefacts::read_data_source;

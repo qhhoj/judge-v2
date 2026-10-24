@@ -33,6 +33,12 @@ jobs:
       # rust-toolchain.toml pins the compiler, rustfmt and clippy
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: no references to documents outside the repo
+        # Comments cite an in-repo doc path (docs/*.md#heading) or give the reason; spec sections, preflight, plan and task ids point nowhere.
+        run: |
+          if git grep -niE '§|preflight|task [0-9]+|plan [a-d0-9]\b|review focus|legacy-judge-usage|split-and-communication' -- . ':!CHANGELOG.md' ':!.github' ':!Cargo.lock'; then
+            echo "dangling reference: cite a path under docs/ or state the reason"; exit 1
+          fi
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       # the runner passes extra fds to each step; channel runs refuse to start while the tests hold one

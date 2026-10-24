@@ -1,4 +1,4 @@
-//! Checkers and interactors compiled once per content hash (spec §2 "Compiled-artefact cache").
+//! Checkers and interactors compiled once per content hash (docs/grading.md#caching-and-data-version).
 //! The sources are problem-author code: they are compiled inside a box and only ever run in one.
 
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};

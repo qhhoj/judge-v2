@@ -1,4 +1,4 @@
-//! One gRPC stream to the bridge at a time; reconnects and resumes (spec §3.4-§3.6).
+//! One gRPC stream to the bridge at a time; reconnects and resumes (docs/protocol.md).
 
 use crate::backoff::Backoff;
 use crate::config::{Config, is_loopback_url};
@@ -205,7 +205,7 @@ async fn session(ctx: &LinkContext) -> Result<(), LinkError> {
     // Resume decisions apply before the session is visible, so no fetch or worker races them.
     state.apply_resume(in_flight, welcomed.resume);
     *ctx.connection.write().await = Some(Connection { channel, session_id: welcomed.session_id, outbound });
-    // judge-v2-up.sh (plan D) waits for this line.
+    // The backend's local-stack script (scripts/judge/judge-v2-up.sh) waits for this line.
     tracing::info!(judge = %ctx.config.name, "bridge session started");
     state.run(&mut inbound).await
 }
@@ -223,7 +223,7 @@ impl Session<'_> {
                     self.sent.insert(r, from_seq.saturating_sub(1));
                 }
                 _ => {
-                    // Nothing already queued goes out; the run ends with one Final{ABORTED} (preflight C2).
+                    // Nothing already queued goes out; the run ends with one Final{ABORTED} (docs/protocol.md#reconnect-and-resume).
                     self.sent.insert(r.clone(), self.ctx.outboxes.last_seq(&r));
                     self.ctx.outboxes.mark_dropped(&r);
                     self.ctx.pool.drop_run(&r);

@@ -260,7 +260,7 @@ From the second session, open a **new** SSH connection to prove you can still ge
 ### 10. Verify
 
 ```sh
-DAY_ONE_LANGUAGES=C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT
+DAY_ONE_LANGUAGES=$(sed -n 's/^| Day-one languages | `\(.*\)` |$/\1/p' /opt/qhhoj-judge/current/DEPLOY.md)   # the row of "Fixed values"
 sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
   --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # last line ends in ok
 bash /opt/qhhoj-judge/current/packaging/check-host.sh --bridge bridge.qhhoj.internal:9990

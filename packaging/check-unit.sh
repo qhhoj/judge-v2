@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# packaging/check-unit.sh: the unit keeps the directives the spec and runbook rely on.
+# packaging/check-unit.sh: the unit keeps the directives docs/operations.md and DEPLOY.md rely on.
 set -euo pipefail
 unit="$(dirname "$0")/qhhoj-judge.service"
 need() { grep -qxF "$1" "$unit" || { echo "missing: $1" >&2; exit 1; }; }
@@ -17,7 +17,7 @@ need "RestrictSUIDSGID=yes"
 need "ProtectKernelLogs=yes"
 need "ProtectHostname=yes"
 need "LockPersonality=yes"
-# Each of these breaks setuid isolate, its cgroups or namespaces, or the JVM/PyPy JITs (preflight I12).
+# Each of these breaks setuid isolate, its cgroups or namespaces, or the JVM/PyPy JITs.
 for setting in NoNewPrivileges=yes NoNewPrivileges=true SystemCallFilter SystemCallArchitectures MemoryDenyWriteExecute \
                ProtectKernelTunables ProtectControlGroups PrivateDevices PrivateNetwork RestrictNamespaces \
                CapabilityBoundingSet PrivateUsers DynamicUser; do refuse "$setting"; done

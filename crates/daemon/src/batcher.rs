@@ -1,4 +1,4 @@
-//! Case results go out every 100 ms or 64 cases (spec §3.5), never more than 256 per message (§3.8).
+//! Case results go out every 100 ms or 64 cases (docs/protocol.md#flow-control), never more than 256 per message (docs/protocol.md#limits).
 
 use judge_grader::report::CaseReport;
 use std::time::{Duration, Instant};

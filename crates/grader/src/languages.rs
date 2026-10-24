@@ -33,7 +33,9 @@ pub enum ExceptionStyle {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct CompileLimitOverride {
+    /// CPU seconds.
     pub time_s: f64,
+    /// Wall-clock seconds.
     pub wall_s: f64,
     pub memory_kib: u64,
 }
@@ -49,30 +51,47 @@ fn thirty_two() -> u32 {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Language {
+    /// The language key the bridge sends in `Assign.language_key` (`CPP17`, `PY3`).
     pub key: String,
+    /// Display name, reported in `Hello.runtimes`.
     pub name: String,
+    /// File name the source is written to in the box; `{class}` is the Java public class.
     pub source: String,
+    /// Compile command, run in the solution box with cwd `/box`. None: nothing to compile.
     #[serde(default)]
     pub compile: Option<Vec<String>>,
+    /// Replaces the default compile limits (CPU 10 s, wall 20 s, 1 GiB) for this language.
     #[serde(default)]
     pub compile_limits: Option<CompileLimitOverride>,
+    /// Run command, one run per case.
     pub run: Vec<String>,
+    /// Most processes (threads included) a run may start; 64 for the JVM, whose runtime starts helper threads.
     #[serde(default = "one")]
     pub processes: u32,
+    /// Most processes the compile step may start.
     #[serde(default = "thirty_two")]
     pub compile_processes: u32,
+    /// A JVM language: its cgroup gets `jvm_reserve_kib` above the memory limit, its stderr is kept so an
+    /// `OutOfMemoryError` becomes MLE, and a checker written in it keeps a 128 MiB reserve outside its heap.
     #[serde(default)]
     pub jvm: bool,
+    /// The submission is a file (a zip) fetched with `FetchSource`, not source text sent in `Assign`.
     #[serde(default)]
     pub file_only: bool,
+    /// How cases are graded: a compiled/interpreted `program` (default), `text` (the source is every case's
+    /// output) or `output_zip` (a zip of per-case outputs).
     #[serde(default)]
     pub kind: LanguageKind,
+    /// Extra read-only directories mounted into every run (`--dir`): runtime trees such as the JDK or PyPy.
     #[serde(default)]
     pub dirs: Vec<String>,
+    /// Extra read-only directories mounted into the compile step only.
     #[serde(default)]
     pub compile_dirs: Vec<String>,
+    /// Environment variables set for runs, on top of `PATH` and `HOME`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Command whose first output line is the compiler or runtime version, reported in `Hello.runtimes`.
     pub version: Vec<String>,
     /// Compiler and flags the signature grader uses (C and C++ only).
     #[serde(default)]
@@ -80,7 +99,7 @@ pub struct Language {
     /// Flag that puts `/testlib` on the include path for checkers and interactors.
     #[serde(default)]
     pub testlib_flag: Option<String>,
-    /// stderr text of an uncaught exception: a non-zero exit carrying it is RTE, not IR (spec §11).
+    /// stderr text of an uncaught exception: a non-zero exit carrying it is RTE, not IR (docs/grading.md#uncaught-exceptions).
     #[serde(default)]
     pub exception_marker: Option<String>,
     #[serde(default)]
@@ -298,7 +317,7 @@ fn in_box_mounts(path: &Path) -> bool {
     BOX_MOUNTS.iter().any(|mount| path.starts_with(mount))
 }
 
-/// Follows `program`'s symlink chain; `Some(real path)` when a hop leaves the box mounts (preflight I18).
+/// Follows `program`'s symlink chain; `Some(real path)` when a hop leaves the box mounts: the box has no `/etc`, so `/etc/alternatives` links do not resolve inside it.
 pub fn host_target(program: &Path) -> Option<PathBuf> {
     let mut path = program.to_path_buf();
     let mut left_box = false;

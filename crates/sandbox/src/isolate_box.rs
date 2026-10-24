@@ -1,5 +1,5 @@
-//! One isolate box. Every run starts from a fresh `--init` (Review Focus 1). A channel run
-//! (`command_with_channel`) is the only way fds above 2 reach a box.
+//! One isolate box. Every run starts from a fresh `--init`, so no run sees another's files (docs/grading.md#box-lifecycle).
+//! A channel run (`command_with_channel`) is the only way fds above 2 reach a box.
 
 use crate::error::SandboxError;
 use crate::meta::{Meta, parse_meta};

@@ -1,4 +1,4 @@
-//! Compiles inside the solution box with compile limits (spec §5) and snapshots the result.
+//! Compiles inside the solution box with compile limits (docs/grading.md#box-lifecycle) and snapshots the result.
 
 use crate::error::GradeError;
 use crate::languages::{Language, Placeholders, expand, java_main_class};
