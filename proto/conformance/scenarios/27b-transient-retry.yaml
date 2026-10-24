@@ -1,0 +1,42 @@
+name: 27b-transient-retry
+summary: A Final RETRY with a transient reason (DATA_UNAVAILABLE, SANDBOX_FAILURE, RUNTIME_MISSING) requeues without spending a RETRY; three of them, past the cap of 27, still get a fourth Assign, which grades. The window bound is 27c.
+applies_to: [bridge]
+timings: {resyncMs: 300, deferralBackoffMs: 0, deferralMaxBackoffMs: 0, deferralWindowMs: 600000}
+setup:
+  judges: [{name: j1}]
+  problems: [{code: p1}]
+  submissions: [{id: s1, problem: p1}]
+steps:
+  - open: {judge: j1}
+  - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
+  - bridge: {to: j1, message: {welcome: {sessionId: "*"}}}
+  - api: {judge: [s1]}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_DATA_UNAVAILABLE}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 2}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 1}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_SANDBOX_FAILURE}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 2}, seq: 2}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 3}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 1}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2, outcome: OUTCOME_RETRY, reason: RETRY_REASON_RUNTIME_MISSING}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 3}, seq: 2}}}
+  # a fourth assign: these three would have spent the RETRY cap of 27
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 4}}}}
+  - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 1}}}
+  - judge: {from: j1, message: {started: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 2, caseCount: 1}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 2}}}
+  - judge: {from: j1, message: {cases: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 3, cases: [{position: 1, status: STATUS_AC, timeS: 0.01, memoryKib: "1024", points: 1, total: 1}]}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 3}}}
+  - judge: {from: j1, message: {final: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 4, outcome: OUTCOME_GRADED}}}
+  - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 4}, seq: 4}}}
+end_state:
+  submissions:
+    s1: {status: D, result: AC, requeueCount: 0, retryCount: 0, judgeGeneration: 4}
+  gradedJobs: 1

@@ -6,7 +6,7 @@ One line per decision: what, and why.
 - Changes inside protocol v1 are additive only: judges and bridges of different builds must keep talking.
 - Results are numbered per assignment and acked cumulatively: a reconnect replays the outbox without double-applying a write.
 - A resumed assignment does not spend the requeue: a short network drop must not count as a lost judge.
-- `RETRY` is capped at three per submission: a problem no judge can serve must end as an internal error, not loop.
+- `RETRY UNSPECIFIED` is capped at three per submission: a problem no judge can serve must end as an internal error, not loop. Transient reasons (DATA_UNAVAILABLE, RUNTIME_MISSING, SANDBOX_FAILURE) wait with a backoff outside the cap and end IE after the 30-minute deferral window, and UNSUPPORTED is a refusal: a data save or a judge hiccup is not a failure, and must not turn queued submissions into IE.
 - Every problem-author program (checker, interactor, generator, signature entry) runs in isolate: problem data is not trusted.
 - Output over the cap is OLE ahead of TLE: the JVM ignores SIGXFSZ and would otherwise run a print loop to the time limit.
 - An unknown init.yml key is refused as UNSUPPORTED; an unknown checker arg is ignored, because refusing needs a production query for stray args first.

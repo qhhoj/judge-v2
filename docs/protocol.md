@@ -79,9 +79,12 @@ messages, so a replayed or resumed message cannot lose batch state.
 - After each applied or duplicate message the bridge sends `ResultAck{ref, seq}` (cumulative) and the judge trims its
   outbox. `Final` is acked only after its write and the graded-job enqueue, so a crash between them resends `Final`,
   which is then a no-op. The graded job id is `submissionId:generation`.
-- `Final{RETRY}` (data unavailable, runtime missing, unsupported feature, sandbox failure) returns the row to the queue
-  without spending the requeue and bans that judge for one resync tick. The third `RETRY` makes the row an internal
-  error (a cap against poison retries).
+- `Final{RETRY}` returns the row to the queue without spending the requeue; what follows depends on its reason.
+  UNSPECIFIED is a failure: it bans that judge for one resync tick, and the third makes the row an internal error (a
+  cap against poison retries). DATA_UNAVAILABLE, RUNTIME_MISSING and SANDBOX_FAILURE are transient: they never count
+  toward that cap; the row waits with a backoff and becomes an internal error only after the deferral window (30
+  minutes from the first). UNSUPPORTED is a refusal: the row is not offered to that judge build again while the
+  problem's data is the version it refused.
 - `Final.data_version_used` is stored on the submission (see "Caching and data version" in [grading](grading.md)).
 
 ## Limits
