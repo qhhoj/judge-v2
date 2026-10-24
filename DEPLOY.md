@@ -208,6 +208,9 @@ Download the release from the private judge-v2 repository (needs `gh auth login`
 ```sh
 VER=<version>                                     # e.g. 2.0.1
 cd /tmp && gh release download v$VER -R qhhoj/judge-v2
+# built by this repository's CI from the signed tag v$VER (a recent gh: 2.103 works); refuse the release if it fails
+gh attestation verify qhhoj-judge-$VER.tar.gz -R qhhoj/judge-v2 \
+  --cert-identity "https://github.com/qhhoj/judge-v2/.github/workflows/ci.yml@refs/tags/v$VER"
 sha256sum -c qhhoj-judge-$VER.tar.gz.sha256       # OK
 tar -xzf qhhoj-judge-$VER.tar.gz -C /opt/qhhoj-judge/releases/
 mv /opt/qhhoj-judge/releases/qhhoj-judge-$VER /opt/qhhoj-judge/releases/$VER
@@ -319,7 +322,7 @@ the judge starts with `/etc/qhhoj-judge/config.toml` (config, `bridge-ca.pem` an
 read from the config's `key_file`, so mount it and set an absolute path). Add `--security-opt apparmor=unconfined` if the
 host's AppArmor profile blocks mounts. Keep `/var/local/lib/isolate` on local disk, never NFS. A volume there passes
 the start check as a filesystem of its own even when it is a directory on the host's disk: give it a size
-bound or a `disk_quota` (§"Disk quota on the box root").
+bound or a `disk_quota` (section "Disk quota on the box root").
 
 ## Box isolation (cpuset and disk quota)
 
@@ -423,7 +426,9 @@ layer is not set up; `test result: ok` with no `skip:` lines is the pass.
 - **Metrics** (local only): `curl -s 127.0.0.1:9464/metrics` (`judge_assignments_total`,
   `judge_sandbox_failures_total`, `judge_reconnects_total`, `judge_slots_busy`).
 - **Update to a new release:** unpack it into `/opt/qhhoj-judge/releases/<new>` as in step 8, run
-  `sha256sum -c SHA256SUMS` and `selftest` (step 10) from the new directory (`--languages` and `--testlib` of the
+  `sha256sum -c SHA256SUMS`, then `sudo -u qhhoj-judge /opt/qhhoj-judge/releases/<new>/qhhoj-judge check-config`
+  (the new daemon's config, pinning and disk-bound checks on this host's config: it must print `ok` and
+  `disk bound Quota`; `selftest` covers the languages file) and `selftest` (step 10) from the new directory (`--languages` and `--testlib` of the
   new release; its programs are found next to its binary), then
   `ln -sfn releases/<new> /opt/qhhoj-judge/current && systemctl restart qhhoj-judge`. A restart drains:
   it takes no new work and lets running submissions finish (up to 120 s). Agree on a time with the site

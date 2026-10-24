@@ -75,16 +75,27 @@ fn sandbox_config(config: &Config) -> SandboxConfig {
     }
 }
 
-/// The sandbox config; refuses to start when nothing bounds what the runs write to isolate's box root.
-fn checked_sandbox(config: &Config) -> anyhow::Result<SandboxConfig> {
+/// The sandbox config; refuses to start when nothing bounds what the runs write to isolate's box root. The
+/// quota probe opens (and so wipes) `probe_box`: the daemon's first box at start, a spare one in `check-config`.
+fn checked_sandbox(config: &Config, probe_box: u32) -> anyhow::Result<(SandboxConfig, DiskBound)> {
     let sandbox = sandbox_config(config);
     let bound = match sandbox.disk_quota {
-        Some(_) if disk_quota_works(&sandbox, config.box_base)? => DiskBound::Quota,
+        Some(_) if disk_quota_works(&sandbox, probe_box)? => DiskBound::Quota,
         Some(_) => anyhow::bail!("isolate.disk_quota is set but the box root has no user quotas (DEPLOY.md)"),
         None => disk_bound::without_quota(config)?,
     };
-    bound.log();
-    Ok(sandbox)
+    Ok((sandbox, bound))
+}
+
+/// The checks that make the daemon refuse to start: how the boxes are pinned, and the disk bound (probed on
+/// `probe_box`). `check-config` runs them before an install switches to a release.
+pub fn start_checks(
+    config: &Config,
+    cores: &[u32],
+    probe_box: u32,
+) -> anyhow::Result<(SandboxConfig, DiskBound)> {
+    check_pinning(config, cores)?;
+    checked_sandbox(config, probe_box)
 }
 
 /// Logs how the boxes are kept on their cores; refuses to start when isolate would fail every run.
@@ -192,8 +203,8 @@ fn build(config: &Arc<Config>) -> anyhow::Result<Daemon> {
     for (id, error) in cleanup_owned(&sandbox_config(config), config.box_base, cores.len() as u32) {
         tracing::warn!(box_id = id, %error, "startup cleanup failed");
     }
-    check_pinning(config, &cores)?;
-    let sandbox = checked_sandbox(config)?;
+    let (sandbox, bound) = start_checks(config, &cores, config.box_base)?;
+    bound.log();
     let shared = shared(config, registry, versions);
     let runners = runners(config, &sandbox, &cores, &shared)?;
     let (outboxes, metrics) = (Arc::new(Outboxes::new(OUTBOX_WATERMARK)), Arc::new(Metrics::new()));
@@ -279,6 +290,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::tests_support::MIN;
 
     #[test]
     fn the_build_carries_the_commit_when_it_is_known() {
@@ -292,7 +304,7 @@ mod tests {
     #[test]
     fn a_start_empties_the_cache_dirs() {
         let dir = tempfile::tempdir().unwrap();
-        let mut config = crate::config::parse(crate::config::tests_support::MIN).unwrap();
+        let mut config = crate::config::parse(MIN).unwrap();
         config.cache_dir = dir.path().into();
         std::fs::create_dir_all(dir.path().join("data/p@3")).unwrap();
         std::fs::write(dir.path().join("data/p@3/init.yml"), "stale").unwrap();
@@ -310,19 +322,41 @@ mod tests {
         let box_root = dir.path().join("boxes");
         std::fs::create_dir(&box_root).unwrap();
         std::fs::write(dir.path().join("isolate"), format!("box_root = {}\n", box_root.display())).unwrap();
-        let mut config = crate::config::parse(crate::config::tests_support::MIN).unwrap();
+        let mut config = crate::config::parse(MIN).unwrap();
         (config.cache_dir, config.isolate.config) = (dir.path().into(), dir.path().join("isolate"));
         assert!(
-            checked_sandbox(&config).is_err(),
+            checked_sandbox(&config, 0).is_err(),
             "no disk quota and the box root on the cache's filesystem"
         );
         config.isolate.allow_unbounded_disk = true;
-        assert!(checked_sandbox(&config).is_ok(), "the dev escape hatch");
+        assert!(checked_sandbox(&config, 0).is_ok(), "the dev escape hatch");
         config.isolate.allow_unbounded_disk = false;
         let Ok(own) = tempfile::tempdir_in("/dev/shm") else {
             return eprintln!("skip: no /dev/shm on this host");
         };
         std::fs::write(dir.path().join("isolate"), format!("box_root = {}\n", own.path().display())).unwrap();
-        assert!(checked_sandbox(&config).is_ok(), "a box root on a filesystem of its own (tmpfs)");
+        assert!(checked_sandbox(&config, 0).is_ok(), "a box root on a filesystem of its own (tmpfs)");
+    }
+
+    /// An isolate that answers an `--init` with a quota as one on a box root without user quotas does.
+    const ISOLATE_WITHOUT_QUOTAS: &str = r#"#!/bin/sh
+case "$*" in *--quota=*) echo "Cannot set disk quota: quotas have not been enabled" >&2; exit 2 ;; esac
+case "$*" in *--init*) mkdir -p "$(dirname "$0")/root/box"; echo "$(dirname "$0")/root" ;; esac
+"#;
+
+    #[test]
+    fn a_disk_quota_isolate_cannot_set_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let isolate = dir.path().join("isolate");
+        std::fs::write(&isolate, ISOLATE_WITHOUT_QUOTAS).unwrap();
+        std::fs::set_permissions(&isolate, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let text =
+            format!("{}[isolate]\ndisk_quota = {{ headroom_kib = 262144, headroom_inodes = 1024 }}\n", MIN);
+        let mut config = crate::config::parse(&text).unwrap();
+        // The dev hatch too, so only the quota arm can refuse: a quota that was dropped would leave a started daemon.
+        (config.cache_dir, config.isolate.bin, config.isolate.allow_unbounded_disk) =
+            (dir.path().into(), isolate, true);
+        let refused = checked_sandbox(&config, 0).expect_err("the quota would be dropped");
+        assert!(refused.to_string().contains("no user quotas"), "{refused}");
     }
 }

@@ -247,6 +247,14 @@ mod tests {
     }
 
     #[test]
+    fn the_unbounded_disk_hatch_only_on_loopback() {
+        let hatch = "[isolate]\nallow_unbounded_disk = true\n";
+        assert!(parse(&format!("{MIN}{hatch}")).is_ok());
+        let remote = MIN.replace("http://127.0.0.1:9990", "https://b:1") + "[tls]\nca_file = '/ca'\n" + hatch;
+        assert!(parse(&remote).is_err(), "a production-shaped bridge with the hatch");
+    }
+
+    #[test]
     fn loopback_detection() {
         for url in ["http://127.0.0.1:1", "http://localhost:1", "http://[::1]:1"] {
             assert!(is_loopback_url(url), "{url}");
