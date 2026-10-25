@@ -51,6 +51,13 @@ mod tests {
     }
 
     #[test]
+    fn vertical_tab_separates_tokens_in_both_modes() {
+        for split_on in [SplitOn::Lines, SplitOn::Whitespace] {
+            assert!(run(&Sorted { split_on }, b"1\x0b2\n", b"1 2\n").passed, "{split_on:?}");
+        }
+    }
+
+    #[test]
     fn whitespace_mode_compares_the_token_multiset() {
         let c = Sorted { split_on: SplitOn::Whitespace };
         assert!(run(&c, b"3 1\n2", b"1 2 3\n").passed);

@@ -1,4 +1,4 @@
-use super::text::split_lines;
+use super::text::{split_lines, trim_space_end};
 use super::{CheckError, CheckInput, CheckOutcome, Checker, read_file};
 
 /// Same lines once trailing whitespace is removed from each; empty lines are kept unless filtered.
@@ -8,7 +8,7 @@ pub struct RStripped {
 
 impl RStripped {
     fn lines<'a>(&self, data: &'a [u8]) -> Vec<&'a [u8]> {
-        let lines = split_lines(data).into_iter().map(<[u8]>::trim_ascii_end);
+        let lines = split_lines(data).into_iter().map(trim_space_end);
         if self.filter_new_line { lines.filter(|l| !l.is_empty()).collect() } else { lines.collect() }
     }
 }
@@ -30,6 +30,7 @@ mod tests {
     fn trailing_whitespace_is_ignored_but_leading_and_line_structure_are_not() {
         let keep = RStripped { filter_new_line: false };
         assert!(run(&keep, b"a  \nb\t\n", b"a\nb").passed);
+        assert!(run(&keep, b"a\x0b\n", b"a\n").passed, "vertical tab is trailing whitespace");
         assert!(!run(&keep, b" a\n", b"a\n").passed, "leading whitespace counts");
         assert!(!run(&keep, b"a\n\nb\n", b"a\nb\n").passed, "empty lines are kept by default");
         assert!(!run(&keep, b"a\n", b"a\nb\n").passed);

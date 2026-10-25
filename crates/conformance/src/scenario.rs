@@ -263,7 +263,15 @@ pub fn parse_judge(message: &Value, bindings: &Bindings) -> Result<JudgeMessage,
     serde_json::from_value(expanded).map_err(|error| format!("not a JudgeMessage: {error}"))
 }
 
+/// Scenarios leave an `assign`'s limits out; a daemon refuses an assignment without limits, so they get these.
+const SCENARIO_TIME_LIMIT_S: f64 = 1.0;
+const SCENARIO_MEMORY_LIMIT_KIB: u64 = 262_144;
+
 pub fn parse_bridge(message: &Value, bindings: &Bindings) -> Result<BridgeMessage, String> {
-    let expanded = expand(message, bindings)?;
+    let mut expanded = expand(message, bindings)?;
+    if let Some(assign) = expanded.get_mut("assign").and_then(Value::as_object_mut) {
+        assign.entry("timeLimitS").or_insert(SCENARIO_TIME_LIMIT_S.into());
+        assign.entry("memoryLimitKib").or_insert(SCENARIO_MEMORY_LIMIT_KIB.into());
+    }
     serde_json::from_value(expanded).map_err(|error| format!("not a BridgeMessage: {error}"))
 }

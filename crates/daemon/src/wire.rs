@@ -85,6 +85,30 @@ pub struct HelloInfo {
     pub features: Vec<String>,
 }
 
+/// Longest time limit an assignment may carry; isolate takes the CPU limit as a float.
+const MAX_TIME_LIMIT_S: f64 = 3600.0;
+/// isolate refuses memory limits above a C `int` of KiB.
+const MAX_MEMORY_LIMIT_KIB: u64 = i32::MAX as u64;
+
+impl Assignment {
+    /// Why the limits cannot be graded under, if so. A zero, negative, NaN or absurd limit would turn the CPU
+    /// limit off or make isolate fail every run, so the submission is refused instead of graded.
+    pub fn limits_error(&self) -> Option<String> {
+        let time_ok =
+            self.time_limit_s.is_finite() && self.time_limit_s > 0.0 && self.time_limit_s <= MAX_TIME_LIMIT_S;
+        if !time_ok {
+            return Some(format!("time limit {} s is outside (0, {MAX_TIME_LIMIT_S}]", self.time_limit_s));
+        }
+        if self.memory_kib == 0 || self.memory_kib > MAX_MEMORY_LIMIT_KIB {
+            return Some(format!(
+                "memory limit {} KiB is outside [1, {MAX_MEMORY_LIMIT_KIB}]",
+                self.memory_kib
+            ));
+        }
+        None
+    }
+}
+
 fn ref_of(r: Option<v1::AssignmentRef>) -> Result<AssignmentRef, WireError> {
     let r = r.ok_or_else(|| WireError("missing ref".into()))?;
     Ok(AssignmentRef { submission_id: r.submission_id, generation: r.generation })
@@ -405,6 +429,23 @@ mod tests {
 
     fn r() -> AssignmentRef {
         AssignmentRef { submission_id: "0192-uuid".into(), generation: 4 }
+    }
+
+    #[test]
+    fn limits_that_would_disable_or_break_the_sandbox_are_refused() {
+        let with = |time_limit_s, memory_kib| Assignment {
+            time_limit_s,
+            memory_kib,
+            ..assignment(v1::Assign { r#ref: Some(v1::AssignmentRef::default()), ..Default::default() })
+                .unwrap()
+        };
+        assert_eq!(with(1.0, 1024).limits_error(), None);
+        for time in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e9] {
+            assert!(with(time, 1024).limits_error().is_some(), "time {time}");
+        }
+        for memory in [0, u64::MAX] {
+            assert!(with(1.0, memory).limits_error().is_some(), "memory {memory}");
+        }
     }
 
     #[test]

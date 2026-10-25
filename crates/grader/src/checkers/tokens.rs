@@ -3,6 +3,7 @@
 //! line breaks stay significant: `1 2` and `1\n2` differ.
 
 use super::CheckError;
+use super::text::is_space as is_space_byte;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
@@ -100,7 +101,7 @@ fn utf8_len(lead: u8) -> usize {
 
 fn is_space(bytes: &[u8]) -> bool {
     if let [single] = bytes {
-        return single.is_ascii_whitespace();
+        return is_space_byte(*single);
     }
     std::str::from_utf8(bytes).ok().and_then(|s| s.chars().next()).is_some_and(char::is_whitespace)
 }
@@ -164,6 +165,12 @@ mod tests {
 
     fn pairs(list: &[(&str, u64)]) -> Vec<(String, u64)> {
         list.iter().map(|(text, line)| (text.to_string(), *line)).collect()
+    }
+
+    #[test]
+    fn vertical_tab_and_form_feed_separate_tokens_like_c_isspace() {
+        let got = tokens_of(Cursor::new(b"1\x0b2\x0c3".as_slice()), false);
+        assert_eq!(got, pairs(&[("1", 0), ("2", 0), ("3", 0)]));
     }
 
     #[test]

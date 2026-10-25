@@ -1,11 +1,12 @@
+use super::text::trim_space;
 use super::tokens::open;
 use super::{CheckError, CheckInput, CheckOutcome, Checker};
 use std::io::{self, BufRead};
 
-/// Compares non-empty lines, each trimmed. Partial points per matching line; any extra line earns nothing.
+/// Compares non-empty lines (even whitespace-only ones), each trimmed. Partial points per matching line; any extra line earns nothing.
 pub struct LineCount;
 
-/// Reads the non-empty, trimmed lines of a stream one at a time. Lines end at `\n` or `\r`.
+/// Reads the non-empty lines of a stream (a whitespace-only line is one), each trimmed, one at a time. Lines end at `\n` or `\r`.
 pub struct Lines<R> {
     reader: R,
     line: Vec<u8>,
@@ -22,8 +23,9 @@ impl<R: BufRead> Lines<R> {
             if !self.read_segment()? {
                 return Ok(None);
             }
-            if !self.line.trim_ascii().is_empty() {
-                return Ok(Some(self.line.trim_ascii()));
+            // A line of only spaces still counts, as in the legacy checker; it is trimmed to empty for comparing.
+            if !self.line.is_empty() {
+                return Ok(Some(trim_space(&self.line)));
             }
         }
     }
@@ -102,7 +104,7 @@ mod tests {
     #[test]
     fn partial_points_per_trimmed_line_and_extra_lines_earn_nothing() {
         // (output, answer, passed, fraction)
-        let table: [(&[u8], &[u8], bool, f64); 7] = [
+        let table: [(&[u8], &[u8], bool, f64); 9] = [
             (b"a\n b \nx\n", b"a\nb\nc\nd\n", false, 0.5),
             (b"a\nb\n\n\n", b"a\nb\n", true, 1.0), // trailing blank lines are ignored
             (b"a\nb\nzzz\n", b"a\nb\n", false, 0.0), // an extra line earns nothing
@@ -110,6 +112,8 @@ mod tests {
             (b"a\rb\r", b"a\nb\n", true, 1.0),     // carriage return also ends a line
             (b"\n\n", b"", true, 1.0),
             (b"x", b"", false, 0.0),
+            (b" \na\n", b"a\n", false, 0.0), // a whitespace-only line is a line
+            (b"\x0ba\x0b\n", b"a\n", true, 1.0), // vertical tab is trimmed like other whitespace
         ];
         for (output, answer, passed, fraction) in table {
             let r = run(&LineCount, output, answer);

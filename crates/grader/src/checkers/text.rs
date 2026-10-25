@@ -13,9 +13,28 @@ pub fn split_lines(data: &[u8]) -> Vec<&[u8]> {
     lines
 }
 
-/// Whitespace-separated tokens (ASCII whitespace).
+/// The legacy checkers' byte whitespace (C `isspace`): space, \t, \n, \v, \f, \r.
+/// `u8::is_ascii_whitespace` leaves out \v.
+pub fn is_space(b: u8) -> bool {
+    b.is_ascii_whitespace() || b == 0x0B
+}
+
+/// `data` without trailing whitespace.
+pub fn trim_space_end(data: &[u8]) -> &[u8] {
+    let end = data.iter().rposition(|b| !is_space(*b)).map_or(0, |i| i + 1);
+    &data[..end]
+}
+
+/// `data` without leading and trailing whitespace.
+pub fn trim_space(data: &[u8]) -> &[u8] {
+    let trimmed = trim_space_end(data);
+    let start = trimmed.iter().position(|b| !is_space(*b)).unwrap_or(trimmed.len());
+    &trimmed[start..]
+}
+
+/// Whitespace-separated tokens.
 pub fn tokens(data: &[u8]) -> Vec<&[u8]> {
-    data.split(|b| b.is_ascii_whitespace()).filter(|t| !t.is_empty()).collect()
+    data.split(|b| is_space(*b)).filter(|t| !t.is_empty()).collect()
 }
 
 #[cfg(test)]
