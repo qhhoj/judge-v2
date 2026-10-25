@@ -130,6 +130,9 @@ impl Builder {
         if self.cases.len() >= MAX_SUBMISSION_CASES {
             return Err(invalid(format!("more than {MAX_SUBMISSION_CASES} cases")));
         }
+        if options.output_limit == 0 {
+            return Err(invalid("output_limit_length must be at least 1 byte (omit it for the default)"));
+        }
         if options.output_limit > self.ceiling {
             return Err(invalid(format!("output_limit_length above {} bytes", self.ceiling)));
         }
@@ -241,6 +244,18 @@ mod tests {
         let at_ceiling =
             format!("output_limit_length: {MAX_OUTPUT_LIMIT}\ntest_cases:\n- {{in: a, out: b, points: 1}}\n");
         assert!(plan(&at_ceiling, false).is_ok());
+    }
+
+    #[test]
+    fn output_limit_zero_is_invalid_at_any_level_and_negative_does_not_parse() {
+        for yaml in [
+            "output_limit_length: 0\ntest_cases:\n- {in: a, out: b, points: 1}\n",
+            "test_cases:\n- {in: a, out: b, points: 1, output_limit_length: 0}\n",
+            "test_cases:\n- points: 1\n  output_limit_length: 0\n  batched: [{in: a, out: b}]\n",
+        ] {
+            assert!(matches!(plan(yaml, false), Err(InitError::Invalid(_))), "{yaml}");
+        }
+        assert!(parse_init("output_limit_length: -1\ntest_cases:\n- {in: a, out: b, points: 1}\n").is_err());
     }
 
     #[test]
