@@ -1,4 +1,4 @@
-//! `check-config`: the daemon's config, pinning and disk-bound checks (the bound on the box root) without starting
+//! `check-config`: the daemon's config, data root, cache size, pinning and disk-bound checks (the bound on the box root) without starting
 //! it; `selftest` covers the languages file. An install runs it with the new binary before it switches `current`,
 //! so a config these checks refuse fails before the switch, not in a restart loop after it.
 
@@ -15,6 +15,7 @@ pub struct CheckConfigArgs {
 
 pub fn check_config(config_path: &Path, args: &CheckConfigArgs) -> anyhow::Result<bool> {
     let config = judge_daemon::config::load(config_path)?;
+    judge_daemon::config::check_data_root(&config)?;
     let cores = worker_cores(&config, Path::new(SYSFS_CPU));
     let live = owned_box_ids(config.box_base, cores.len() as u32);
     anyhow::ensure!(

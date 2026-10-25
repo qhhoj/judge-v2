@@ -1,0 +1,55 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "bridged",
+          "args": {
+            "files": [
+              "checker.cpp",
+              "1e5",
+              "0o17"
+            ],
+            "lang": "CPP17",
+            "type": "testlib"
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "bridged",
+          "args": {
+            "files": [
+              "checker.cpp",
+              "1e5",
+              "0o17"
+            ],
+            "lang": "CPP17",
+            "type": "testlib"
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  }
+}

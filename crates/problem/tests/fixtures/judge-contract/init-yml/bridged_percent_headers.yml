@@ -1,0 +1,16 @@
+archive: "tests.zip"
+checker:
+  args:
+    files:
+      - "checker.cpp"
+      - "testlib.h"
+      - "limits.hpp"
+      - "extra.h"
+    lang: "CPP17"
+    treat_checker_points_as_percentage: true
+    type: "testlib"
+  name: "bridged"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1

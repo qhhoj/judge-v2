@@ -1,0 +1,9 @@
+archive: "tests.zip"
+checker: "standard"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1
+  - in: "2.in"
+    out: "2.out"
+    points: 3

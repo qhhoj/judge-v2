@@ -1,0 +1,7 @@
+archive: "tests.zip"
+checker: "standard"
+output_prefix_length: 9007199254740991
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 9007199254740991

@@ -1,5 +1,6 @@
 //! `/etc/qhhoj-judge/config.toml` (docs/operations.md#config).
 
+use judge_problem::archive::{BACKEND_ARCHIVE_MAX_BYTES, MIN_CACHE_MAX_BYTES};
 use judge_problem::plan::MAX_OUTPUT_LIMIT;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -199,6 +200,29 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
     parse(&std::fs::read_to_string(path)?)
 }
 
+/// One archive may fill half the cache (`ZipLimits::for_cache`): a smaller cache than `MIN_CACHE_MAX_BYTES` could
+/// not extract an archive the backend accepts, an internal error on every submission to that problem.
+pub fn check_cache_size(config: &Config) -> Result<(), ConfigError> {
+    if config.cache_max_bytes < MIN_CACHE_MAX_BYTES {
+        return Err(invalid(format!(
+            "cache_max_bytes must be at least {MIN_CACHE_MAX_BYTES}: half of it must hold the largest archive the \
+             backend accepts ({BACKEND_ARCHIVE_MAX_BYTES} bytes)"
+        )));
+    }
+    Ok(())
+}
+
+/// The daemon waits for data that never comes when `problem_data_root` is not there (a missing mount).
+pub fn check_data_root(config: &Config) -> Result<(), ConfigError> {
+    if !config.problem_data_root.is_dir() {
+        return Err(invalid(format!(
+            "problem_data_root {} is not a directory",
+            config.problem_data_root.display()
+        )));
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn read_key(&self) -> Result<String, ConfigError> {
         let credentials = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
@@ -227,6 +251,22 @@ pub mod tests_support {
 mod tests {
     use super::tests_support::MIN;
     use super::*;
+
+    #[test]
+    fn a_cache_must_hold_the_largest_backend_archive() {
+        let sized = |bytes: u64| parse(&format!("{MIN}cache_max_bytes = {bytes}\n")).unwrap();
+        assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES - 1)).is_err());
+        assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn the_data_root_must_exist() {
+        let rooted = |root: &str| {
+            parse(&MIN.replace("problem_data_root = '/d'", &format!("problem_data_root = '{root}'"))).unwrap()
+        };
+        assert!(check_data_root(&rooted("/nonexistent/qhhoj-data")).is_err());
+        assert!(check_data_root(&rooted(&std::env::temp_dir().display().to_string())).is_ok());
+    }
 
     #[test]
     fn remote_bridge_needs_tls_and_https() {

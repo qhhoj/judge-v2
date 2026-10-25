@@ -6,7 +6,7 @@ Setting a judge host up from nothing is [DEPLOY.md](../DEPLOY.md). This page is 
 
 `/etc/qhhoj-judge/config.toml` (`daemon/src/config.rs`; unknown keys are refused). The main keys: `name`, `bridge_url`,
 `tls.ca_file`, `key_file`, `slots` (default: physical cores minus one, SMT siblings excluded), `cores`,
-`problem_data_root`, `cache_dir`, `cache_max_bytes`, `languages_file`, `testlib_dir`, `metrics_listen`
+`problem_data_root`, `cache_dir`, `cache_max_bytes` (default 20 GiB, at least 4 GiB: half must hold the backend's largest archive), `languages_file`, `testlib_dir`, `metrics_listen`
 (default `127.0.0.1:9464`), `box_base`, `drain_timeout_s` (120), `data_wait_ms` (10000), `[limits]`
 (`default_output_limit`, `default_output_prefix`, `jvm_reserve_kib`), `[reconnect]` and `[isolate]`. A non-loopback
 bridge needs `https://` and `[tls]`.
@@ -63,7 +63,7 @@ JSON lines to stdout, which journald stores, with fields such as `judge`, `submi
 ## Update and rollback
 
 1. Unpack the release tarball (or pull the image) next to the running one.
-2. Run the new binary's `qhhoj-judge check-config --config ...` (the daemon's config, pinning and disk-bound checks; it must print `ok`),
+2. Run the new binary's `qhhoj-judge check-config --config ...` (the daemon's config, data root, cache size, pinning and disk-bound checks; it must print `ok`),
    then `qhhoj-judge selftest --config ... --require <the day-one languages>` and confirm every line is `ok`
    (the list is in DEPLOY.md).
 3. Point the `current` symlink at the new release and `systemctl restart qhhoj-judge`; the restart drains the old process.

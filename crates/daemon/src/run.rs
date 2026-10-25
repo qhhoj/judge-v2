@@ -87,13 +87,14 @@ fn checked_sandbox(config: &Config, probe_box: u32) -> anyhow::Result<(SandboxCo
     Ok((sandbox, bound))
 }
 
-/// The checks that make the daemon refuse to start: how the boxes are pinned, and the disk bound (probed on
+/// The checks that make the daemon refuse to start: the cache size, how the boxes are pinned, and the disk bound (probed on
 /// `probe_box`). `check-config` runs them before an install switches to a release.
 pub fn start_checks(
     config: &Config,
     cores: &[u32],
     probe_box: u32,
 ) -> anyhow::Result<(SandboxConfig, DiskBound)> {
+    crate::config::check_cache_size(config)?;
     check_pinning(config, cores)?;
     checked_sandbox(config, probe_box)
 }

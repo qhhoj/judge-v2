@@ -1,0 +1,59 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "bridged",
+          "args": {
+            "files": [
+              "checker.cpp",
+              "testlib.h",
+              "limits.hpp",
+              "extra.h"
+            ],
+            "lang": "CPP17",
+            "treat_checker_points_as_percentage": true,
+            "type": "testlib"
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "bridged",
+          "args": {
+            "files": [
+              "checker.cpp",
+              "testlib.h",
+              "limits.hpp",
+              "extra.h"
+            ],
+            "lang": "CPP17",
+            "treat_checker_points_as_percentage": true,
+            "type": "testlib"
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  }
+}

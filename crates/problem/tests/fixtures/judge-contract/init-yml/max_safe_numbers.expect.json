@@ -1,0 +1,39 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 9007199254740991,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": 9007199254740991
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 9007199254740991,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": 9007199254740991
+      }
+    ]
+  }
+}

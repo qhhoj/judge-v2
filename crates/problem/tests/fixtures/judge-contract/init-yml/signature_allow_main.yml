@@ -1,0 +1,10 @@
+archive: "tests.zip"
+checker: "standard"
+signature_grader:
+  allow_main: true
+  entry: "entry.cpp"
+  header: "sig.h"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1

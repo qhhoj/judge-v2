@@ -1,0 +1,87 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 10,
+        "batch": 1,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": 500,
+        "outputPrefix": 3
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 10,
+        "batch": 1,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": 7,
+        "outputPrefix": 0
+      },
+      {
+        "in": "3.in",
+        "out": "3.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": 67108864,
+        "outputPrefix": 9
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 10,
+        "batch": 1,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": 500,
+        "outputPrefix": 3
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 10,
+        "batch": 1,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": 7,
+        "outputPrefix": 0
+      },
+      {
+        "in": "3.in",
+        "out": "3.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": 67108864,
+        "outputPrefix": 9
+      }
+    ]
+  }
+}

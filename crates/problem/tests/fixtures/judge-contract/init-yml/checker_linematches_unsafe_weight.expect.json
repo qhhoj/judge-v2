@@ -1,0 +1,83 @@
+{
+  "accepted": false,
+  "refused": "checkerArgs: The linematches checker: \"point_distribution\" must hold whole numbers of 0 or more.",
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "point_distribution": [
+              1152921504606847000,
+              1
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "point_distribution": [
+              1152921504606847000,
+              1
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "point_distribution": [
+              1152921504606847000,
+              1
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "point_distribution": [
+              1152921504606847000,
+              1
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  }
+}
