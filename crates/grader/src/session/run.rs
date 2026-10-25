@@ -4,7 +4,8 @@
 //! RETRY).
 
 use crate::error::GradeError;
-use crate::session::channel::RingChannel;
+use crate::session::channel::{PipeChannel, RingChannel};
+use judge_sandbox::ChannelFds;
 use judge_sandbox::IsolateBox;
 use judge_sandbox::error::SandboxError;
 use judge_sandbox::spec::{Limits, RunSpec};
@@ -28,8 +29,10 @@ const IGNORE_SIGPIPE: [&str; 3] = ["/bin/sh", "-c", "trap '' PIPE; exec \"$0\" \
 pub enum ChannelPlan {
     /// Two pipes, each side's stdin reads what the other writes to its stdout (interactive problems).
     StdioPipes,
-    /// The split channel on fds 3/4/5 of each box (`channel`): the manager gets `jury`, the contestant
-    /// `contestant`. Both runs must set `inherit_fds`. Every daemon copy is dropped when the spawn returns.
+    /// Two pipes on fds 3/4 of each box (`channel::PipeChannel`, split signature). Both runs must set
+    /// `inherit_fds`. Every daemon copy is dropped when the spawn returns.
+    Pipes(PipeChannel),
+    /// The ring channel on fds 3/4/5 of each box (`channel::RingChannel`), with the same rules.
     Ring(RingChannel),
 }
 
@@ -62,7 +65,8 @@ pub fn spawn_session(
 ) -> Result<Session, GradeError> {
     match channel {
         ChannelPlan::StdioPipes => spawn_piped(manager, contestant),
-        ChannelPlan::Ring(ring) => spawn_ring(manager, contestant, ring),
+        ChannelPlan::Pipes(pipes) => spawn_on_fds(manager, contestant, (pipes.jury, pipes.contestant)),
+        ChannelPlan::Ring(ring) => spawn_on_fds(manager, contestant, (ring.jury, ring.contestant)),
     }
 }
 
@@ -94,14 +98,13 @@ fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<Session,
 }
 
 /// Both command lines are built before either is spawned, so a refused one leaves no isolate running; a failed
-/// second spawn kills and reaps the first. `ring` is consumed: its fds move into the two commands and close in the
-/// daemon when the commands drop, so a box never keeps a peer's doorbell open.
-fn spawn_ring(
+/// second spawn kills and reaps the first. The fds are consumed: they move into the two commands and close in
+/// the daemon when the commands drop, so a box never keeps a peer's end open.
+fn spawn_on_fds(
     manager: &MemberSpec,
     contestant: &MemberSpec,
-    ring: RingChannel,
+    (jury, contestant_fds): (ChannelFds, ChannelFds),
 ) -> Result<Session, GradeError> {
-    let RingChannel { jury, contestant: contestant_fds } = ring;
     let mut manager_command = manager.sandbox.command_with_channel(manager.run, jury)?;
     let mut contestant_command = contestant.sandbox.command_with_channel(contestant.run, contestant_fds)?;
     let mut manager_child = manager_command.spawn()?;
@@ -163,7 +166,6 @@ fn refuse_isolate_failure(statuses: &[Option<ExitStatus>]) -> Result<(), GradeEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::channel::RingChannel;
     use crate::session::fake_isolate::fake_box;
 
     fn spawn(program: &str, args: &[&str]) -> Child {

@@ -703,6 +703,7 @@ name = "judge-grader"
 version = "2.4.1"
 dependencies = [
  "hex",
+ "judge-interface",
  "judge-problem",
  "judge-sandbox",
  "libc",

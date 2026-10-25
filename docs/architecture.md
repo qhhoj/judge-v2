@@ -18,7 +18,7 @@ and `conformance` (test support, no prefix). The binary is `qhhoj-judge`, built 
 | `cli` | package `judge-cli`, the `qhhoj-judge` binary: the daemon (default), `run`, `generate`, `selftest`, `check-config`, `isolate-cpus` |
 | `judge-proto` | tonic and prost types generated from `proto/` at build time (nothing generated is checked in) |
 | `conformance` | the scenario player and scripted fake bridge that pin the protocol (`proto/conformance`) |
-| `interface` | parser for the split-signature header grammar; not used by grading yet |
+| `interface` | split-signature header grammar, roles, generated C++ glue and the RPC runtime (`runtime/`) |
 
 `grader` uses `problem` and `sandbox`, `daemon` uses `grader`, and `cli` uses `daemon`; `judge-proto` is used by `daemon` and
 `conformance`.

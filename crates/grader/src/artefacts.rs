@@ -5,7 +5,7 @@ use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::error::GradeError;
 use crate::languages::{Language, LanguageRegistry};
 use crate::program::{Program, SourceFile};
-use judge_problem::dir_cache::DirCache;
+use judge_problem::dir_cache::{CacheLease, DirCache};
 use judge_problem::resolve::ResolvedProblem;
 use judge_sandbox::IsolateBox;
 use sha2::{Digest, Sha256};
@@ -97,6 +97,22 @@ impl Artefacts {
     /// Host directory mounted read-only at `/testlib` while a program compiles.
     pub fn testlib_dir(&self) -> &std::path::Path {
         &self.setup.testlib_dir
+    }
+
+    /// Any other jury build kept once per content (the split jury): `build` fills the entry's directory the
+    /// first time `files` are seen for `lang` under this compiler. `kind` keeps the keys of each build apart.
+    pub fn cached<F>(
+        &self,
+        kind: &str,
+        (files, lang): (&[SourceFile], &str),
+        build: F,
+    ) -> Result<CacheLease, GradeError>
+    where
+        F: FnOnce(&std::path::Path) -> Result<(), GradeError>,
+    {
+        let build_id = self.setup.build_ids.get(lang).map_or("", String::as_str);
+        let key = format!("{kind}/{}", artefact_key(files, lang, build_id));
+        self.setup.cache.get_or_build(&key, build)
     }
 
     /// Compiles `source` once per key. The returned program's lease keeps the cache entry alive.

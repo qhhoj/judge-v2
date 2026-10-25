@@ -106,6 +106,35 @@ enter it.
   If the interactor dies (exit 3 or a signal), the case is an internal error.
 - Generators and signature graders always run in isolate too.
 
+### Split signature
+
+A `signature_grader` with `split: true` runs the author's `entry` and the contestant's functions in two boxes,
+joined by two pipes (fds 3/4), with C++ glue generated from the problem header (`crates/interface`). The
+contestant box holds only the submission's compiled program; the jury box runs `entry` with its stdin `input`
+and stdout `output`, exactly as the one-process grader had them, so the problem's checker reads the same bytes.
+Roles (which side implements each function) come from the compiled entry: a symbol the entry defines is a
+callback the contestant calls, one it references is a function the contestant implements. The jury is built
+once per language key (compiler parity with the submission) and cached; a failed build is never cached (a
+missing tool is RETRY, a grader that does not build is IE). C submissions are CE (the interface is C++).
+
+Time is CPU, as one process counted it: the contestant is charged its own box's CPU plus the jury CPU spent in
+the callbacks it called. Memory is the contestant box's own. The jury runs under its own limits (CPU
+max(10 s, 2 x TL), memory max(1 GiB, ML)). Verdict, first match: the contestant over its memory or output limit
+-> MLE/OLE; charged time over the TL -> TLE; its wall clock ran out -> IE when the jury's own CPU used the
+waiting time, else TLE; a protocol violation the grader's glue recorded -> WA; the contestant crashed or exited
+non-zero (any code) -> RTE/IR; the jury over its time limit -> IE; the jury over its memory, killed or non-zero
+-> that verdict; otherwise the problem checker on the jury's output.
+
+Differences from one process, by design: each value-returning call costs one pipe round trip of contestant CPU
+(about 3 us on an idle host, more under load; a problem switches only after the gate in `docs/decisions.md`);
+a `const&` result is the jury object's live value, one copy per object, compared and re-sent when changed, so
+the object must stay alive for the whole run (one the grader frees or moves later, e.g. a row of a vector that
+grows, gives RTE or garbage even if the contestant no longer uses it); a
+`const&` parameter of a contestant function is a copy taken at the call (a change the jury makes to that object
+during the call is not seen); a callback from a contestant static constructor aborts (RTE), and `exit` there
+does not flush the grader; an exception never crosses between the two sides (an uncaught one aborts its side).
+`split: false` keeps the one-process path.
+
 ## Languages
 
 Languages are data in `languages.toml`; its header explains the placeholders. TEXT has no runtime: the source is the

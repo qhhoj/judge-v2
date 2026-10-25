@@ -15,7 +15,7 @@ Crates (all 8; naming rule in the architecture page):
 - `cli`: the `qhhoj-judge` binary.
 - `judge-proto`: generated protocol types.
 - `conformance`: the scenario player and fake bridge that pin the protocol.
-- `interface`: split-signature header parser; not used by grading yet.
+- `interface`: split-signature header grammar, role classification, generated glue and the RPC runtime.
 
 Tests: `cargo test --workspace`; the isolate suite: `cargo test -p judge-grader --features isolate -- --test-threads=1` (needs isolate 2.x with `isolate.service`; serialise runs with `flock -o`, never plain `flock`, see CONTRIBUTING.md).
 

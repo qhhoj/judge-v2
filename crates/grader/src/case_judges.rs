@@ -1,4 +1,4 @@
-//! `CaseJudge` implementations: a program, an interactive program, or submitted outputs.
+//! `CaseJudge` implementations: a program, an interactive program, a split signature pair, or submitted outputs.
 //!
 //! Case files are opened once per case through the resolver's checked handles; checkers and the
 //! interactor get `/proc/self/fd/N` paths of those handles, so nothing is looked up again by name.
@@ -13,6 +13,8 @@ use crate::output_only::{OutputSource, output_for_case};
 use crate::program::Program;
 use crate::run_case::{CaseIo, CaseLimits, Runnable, read_prefix, run_case};
 use crate::session::Boxes;
+use crate::session::verdict::{SplitDecision, SplitFacts, decide_split};
+use crate::split::run::{SplitCase, SplitRun, run_split};
 use judge_problem::plan::PlannedCase;
 use judge_problem::resolve::ResolvedProblem;
 use judge_problem::verdict::Status;
@@ -192,6 +194,65 @@ impl CaseJudge for InteractiveCases<'_> {
         let failed = failed.ok_or_else(|| GradeError::Checker("interactor gave no verdict".into()))?;
         Ok(CaseVerdict { jury_time_s: result.jury_time_s, ..failed })
     }
+}
+
+/// Feedback of a split case whose contestant broke the channel protocol.
+pub const PROTOCOL_VIOLATION: &str = "protocol violation";
+
+/// Split signature: the jury program and the contestant program per case (`crate::split`), then the problem's
+/// checker on the jury's output, as `ProgramCases` checks the one program's.
+pub struct SplitCases<'a> {
+    pub context: CaseContext<'a>,
+    pub boxes: Boxes<'a>,
+    pub contestant: Program,
+    pub jury: Program,
+    pub limits: CaseLimits,
+}
+
+impl CaseJudge for SplitCases<'_> {
+    fn judge_case(&mut self, case: &PlannedCase) -> Result<CaseVerdict, GradeError> {
+        let files = open_case(self.context.problem, case)?;
+        let output = self.context.output_path();
+        let runnable = Runnable { program: &self.contestant, limits: &self.limits };
+        let split = SplitCase {
+            contestant: &runnable,
+            jury: &self.jury,
+            input: &files.input,
+            output_cap: case.output_limit,
+        };
+        let boxes = Boxes { solution: &mut *self.boxes.solution, helper: &mut *self.boxes.helper };
+        let run = run_split(boxes, &split, &output)?;
+        let facts = SplitFacts {
+            contestant: &run.contestant,
+            served_s: run.served_s,
+            jury: &run.jury,
+            jury_time_s: run.jury_time_s,
+            protocol_fault: run.protocol_fault,
+            limits: &run.contestant_limits,
+        };
+        let (time_s, memory_kib) = (facts.charged_s(), run.contestant.memory_kib);
+        let verdict = match decide_split(&facts) {
+            SplitDecision::Check => {
+                let outcome = self.context.check(self.boxes.helper, &files, &output)?;
+                checked(outcome, time_s, memory_kib, read_prefix(&output, case.output_prefix))
+            }
+            SplitDecision::Failed(verdict) => failed_run(&verdict, time_s, memory_kib)?
+                .ok_or_else(|| GradeError::Checker("a failed split run without a verdict".into()))?,
+            SplitDecision::ProtocolViolation => {
+                CaseVerdict::failed(Status::Wa, time_s, memory_kib, PROTOCOL_VIOLATION.into())
+            }
+            SplitDecision::JuryStall => return Err(jury_stall(&run)),
+        };
+        Ok(CaseVerdict { jury_time_s: verdict.jury_time_s + run.jury_time_s, ..verdict })
+    }
+}
+
+/// The contestant stayed within its limits while the grader's own work ran out the clock: a problem fault.
+fn jury_stall(run: &SplitRun) -> GradeError {
+    let own = run.jury_time_s - run.served_s;
+    GradeError::Checker(format!(
+        "the grader used {own:.1} s of CPU of its own; the contestant timed out waiting"
+    ))
 }
 
 /// TEXT and OUTPUT submissions: no program runs, so time and memory are 0.

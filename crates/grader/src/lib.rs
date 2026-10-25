@@ -18,3 +18,4 @@ pub mod report;
 pub mod run_case;
 pub mod session;
 pub mod signature;
+pub mod split;

@@ -6,7 +6,7 @@
 
 use crate::artefacts::{Artefacts, HelperSource, read_data_source};
 use crate::case_judges::{
-    CaseContext, Check, InteractiveCases, OutputCases, ProgramCases, UnreadableOutputs,
+    CaseContext, Check, InteractiveCases, OutputCases, ProgramCases, SplitCases, UnreadableOutputs,
 };
 use crate::checkers::custom::{CustomChecker, PartialPoints};
 use crate::checkers::select::{CheckerChoice, CustomKind, choose};
@@ -22,8 +22,12 @@ use crate::report::Reporter;
 use crate::run_case::CaseLimits;
 use crate::session::Boxes;
 use crate::signature::{SIGNATURE_LANGUAGES, signature_job};
+use crate::split::SPLIT_LANGUAGES;
+use crate::split::contestant::contestant_job;
+use crate::split::jury::{SplitJury, build_jury};
+use crate::split::sources::{SplitSources, split_sources};
 use judge_problem::data_version::{DataError, StampSource};
-use judge_problem::init::{CheckerSpec, FilesSpec, InitYaml, InteractiveSpec};
+use judge_problem::init::{CheckerSpec, FilesSpec, InitYaml, InteractiveSpec, SignatureSpec};
 use judge_problem::plan::{CasePlan, PlanOptions, plan_cases};
 use judge_problem::resolve::ResolvedProblem;
 use judge_sandbox::IsolateBox;
@@ -170,6 +174,9 @@ fn try_judge(
     }
     let source = read_source(&submission.source)?;
     let run = Run { plan, submission, reporter };
+    if let Some(spec) = problem.init.signature_grader.as_ref().filter(|spec| spec.split) {
+        return judge_split(env, (problem, spec), (&language, &source), run);
+    }
     if language.kind != LanguageKind::Program {
         grade_outputs(env, problem, (&language, source), run)?;
         return Ok(None);
@@ -251,14 +258,64 @@ fn build_solution(
         },
         None => CompileJob::for_language(language, source),
     };
+    build_in_solution_box(env, language, &job, source)
+}
+
+/// Ok(Ok((program, log))) built, Ok(Err(log)) compile error.
+fn build_in_solution_box(
+    env: &mut JudgeEnv,
+    language: &Language,
+    job: &CompileJob,
+    source: &[u8],
+) -> Result<Result<(Program, String), String>, GradeError> {
     let dir = env.scratch.join("program");
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;
     }
-    match build(&mut env.solution, &job, &dir)? {
+    match build(&mut env.solution, job, &dir)? {
         BuildOutcome::Built { log } => Ok(Ok((program_for(language, &dir, source), log))),
         BuildOutcome::CompileError { log } => Ok(Err(log)),
     }
+}
+
+/// Split signature: the jury program (cached per language key), then the submission against the same header,
+/// then each case as a pair. Ok(Some(log)) is a compile error. A C language cannot implement a C++ interface.
+fn judge_split(
+    env: &mut JudgeEnv,
+    (problem, spec): (&ResolvedProblem, &SignatureSpec),
+    (language, source): (&Language, &[u8]),
+    run: Run,
+) -> Result<Option<String>, GradeError> {
+    if language.signature.is_none() || language.source.ends_with(".c") {
+        return Ok(Some(SPLIT_LANGUAGES.to_string()));
+    }
+    let sources = split_sources(problem, spec)?;
+    let jury = build_jury(&env.artefacts, &mut env.helper, &sources, language)?;
+    let contestant = match build_split_contestant(env, language, (&sources, &jury), source)? {
+        Ok((program, log)) => {
+            run.reporter.compiled(&log);
+            program
+        }
+        Err(log) => return Ok(Some(log)),
+    };
+    let check = check_of(env, problem, &single_checker(&run.plan)?, run.submission.time_limit_s)?;
+    let context = CaseContext { problem, check, scratch: env.scratch.clone() };
+    let limits = limits_of(run.submission, &env.defaults);
+    let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
+    let mut judge = SplitCases { context, boxes, contestant, jury: jury.program, limits };
+    grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)?;
+    Ok(None)
+}
+
+fn build_split_contestant(
+    env: &mut JudgeEnv,
+    language: &Language,
+    (sources, jury): (&SplitSources, &SplitJury),
+    source: &[u8],
+) -> Result<Result<(Program, String), String>, GradeError> {
+    let job = contestant_job(language, sources, &jury.roles, source);
+    let job = job.ok_or_else(|| GradeError::Checker("no signature compiler".into()))?;
+    build_in_solution_box(env, language, &job, source)
 }
 
 /// A problem-author program (checker or interactor) from files next to init.yml, compiled once per hash.
@@ -458,7 +515,7 @@ mod tests {
         let split =
             parse_init("test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h, split: true}\n")
                 .unwrap();
-        assert_eq!(unsupported_feature(&split).as_deref(), Some("signature.split"));
+        assert_eq!(unsupported_feature(&split), None, "one-core split is graded");
         let paired = parse_init(
             "test_cases: []\nsignature_grader: {entry: g.cpp, header: s.h, split: true, cores: 2}\n",
         )
