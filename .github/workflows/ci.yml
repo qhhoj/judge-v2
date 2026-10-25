@@ -18,10 +18,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - name: the PR adds a change file
+      - name: the PR adds a change file (release PRs consume them)
         env:
           BASE: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
+          case "$HEAD_REF" in release/*) echo "release PR: change files are consumed, none expected"; exit 0;; esac
           git diff --name-only --diff-filter=A "origin/$BASE...HEAD" -- '.changeset/*.md' | grep -v '^.changeset/README.md$' | grep -q . \
             || { echo "no new .changeset/*.md: run knope document-change"; exit 1; }
   rust:
