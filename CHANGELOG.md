@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.5.0 (2026-10-25)
+
+### Features
+
+#### Split signature grades the grader and the contestant in separate sandboxes
+
+`signature_grader.split: true` runs the author's entry and the contestant's functions in two isolate boxes
+joined by pipes, with generated C++ glue. The contestant is charged its own CPU plus the CPU of the callbacks
+it calls. The judge advertises `signature.split`. Problems without the key keep the one-process path unchanged.
+
+### Fixes
+
+- The change-file check skips release PRs, so they no longer carry a placeholder note.
+- Assignments with a time limit below 0.01 s or a memory limit below 1024 KiB are refused instead of graded with no CPU limit.
+- A missing problem directory is retried as data unavailable instead of ending as an internal error.
+- Selftest manifest: a program that pads its answer with vertical tabs must be accepted by the standard checker.
+
 ## 2.4.1 (2026-10-25)
 
 ### Fixes
