@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.1 (2026-10-25)
+
+### Fixes
+
+- The standard checker splits tokens on vertical tab as legacy did, and the daemon refuses assignments with a zero, negative, non-finite or oversized limit.
+- The release workflow refreshes Cargo.lock again.
+- Release 2.4.0 carries this note so the change-file check passes.
+
 ## 2.4.0 (2026-10-24)
 
 ### Features
