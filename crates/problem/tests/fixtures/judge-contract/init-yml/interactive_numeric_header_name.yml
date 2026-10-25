@@ -1,0 +1,12 @@
+archive: "tests.zip"
+checker: "standard"
+interactive:
+  files:
+    - "interactor.cpp"
+    - "12e3"
+  lang: "CPP17"
+  type: "testlib"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1

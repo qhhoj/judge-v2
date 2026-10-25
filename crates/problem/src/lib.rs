@@ -9,3 +9,4 @@ pub mod plan;
 pub mod resolve;
 pub mod short_circuit;
 pub mod verdict;
+mod zip_directory;

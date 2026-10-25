@@ -1,0 +1,471 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "08",
+        "out": "0.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "1e5",
+        "out": "1.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "1e-5",
+        "out": "2.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "12e3",
+        "out": "3.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "0o17",
+        "out": "4.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "0x1F",
+        "out": "5.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "1_000",
+        "out": "6.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "yes",
+        "out": "7.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "null",
+        "out": "8.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "-1",
+        "out": "9.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "a b ",
+        "out": "10.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "x:y.in",
+        "out": "11.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "#a.in",
+        "out": "12.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "-a.in",
+        "out": "13.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "q\"uote.in",
+        "out": "14.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "đề 1.inp",
+        "out": "15.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "😀.in",
+        "out": "16.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "ab.in",
+        "out": "17.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "tab\there.in",
+        "out": "18.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "08",
+        "out": "0.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "1e5",
+        "out": "1.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "1e-5",
+        "out": "2.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "12e3",
+        "out": "3.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "0o17",
+        "out": "4.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "0x1F",
+        "out": "5.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "1_000",
+        "out": "6.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "yes",
+        "out": "7.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "null",
+        "out": "8.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "-1",
+        "out": "9.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "a b ",
+        "out": "10.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "x:y.in",
+        "out": "11.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "#a.in",
+        "out": "12.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "-a.in",
+        "out": "13.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "q\"uote.in",
+        "out": "14.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "đề 1.inp",
+        "out": "15.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "😀.in",
+        "out": "16.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "ab.in",
+        "out": "17.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "tab\there.in",
+        "out": "18.ans",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  }
+}

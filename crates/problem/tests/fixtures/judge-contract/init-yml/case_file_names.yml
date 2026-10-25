@@ -1,0 +1,62 @@
+archive: "tests.zip"
+checker: "standard"
+hints:
+  - "unicode"
+test_cases:
+  - in: "08"
+    out: "0.ans"
+    points: 1
+  - in: "1e5"
+    out: "1.ans"
+    points: 1
+  - in: "1e-5"
+    out: "2.ans"
+    points: 1
+  - in: "12e3"
+    out: "3.ans"
+    points: 1
+  - in: "0o17"
+    out: "4.ans"
+    points: 1
+  - in: "0x1F"
+    out: "5.ans"
+    points: 1
+  - in: "1_000"
+    out: "6.ans"
+    points: 1
+  - in: "yes"
+    out: "7.ans"
+    points: 1
+  - in: "null"
+    out: "8.ans"
+    points: 1
+  - in: "-1"
+    out: "9.ans"
+    points: 1
+  - in: "a b "
+    out: "10.ans"
+    points: 1
+  - in: "x:y.in"
+    out: "11.ans"
+    points: 1
+  - in: "#a.in"
+    out: "12.ans"
+    points: 1
+  - in: "-a.in"
+    out: "13.ans"
+    points: 1
+  - in: "q\"uote.in"
+    out: "14.ans"
+    points: 1
+  - in: "đề 1.inp"
+    out: "15.ans"
+    points: 1
+  - in: "😀.in"
+    out: "16.ans"
+    points: 1
+  - in: "a\u0085b.in"
+    out: "17.ans"
+    points: 1
+  - in: "tab\there.in"
+    out: "18.ans"
+    points: 1

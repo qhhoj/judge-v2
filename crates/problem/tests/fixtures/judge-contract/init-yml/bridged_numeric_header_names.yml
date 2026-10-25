@@ -1,0 +1,14 @@
+archive: "tests.zip"
+checker:
+  args:
+    files:
+      - "checker.cpp"
+      - "1e5"
+      - "0o17"
+    lang: "CPP17"
+    type: "testlib"
+  name: "bridged"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1

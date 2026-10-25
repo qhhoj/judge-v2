@@ -17,3 +17,7 @@ flock -o /path/to/isolate.lock cargo test --locked -p judge-sandbox -p judge-gra
 ```
 
 `-o` closes the lock fd before the tests start. Channel runs (`--inherit-fds`) refuse to start while the process holds any fd that is not close-on-exec, and `flock` without `-o` passes its lock fd on. The same holds for any wrapper that starts the tests or the daemon: it must pass only fds 0-2. CI starts its test steps through `.github/scripts/only-stdio.sh`, which closes the inheritable fds the GitHub runner passes to each step.
+
+## Backend contract fixtures
+
+`crates/problem/tests/fixtures/judge-contract` is a copy of backend-v2's `libs/problems/src/judge-contract/fixtures`, written by the backend's real init.yml writer, archive reader and `ZIP_LIMITS`. `judge_contract_init_yml` (grader) and `judge_contract_zips` (problem) check that the judge reads each file as the backend meant, and that `BACKEND_ARCHIVE_MAX_BYTES` matches the backend's cap. Never edit the copy: refresh it from a backend-v2 checkout whose fixtures are committed, `cp -r ../backend-v2/libs/problems/src/judge-contract/fixtures/. crates/problem/tests/fixtures/judge-contract/`, and commit. A failure after a refresh is a real mismatch: fix the side that is wrong, not the fixture.

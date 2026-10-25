@@ -1,0 +1,111 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 0,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "3.in",
+        "out": "3.out",
+        "total": 20,
+        "batch": 1,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "4.in",
+        "out": "4.out",
+        "total": 0,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "5.in",
+        "out": "5.out",
+        "total": 7,
+        "batch": 2,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": true,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "3.in",
+        "out": "3.out",
+        "total": 20,
+        "batch": 1,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "4.in",
+        "out": "4.out",
+        "total": 5,
+        "batch": null,
+        "checker": {
+          "name": "standard",
+          "args": {}
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  }
+}

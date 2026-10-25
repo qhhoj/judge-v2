@@ -1,4 +1,5 @@
-//! Zip extraction under limits: no traversal, no symlinks, no lying sizes (docs/grading.md#caching-and-data-version).
+//! Zip extraction under limits: no traversal, no symlinks, no lying sizes, and only archives the backend's reader
+//! reads the same way (docs/grading.md#caching-and-data-version).
 
 use crate::data_version::DataError;
 use std::io::Read;
@@ -16,6 +17,12 @@ impl Default for ZipLimits {
     }
 }
 
+/// The most an archive the backend accepts extracts to (its `ZIP_LIMITS.maxTotalBytes`; the contract test compares
+/// the two).
+pub const BACKEND_ARCHIVE_MAX_BYTES: u64 = 2 << 30;
+/// The smallest `cache_max_bytes` the daemon runs with: half of it must hold the largest archive the backend accepts.
+pub const MIN_CACHE_MAX_BYTES: u64 = 2 * BACKEND_ARCHIVE_MAX_BYTES;
+
 impl ZipLimits {
     /// One archive may fill at most half the cache, so one upload cannot evict everything else.
     pub fn for_cache(cache_max_bytes: u64) -> Self {
@@ -29,12 +36,14 @@ fn archive_error(message: impl std::fmt::Display) -> DataError {
 }
 
 /// Zips made on Windows store `tests\1.in`; `\` is a separator, never part of a name. The segments are
-/// checked after the conversion.
+/// checked after the conversion. A control character never reaches a name the backend shows (it refuses them,
+/// and shows CP437 control bytes as symbols), so a case could not name the file.
 fn safe_relative(name: &str) -> Result<PathBuf, DataError> {
     let name = name.replace('\\', "/");
     let path = Path::new(&name);
     let normal = path.components().all(|c| matches!(c, Component::Normal(_)));
-    if name.is_empty() || !normal {
+    let control = name.chars().any(|c| c < ' ' || c == '\u{7f}');
+    if name.is_empty() || !normal || control {
         return Err(archive_error(format!("unsafe entry name {name:?}")));
     }
     Ok(path.to_path_buf())
@@ -42,19 +51,63 @@ fn safe_relative(name: &str) -> Result<PathBuf, DataError> {
 
 const S_IFMT: u32 = 0o170000;
 const S_IFLNK: u32 = 0o120000;
+const UNICODE_PATH: u16 = 0x7075;
+const UNICODE_PATH_VERSION: u8 = 1;
+
+/// The data of each Info-ZIP Unicode Path field among an entry's extra fields.
+fn unicode_paths(mut extra: &[u8]) -> Vec<&[u8]> {
+    let mut fields = Vec::new();
+    while let [id_low, id_high, len_low, len_high, rest @ ..] = extra {
+        let len = usize::from(u16::from_le_bytes([*len_low, *len_high])).min(rest.len());
+        if u16::from_le_bytes([*id_low, *id_high]) == UNICODE_PATH {
+            fields.push(&rest[..len]);
+        }
+        extra = &rest[len..];
+    }
+    fields
+}
+
+/// The crate names an entry after its last Unicode Path field of any version, the backend after the first
+/// version-1 one: only a single version-1 field names it the same on both.
+fn unicode_path_agrees(extra: Option<&[u8]>) -> bool {
+    match unicode_paths(extra.unwrap_or_default()).as_slice() {
+        [] => true,
+        [field] => field.first() == Some(&UNICODE_PATH_VERSION),
+        _ => false,
+    }
+}
+
+/// Where the entry goes, or why the judge refuses it.
+fn entry_path(entry: &zip::read::ZipFile) -> Result<PathBuf, DataError> {
+    if entry.unix_mode().is_some_and(|mode| mode & S_IFMT == S_IFLNK) {
+        return Err(archive_error(format!("symlink entry {:?}", entry.name())));
+    }
+    if !unicode_path_agrees(entry.extra_data()) {
+        return Err(archive_error(format!("entry {:?} has an ambiguous Unicode path", entry.name())));
+    }
+    safe_relative(entry.name())
+}
+
+/// Opens the archive at the central directory its end records name, the one the backend read.
+fn open_named_directory(file: &std::fs::File) -> Result<zip::ZipArchive<&std::fs::File>, DataError> {
+    let named = crate::zip_directory::named_directory(file).map_err(archive_error)?;
+    let archive = zip::ZipArchive::new(file).map_err(archive_error)?;
+    if archive.offset() != 0 || archive.central_directory_start() != named.start {
+        return Err(archive_error("the central directory read is not the one the end records name"));
+    }
+    Ok(archive)
+}
 
 pub fn extract_zip(zip: &Path, into: &Path, limits: &ZipLimits) -> Result<(), DataError> {
-    let mut archive = zip::ZipArchive::new(crate::data_version::regular_file(zip)?).map_err(archive_error)?;
+    let file = crate::data_version::regular_file(zip)?;
+    let mut archive = open_named_directory(&file)?;
     if archive.len() > limits.max_entries {
         return Err(archive_error(format!("more than {} entries", limits.max_entries)));
     }
     let mut budget = limits.max_total_bytes;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(archive_error)?;
-        if entry.unix_mode().is_some_and(|mode| mode & S_IFMT == S_IFLNK) {
-            return Err(archive_error(format!("symlink entry {:?}", entry.name())));
-        }
-        let relative = safe_relative(entry.name())?;
+        let relative = entry_path(&entry)?;
         if entry.is_dir() {
             std::fs::create_dir_all(into.join(&relative))?;
             continue;

@@ -1,0 +1,9 @@
+archive: "tests.zip"
+checker: "standard"
+file_io:
+  input: "dữliệu.inp"
+  output: "kết quả.out"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1

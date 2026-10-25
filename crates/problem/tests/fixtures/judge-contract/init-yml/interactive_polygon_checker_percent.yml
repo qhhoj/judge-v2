@@ -1,0 +1,33 @@
+archive: "tests.zip"
+checker:
+  args:
+    files:
+      - "checker.cpp"
+      - "testlib.h"
+    lang: "CPP17"
+    treat_checker_points_as_percentage: true
+    type: "testlib"
+  name: "bridged"
+interactive:
+  checker:
+    args:
+      files:
+        - "checker.cpp"
+        - "testlib.h"
+      lang: "CPP17"
+      treat_checker_points_as_percentage: true
+      type: "testlib"
+    name: "bridged"
+  files:
+    - "interactor.cpp"
+    - "testlib.h"
+  lang: "CPP17"
+  treat_checker_points_as_percentage: true
+  type: "testlib"
+test_cases:
+  - in: "1.in"
+    out: "1.out"
+    points: 1
+  - in: "2.in"
+    out: "2.out"
+    points: 1

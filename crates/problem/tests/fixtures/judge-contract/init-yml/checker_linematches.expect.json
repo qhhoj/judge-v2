@@ -1,0 +1,91 @@
+{
+  "accepted": true,
+  "refused": null,
+  "feedback": null,
+  "full": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "filler_lines_required": false,
+            "point_distribution": [
+              1,
+              0,
+              3
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "filler_lines_required": false,
+            "point_distribution": [
+              1,
+              0,
+              3
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  },
+  "pretest": {
+    "pretested": false,
+    "cases": [
+      {
+        "in": "1.in",
+        "out": "1.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "filler_lines_required": false,
+            "point_distribution": [
+              1,
+              0,
+              3
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      },
+      {
+        "in": "2.in",
+        "out": "2.out",
+        "total": 1,
+        "batch": null,
+        "checker": {
+          "name": "linematches",
+          "args": {
+            "filler_lines_required": false,
+            "point_distribution": [
+              1,
+              0,
+              3
+            ]
+          }
+        },
+        "outputLimit": null,
+        "outputPrefix": null
+      }
+    ]
+  }
+}

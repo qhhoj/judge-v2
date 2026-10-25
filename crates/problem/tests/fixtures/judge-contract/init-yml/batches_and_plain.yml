@@ -1,0 +1,16 @@
+archive: "tests.zip"
+checker: "standard"
+test_cases:
+  - batched:
+      - in: "1.in"
+        out: "1.out"
+      - in: "2.in"
+        out: "2.out"
+    points: 30
+  - in: "3.in"
+    out: "3.out"
+    points: 10
+  - batched:
+      - in: "4.in"
+        out: "4.out"
+    points: 60

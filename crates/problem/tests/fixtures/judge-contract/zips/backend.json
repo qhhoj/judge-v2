@@ -1,0 +1,245 @@
+{
+  "control": {
+    "accepted": true,
+    "files": {
+      "1.in": "1\n",
+      "1.out": "1\n"
+    }
+  },
+  "info_zip_style_utf8": {
+    "accepted": true,
+    "files": {
+      "đề bài/1.inp": "1\n",
+      "đề bài/1.out": "1\n"
+    }
+  },
+  "cp437_high_bytes": {
+    "accepted": true,
+    "files": {
+      "hÇ.in": "1\n",
+      "hü.in": "1\n",
+      "hé.in": "1\n",
+      "hâ.in": "1\n",
+      "hä.in": "1\n",
+      "hà.in": "1\n",
+      "hå.in": "1\n",
+      "hç.in": "1\n",
+      "hê.in": "1\n",
+      "hë.in": "1\n",
+      "hè.in": "1\n",
+      "hï.in": "1\n",
+      "hî.in": "1\n",
+      "hì.in": "1\n",
+      "hÄ.in": "1\n",
+      "hÅ.in": "1\n",
+      "hÉ.in": "1\n",
+      "hæ.in": "1\n",
+      "hÆ.in": "1\n",
+      "hô.in": "1\n",
+      "hö.in": "1\n",
+      "hò.in": "1\n",
+      "hû.in": "1\n",
+      "hù.in": "1\n",
+      "hÿ.in": "1\n",
+      "hÖ.in": "1\n",
+      "hÜ.in": "1\n",
+      "h¢.in": "1\n",
+      "h£.in": "1\n",
+      "h¥.in": "1\n",
+      "h₧.in": "1\n",
+      "hƒ.in": "1\n",
+      "há.in": "1\n",
+      "hí.in": "1\n",
+      "hó.in": "1\n",
+      "hú.in": "1\n",
+      "hñ.in": "1\n",
+      "hÑ.in": "1\n",
+      "hª.in": "1\n",
+      "hº.in": "1\n",
+      "h¿.in": "1\n",
+      "h⌐.in": "1\n",
+      "h¬.in": "1\n",
+      "h½.in": "1\n",
+      "h¼.in": "1\n",
+      "h¡.in": "1\n",
+      "h«.in": "1\n",
+      "h».in": "1\n",
+      "h░.in": "1\n",
+      "h▒.in": "1\n",
+      "h▓.in": "1\n",
+      "h│.in": "1\n",
+      "h┤.in": "1\n",
+      "h╡.in": "1\n",
+      "h╢.in": "1\n",
+      "h╖.in": "1\n",
+      "h╕.in": "1\n",
+      "h╣.in": "1\n",
+      "h║.in": "1\n",
+      "h╗.in": "1\n",
+      "h╝.in": "1\n",
+      "h╜.in": "1\n",
+      "h╛.in": "1\n",
+      "h┐.in": "1\n",
+      "h└.in": "1\n",
+      "h┴.in": "1\n",
+      "h┬.in": "1\n",
+      "h├.in": "1\n",
+      "h─.in": "1\n",
+      "h┼.in": "1\n",
+      "h╞.in": "1\n",
+      "h╟.in": "1\n",
+      "h╚.in": "1\n",
+      "h╔.in": "1\n",
+      "h╩.in": "1\n",
+      "h╦.in": "1\n",
+      "h╠.in": "1\n",
+      "h═.in": "1\n",
+      "h╬.in": "1\n",
+      "h╧.in": "1\n",
+      "h╨.in": "1\n",
+      "h╤.in": "1\n",
+      "h╥.in": "1\n",
+      "h╙.in": "1\n",
+      "h╘.in": "1\n",
+      "h╒.in": "1\n",
+      "h╓.in": "1\n",
+      "h╫.in": "1\n",
+      "h╪.in": "1\n",
+      "h┘.in": "1\n",
+      "h┌.in": "1\n",
+      "h█.in": "1\n",
+      "h▄.in": "1\n",
+      "h▌.in": "1\n",
+      "h▐.in": "1\n",
+      "h▀.in": "1\n",
+      "hα.in": "1\n",
+      "hß.in": "1\n",
+      "hΓ.in": "1\n",
+      "hπ.in": "1\n",
+      "hΣ.in": "1\n",
+      "hσ.in": "1\n",
+      "hµ.in": "1\n",
+      "hτ.in": "1\n",
+      "hΦ.in": "1\n",
+      "hΘ.in": "1\n",
+      "hΩ.in": "1\n",
+      "hδ.in": "1\n",
+      "h∞.in": "1\n",
+      "hφ.in": "1\n",
+      "hε.in": "1\n",
+      "h∩.in": "1\n",
+      "h≡.in": "1\n",
+      "h±.in": "1\n",
+      "h≥.in": "1\n",
+      "h≤.in": "1\n",
+      "h⌠.in": "1\n",
+      "h⌡.in": "1\n",
+      "h÷.in": "1\n",
+      "h≈.in": "1\n",
+      "h°.in": "1\n",
+      "h∙.in": "1\n",
+      "h·.in": "1\n",
+      "h√.in": "1\n",
+      "hⁿ.in": "1\n",
+      "h².in": "1\n",
+      "h■.in": "1\n",
+      "h .in": "1\n"
+    }
+  },
+  "utf8_flag_invalid_bytes": {
+    "accepted": true,
+    "files": {
+      "u0���.in": "1\n",
+      "u1�.in": "1\n",
+      "u2��.in": "1\n",
+      "u3�.in": "1\n",
+      "u4�.in": "1\n"
+    }
+  },
+  "zip64_end_record": {
+    "accepted": true,
+    "files": {
+      "1.in": "1\n",
+      "1.out": "1\n"
+    }
+  },
+  "unicode_path_valid": {
+    "accepted": true,
+    "files": {
+      "đề 1.in": "1\n",
+      "đề 1.out": "1\n"
+    }
+  },
+  "unicode_path_bad_crc": {
+    "accepted": false,
+    "error": "1.in has an invalid Unicode path."
+  },
+  "unicode_path_version_2": {
+    "accepted": false,
+    "error": "1.out has an invalid Unicode path."
+  },
+  "unicode_path_two_fields": {
+    "accepted": false,
+    "error": "1.in has a repeated extra field."
+  },
+  "unicode_path_empty": {
+    "accepted": false,
+    "error": "1.in has an invalid Unicode path."
+  },
+  "unicode_path_invalid_utf8": {
+    "accepted": false,
+    "error": "1�.in has an invalid Unicode path."
+  },
+  "cp437_control_bytes": {
+    "accepted": false,
+    "error": "File names must not contain control characters."
+  },
+  "extended_timestamp_length_mismatch": {
+    "accepted": false,
+    "error": "1.in has a malformed timestamp field."
+  },
+  "extended_timestamp_unknown_flag": {
+    "accepted": false,
+    "error": "1.in has a malformed timestamp field."
+  },
+  "ntfs_times_bad_length": {
+    "accepted": false,
+    "error": "1.in has a malformed NTFS times field."
+  },
+  "aes_field_unencrypted": {
+    "accepted": false,
+    "error": "1.in carries an unsupported extra field."
+  },
+  "zip64_field_redirect": {
+    "accepted": false,
+    "error": "1.out has a zip64 field that contradicts its header."
+  },
+  "nested_archive": {
+    "accepted": false,
+    "error": "notes.zip carries an unsupported extra field."
+  },
+  "end_record_counts_disagree": {
+    "accepted": false,
+    "error": "Archive central directory is inconsistent."
+  },
+  "zip64_end_records_disagree": {
+    "accepted": false,
+    "error": "Archive central directory is inconsistent."
+  },
+  "file_and_directory_same_name": {
+    "accepted": false,
+    "error": "A file and a folder share a name: a/1.in"
+  },
+  "long_segment_vietnamese": {
+    "accepted": false,
+    "error": "đề bài ệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệệ.pd is too long: at most 255 bytes per folder or file name and 1024 in all."
+  },
+  "long_path": {
+    "accepted": false,
+    "error": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd is too long: at most 255 bytes per folder or file name and 1024 in all."
+  },
+  "symlink_directory": {
+    "accepted": false,
+    "error": "Symbolic links are not allowed: link/"
+  }
+}

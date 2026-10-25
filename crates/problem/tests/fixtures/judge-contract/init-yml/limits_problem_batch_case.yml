@@ -1,0 +1,19 @@
+archive: "tests.zip"
+checker: "standard"
+output_limit_length: 1000
+output_prefix_length: 9
+test_cases:
+  - batched:
+      - in: "1.in"
+        out: "1.out"
+      - in: "2.in"
+        out: "2.out"
+        output_limit_length: 7
+        output_prefix_length: 0
+    output_limit_length: 500
+    output_prefix_length: 3
+    points: 10
+  - in: "3.in"
+    out: "3.out"
+    output_limit_length: 67108864
+    points: 1
