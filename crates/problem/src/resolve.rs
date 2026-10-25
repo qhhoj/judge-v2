@@ -68,10 +68,18 @@ pub struct Resolver {
 
 impl Resolver {
     /// Two passes: init.yml and the extracted archive are accepted only if the stamp is the same before
-    /// and after (and no upload is running). A second disagreement is `Unavailable`.
+    /// and after (and no upload is running). A second disagreement is `Unavailable`, and so is a missing
+    /// `<root>/<code>`.
     pub fn resolve(&self, code: &str, assigned: u64) -> Result<ResolvedProblem, DataError> {
         let dir = problem_dir(&self.root, code)?;
-        if !std::fs::symlink_metadata(&dir)?.file_type().is_dir() {
+        let meta = match std::fs::symlink_metadata(&dir) {
+            // Not synced yet, or a code the bridge has not caught up with: a retry, like a lagging stamp.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(DataError::Unavailable { assigned, found: None });
+            }
+            other => other?,
+        };
+        if !meta.file_type().is_dir() {
             return Err(DataError::Io(format!("{} is not a real directory", dir.display())));
         }
         for _ in 0..2 {
@@ -194,6 +202,15 @@ mod tests {
         assert_eq!(problem.data_version_used, 3);
         assert_eq!(read_all(problem.open_case_file("1.in").unwrap()), b"1 2\n");
         assert_eq!(read_all(problem.open_case_file("sub/1.in").unwrap()), b"4\n");
+    }
+
+    #[test]
+    fn a_missing_problem_dir_is_unavailable_not_an_io_error() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), Some("3\n"));
+        std::fs::rename(root.path().join("sum"), root.path().join("moved")).unwrap();
+        let error = resolver(root.path(), cache.path()).resolve("sum", 3).unwrap_err();
+        assert_eq!(error, DataError::Unavailable { assigned: 3, found: None }, "a retry, never IE");
     }
 
     #[test]
