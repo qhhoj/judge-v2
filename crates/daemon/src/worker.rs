@@ -226,6 +226,9 @@ struct Prepared {
 
 async fn prepare(deps: &WorkerDeps, job: &Job) -> Result<Prepared, Outcome> {
     let a = &job.assignment;
+    if let Some(reason) = a.limits_error() {
+        return Err(Outcome::InternalError(reason));
+    }
     let source = source(deps, job).await?;
     if job.aborted() {
         return Err(Outcome::Aborted);
