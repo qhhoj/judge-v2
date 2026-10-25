@@ -5,6 +5,7 @@
 # `qhhoj-judge selftest` (this directory ships in the release).
 rows = [
   { lang = "C", file = "C/ac.c", expect = "AC" },
+  { lang = "C", file = "C/ac_vtab.c", expect = "AC" }, # \v around the answer is whitespace
   { lang = "C", file = "C/wa.c", expect = "WA" },
   { lang = "C", file = "C/tle.c", expect = "TLE" },
   { lang = "C", file = "C/tle_sleep.c", expect = "TLE" },
