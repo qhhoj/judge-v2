@@ -7,7 +7,6 @@ refuse() { if grep -q "^$1" "$unit"; then echo "must not set: $1" >&2; exit 1; f
 need "Requires=isolate.service"
 need "LoadCredential=judge-key:/etc/qhhoj-judge/key"
 need "Restart=always"
-need "MemoryLow=512M"
 need "TimeoutStopSec=150"
 need "ProtectSystem=strict"
 need "ReadOnlyPaths=/srv/qhhoj/problem-data"

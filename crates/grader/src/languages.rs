@@ -144,15 +144,17 @@ pub fn jdk_etc_dir(default_java: &Path) -> Option<String> {
 
 /// The directory above the one holding the real file `program` resolves to: `/usr/lib/jvm/java-NN-openjdk-<arch>`
 /// for the JDK's `bin/java`, `/opt/pypy` for a portable PyPy's `bin/pypy3.9`. None when `program` is missing or
-/// that directory is a system prefix (a runtime installed straight into `/usr/bin`): never preload all of `/usr`.
+/// that directory is a system prefix (a runtime installed straight into `/usr/bin`) or one level below `/` (`/opt`,
+/// `/srv`, `/home` for a binary in `/opt/bin`): never preload a whole tree of the host.
 pub fn runtime_home(program: &str) -> Option<String> {
     install_home(&std::fs::canonicalize(program).ok()?)
 }
 
-/// The directory above `real_program`'s, unless it is a system prefix.
+/// The directory above `real_program`'s, unless it is a system prefix or has fewer than two components.
 fn install_home(real_program: &Path) -> Option<String> {
     let home = real_program.parent()?.parent()?;
-    let system = ["/", "/usr", "/usr/local"].iter().any(|prefix| home == Path::new(prefix));
+    let shallow = home.components().count() < 3; // the root and two names: `/opt/pypy`
+    let system = shallow || home == Path::new("/usr/local");
     (!system).then(|| home.to_string_lossy().into_owned())
 }
 
@@ -413,6 +415,8 @@ mod tests {
             None,
             "Debian's pypy3: /usr is not a runtime"
         );
+        assert_eq!(install_home(Path::new("/opt/bin/pypy3")), None, "a binary in /opt/bin: not all of /opt");
+        assert_eq!(install_home(Path::new("/opt/pypy/bin/pypy3.9")).as_deref(), Some("/opt/pypy"));
     }
 
     #[test]

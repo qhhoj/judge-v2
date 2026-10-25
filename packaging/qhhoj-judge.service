@@ -8,8 +8,6 @@
 #   - UMask=0022 (not 0077): the sandbox runs as isolate's own uid and must read the program and the case
 #     input the daemon copies into /box; a 0077 umask would make those directories unreadable.
 #     CacheDirectoryMode=0700 keeps the cache itself private.
-# MemoryLow=512M protects from reclaim the runtime page cache the judge preloads before each run (the JDK's lib,
-# ~235 MiB, and PyPy, ~140 MiB, plus the daemon; docs/grading.md#memory): evicted, the next run would be charged it.
 [Unit]
 Description=QHHOJ judge (judge-v2)
 Documentation=file:///opt/qhhoj-judge/current/README.md
@@ -26,7 +24,6 @@ Group=qhhoj-judge
 ExecStart=/opt/qhhoj-judge/current/qhhoj-judge --config /etc/qhhoj-judge/config.toml
 LoadCredential=judge-key:/etc/qhhoj-judge/key
 Restart=always
-MemoryLow=512M
 RestartSec=3
 KillSignal=SIGTERM
 KillMode=mixed
