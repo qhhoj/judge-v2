@@ -1,3 +1,4 @@
+use super::text::trim_space;
 use super::tokens::open;
 use super::{CheckError, CheckInput, CheckOutcome, Checker};
 use std::io::{self, BufRead};
@@ -22,8 +23,8 @@ impl<R: BufRead> Lines<R> {
             if !self.read_segment()? {
                 return Ok(None);
             }
-            if !self.line.trim_ascii().is_empty() {
-                return Ok(Some(self.line.trim_ascii()));
+            if !trim_space(&self.line).is_empty() {
+                return Ok(Some(trim_space(&self.line)));
             }
         }
     }
@@ -102,7 +103,7 @@ mod tests {
     #[test]
     fn partial_points_per_trimmed_line_and_extra_lines_earn_nothing() {
         // (output, answer, passed, fraction)
-        let table: [(&[u8], &[u8], bool, f64); 7] = [
+        let table: [(&[u8], &[u8], bool, f64); 8] = [
             (b"a\n b \nx\n", b"a\nb\nc\nd\n", false, 0.5),
             (b"a\nb\n\n\n", b"a\nb\n", true, 1.0), // trailing blank lines are ignored
             (b"a\nb\nzzz\n", b"a\nb\n", false, 0.0), // an extra line earns nothing
@@ -110,6 +111,7 @@ mod tests {
             (b"a\rb\r", b"a\nb\n", true, 1.0),     // carriage return also ends a line
             (b"\n\n", b"", true, 1.0),
             (b"x", b"", false, 0.0),
+            (b"\x0ba\x0b\n", b"a\n", true, 1.0), // vertical tab is trimmed like other whitespace
         ];
         for (output, answer, passed, fraction) in table {
             let r = run(&LineCount, output, answer);

@@ -3,6 +3,7 @@
 //! line breaks stay significant: `1 2` and `1\n2` differ.
 
 use super::CheckError;
+use super::text::is_space as is_space_byte;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
@@ -100,8 +101,7 @@ fn utf8_len(lead: u8) -> usize {
 
 fn is_space(bytes: &[u8]) -> bool {
     if let [single] = bytes {
-        // C `isspace`, as the legacy checker split: ASCII whitespace plus vertical tab.
-        return single.is_ascii_whitespace() || *single == 0x0B;
+        return is_space_byte(*single);
     }
     std::str::from_utf8(bytes).ok().and_then(|s| s.chars().next()).is_some_and(char::is_whitespace)
 }
