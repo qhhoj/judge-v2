@@ -6,7 +6,9 @@
 # (resolved at load; a language whose directory is missing on the host is not advertised).
 # preload: runtime files or trees the judge reads into the page cache before each compile and run, so the kernel
 # charges their pages to the judge, not to the box whose memory is measured (sandbox/src/preload.rs). {runtime} is
-# the directory above the one holding the run command's real file (the JDK for bin/java), never /usr itself.
+# the directory above the one holding the run command's real file (the JDK for bin/java), never / or a directory
+# one level below it, /usr/local included; entries naming it are dropped on a host where it does not resolve.
+# Other entries are absolute paths, files or trees, taken as written (never /, /usr or /usr/local themselves).
 # compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
 
 [[language]]
@@ -126,10 +128,11 @@ run = ["/usr/bin/pypy3", "main.py"]
 # PyPy sizes its GC from the host (nursery = cache/2, 1M to 130M seen; max delta = RAM/8), so verdicts near the
 # memory limit varied by CPU: pin the documented 4M nursery default and the 2GB delta of a 16 GiB host.
 env = { PYPY_GC_NURSERY = "4M", PYPY_GC_MAX_DELTA = "2GB" }
-# A PyPy that is first to read libpypy (bin/) and the stdlib it imports at start (lib/) is charged their page
-# cache (58 MiB for a hello world, with no reserve above the limit): preloaded, as the JDK is. A Debian pypy3 in
-# /usr/bin has no {runtime}, so nothing is preloaded and check-config warns.
-preload = ["{runtime}/bin", "{runtime}/lib"]
+# A PyPy that is first to read libpypy and the stdlib it imports at start is charged their page cache (58 MiB for
+# a hello world, with no reserve above the limit): preloaded, as the JDK is. Both layouts are listed: a portable
+# PyPy ({runtime}/bin holds libpypy, {runtime}/lib the stdlib) and Ubuntu's pypy3 package (a launcher in /usr/bin,
+# so no {runtime}); check-config warns only when none of them exists.
+preload = ["{runtime}/bin", "{runtime}/lib", "/usr/lib/x86_64-linux-gnu/libpypy3.9-c.so", "/usr/lib/pypy3.9"]
 version = ["/usr/bin/pypy3", "--version"]
 exception_marker = "Traceback (most recent call last)"
 exception_style = "last_line"

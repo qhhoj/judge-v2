@@ -5,6 +5,7 @@ mod common;
 use common::{installed, language_or_skip, registry, sandbox, sandbox_on};
 use judge_grader::compile::{BuildOutcome, CompileJob, build, program_for};
 use judge_grader::error::GradeError;
+use judge_grader::languages::LanguageRegistry;
 use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
 use judge_sandbox::classify::RunVerdict;
 
@@ -135,9 +136,15 @@ fn a_jvm_reports_the_same_memory_whatever_the_hosts_ram() {
     assert!(small.abs_diff(large) * 10 < large, "{small} KiB on a 2 GiB host, {large} KiB on a 64 GiB host");
 }
 
-/// Drops the page cache of every file under `dir` that no process maps, as a reboot or memory pressure does.
-fn evict_page_cache(dir: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+/// Drops the page cache of `path`, or of every file under it, that no process maps, as a reboot or memory
+/// pressure does.
+fn evict_page_cache(path: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        if let Ok(file) = std::fs::File::open(path) {
+            rustix::fs::fadvise(&file, 0, None, rustix::fs::Advice::DontNeed).unwrap();
+        }
+        return;
+    };
     for entry in entries.flatten() {
         let kind = entry.file_type().unwrap();
         if kind.is_dir() {
@@ -166,7 +173,7 @@ fn a_jvm_reports_the_same_memory_whether_or_not_the_jdk_is_in_the_page_cache() {
 /// PYPY3 as shipped; on a host without it, a portable PyPy at `JUDGE_TEST_PYPY_HOME` (an unpacked pypy3.9
 /// tarball), bound into the box at its own path. None (skip) without either.
 fn pypy() -> Option<judge_grader::languages::Language> {
-    let mut language = registry().get("PYPY3").unwrap().clone();
+    let language = registry().get("PYPY3").unwrap().clone();
     if installed(&language) {
         return Some(language);
     }
@@ -174,12 +181,11 @@ fn pypy() -> Option<judge_grader::languages::Language> {
         eprintln!("skip: PYPY3 (not installed and no JUDGE_TEST_PYPY_HOME)");
         return None;
     };
-    let pypy = format!("{home}/bin/pypy3");
-    language.run[0] = pypy.clone();
-    language.compile.as_mut().expect("PYPY3 compiles")[0] = pypy;
+    // The shipped entry with the portable binary, so its `{runtime}` preload resolves against it.
+    let shipped = common::SHIPPED.replace("\"/usr/bin/pypy3\"", &format!("\"{home}/bin/pypy3\""));
+    let mut language = LanguageRegistry::from_toml(&shipped).unwrap().get("PYPY3").unwrap().clone();
     language.dirs.push(home.clone());
     language.compile_dirs.push(home);
-    language.resolve_runtime();
     Some(language)
 }
 
@@ -192,8 +198,12 @@ fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict
     let outcome = build(&mut sandbox, &job, dirs[1].path()).unwrap();
     assert!(matches!(outcome, BuildOutcome::Built { .. }), "{outcome:?}");
     if evict {
-        let home = judge_grader::languages::runtime_home(&language.run[0]).expect("an installed runtime");
-        evict_page_cache(std::path::Path::new(&home));
+        // The whole install when it has one (so the test does not depend on the preload list), else the
+        // apt layout's preload paths.
+        match judge_grader::languages::runtime_home(&language.run[0]) {
+            Some(home) => evict_page_cache(std::path::Path::new(&home)),
+            None => language.preload.iter().for_each(|path| evict_page_cache(std::path::Path::new(path))),
+        }
     }
     let program = program_for(language, dirs[1].path(), b"print(1)\n");
     let input = dirs[2].path().join("in");

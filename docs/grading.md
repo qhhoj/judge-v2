@@ -55,9 +55,9 @@ run the judge reads a language's `preload` paths (`languages.toml`: the JDK's `l
 portable PyPy's `bin` and `lib` for PYPY3; `{runtime}` is the install above the run command's real file) into the
 page cache itself (`sandbox/src/preload.rs`), so those pages are charged to the judge and a run reports the same
 memory whatever ran on the host before it. A page evicted between that read and the run's first touch of it is
-still charged to the box (a short window: the read is right before every compile and run). PYPY3's preload needs a
-portable PyPy in a directory of its own (DEPLOY.md); `check-config` and the daemon's start warn about a `preload` path
-missing for an installed language (an apt `pypy3` in `/usr/bin` has no `{runtime}`).
+still charged to the box (a short window: the read is right before every compile and run). PYPY3 lists both the
+portable layout and Ubuntu's `pypy3` package (`libpypy3.9-c.so`, `/usr/lib/pypy3.9`); `check-config` and the daemon's
+start warn when none of an installed language's `preload` paths exists.
 
 JVM languages (`jvm = true`) get the memory limit raised by `limits.jvm_reserve_kib` (default 128 MiB, in the config), for
 the MLE check and the cgroup alike, with `-Xmx` equal to the problem's memory limit. A `java.lang.OutOfMemoryError` on stderr turns RTE or IR into MLE. Jury programs

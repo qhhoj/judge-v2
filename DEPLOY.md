@@ -124,19 +124,8 @@ isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
 ### 3. Compilers and runtimes
 
 ```sh
-apt install -y gcc g++ clang fp-compiler python3 default-jdk-headless ruby gdc lua5.4 gnat binutils unzip bzip2
+apt install -y gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat binutils unzip
 # binutils gives `as`/`ld` (GAS64) and `nm`/`c++filt` (split signature role classification).
-
-# PyPy 3.9 v7.3.16, portable build (pinned by checksum), not apt's pypy3: PYPY3 preloads {runtime}/bin and
-# {runtime}/lib (languages.toml), which needs the install in a directory of its own. apt's binary sits in /usr/bin,
-# so nothing is preloaded and a run first to read libpypy is charged ~58 MiB (check-config warns). It goes under
-# /usr/local/lib, as kotlinc does, because the box mounts /usr but not /opt.
-curl -fsSL -o /tmp/pypy.tar.bz2 https://downloads.python.org/pypy/pypy3.9-v7.3.16-linux64.tar.bz2
-echo "16f9c5b808c848516e742986e826b833cdbeda09ad8764e8704595adbe791b23  /tmp/pypy.tar.bz2" | sha256sum -c
-rm -rf /usr/local/lib/pypy && mkdir /usr/local/lib/pypy
-tar -xjf /tmp/pypy.tar.bz2 -C /usr/local/lib/pypy --strip-components=1 --no-same-owner
-ln -sfn /usr/local/lib/pypy/bin/pypy3 /usr/bin/pypy3    # the judge runs /usr/bin/pypy3
-pypy3 --version
 
 # Kotlin 2.1.21 (pinned by checksum)
 curl -fsSL -o /tmp/kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip

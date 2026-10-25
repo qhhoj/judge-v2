@@ -159,13 +159,22 @@ fn install_home(real_program: &Path) -> Option<String> {
 }
 
 impl Language {
-    /// Replaces `{runtime}` in `preload` with `runtime_home` of the run command; without one it stays, and
-    /// `check-config` warns that the path is missing.
+    /// Replaces `{runtime}` in `preload` with `runtime_home` of the run command; without one, the entries that
+    /// name it are dropped (that layout is not this host's) and the absolute ones stay.
     pub fn resolve_runtime(&mut self) {
-        let Some(home) = self.run.first().and_then(|program| runtime_home(program)) else { return };
-        for path in &mut self.preload {
-            *path = path.replace(RUNTIME_PLACEHOLDER, &home);
+        match self.run.first().and_then(|program| runtime_home(program)) {
+            Some(home) => {
+                self.preload.iter_mut().for_each(|path| *path = path.replace(RUNTIME_PLACEHOLDER, &home))
+            }
+            None => self.preload.retain(|path| !path.contains(RUNTIME_PLACEHOLDER)),
         }
+    }
+
+    /// The first `preload` path that is not absolute or is a whole system tree (`/`, `/usr`, `/usr/local`).
+    fn refused_preload(&self) -> Option<&str> {
+        let system = |path: &Path| ["/", "/usr", "/usr/local"].iter().any(|root| path == Path::new(root));
+        let refused = |path: &&String| !Path::new(path).is_absolute() || system(Path::new(path));
+        self.preload.iter().find(refused).map(String::as_str)
     }
 
     /// Replaces `{jdk_etc}` in the bound directories; without a JDK it stays, and the daemon drops the
@@ -191,6 +200,12 @@ impl LanguageRegistry {
         for mut language in file.language {
             language.resolve_dirs(jdk_etc);
             language.resolve_runtime();
+            if let Some(path) = language.refused_preload() {
+                return Err(GradeError::Io(format!(
+                    "language {}: preload {path:?} is not a runtime",
+                    language.key
+                )));
+            }
             if language.kind == LanguageKind::Program && language.run.is_empty() {
                 return Err(GradeError::Io(format!("language {} has no run command", language.key)));
             }
@@ -417,6 +432,14 @@ mod tests {
         );
         assert_eq!(install_home(Path::new("/opt/bin/pypy3")), None, "a binary in /opt/bin: not all of /opt");
         assert_eq!(install_home(Path::new("/opt/pypy/bin/pypy3.9")).as_deref(), Some("/opt/pypy"));
+        let apt = MINIMAL.replace("run=['x']", "run=['/nonexistent/pypy3']");
+        let apt = format!("{apt}preload=['{{runtime}}/lib', '/usr/lib/pypy3.9']\n");
+        let language = LanguageRegistry::from_toml(&apt).unwrap().get("A").unwrap().clone();
+        assert_eq!(language.preload, ["/usr/lib/pypy3.9"], "no {{runtime}} here: its layout is dropped");
+        for refused in ["'/usr/'", "'/'", "'lib'"] {
+            let text = format!("{MINIMAL}preload=[{refused}]\n");
+            assert!(LanguageRegistry::from_toml(&text).is_err(), "preload {refused}");
+        }
     }
 
     #[test]
