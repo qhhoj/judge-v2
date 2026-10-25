@@ -19,6 +19,7 @@ fn spec(argv: &[&str], memory_kib: u64) -> RunSpec {
         stdio: Stdio { stdin: None, stdout: Some("output".into()), stderr: Some("/dev/null".into()) },
         env: vec![],
         dirs: vec![],
+        preload: vec![],
         inherit_fds: false,
     }
 }

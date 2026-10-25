@@ -27,6 +27,8 @@ pub struct CompileJob {
     pub files: Vec<SourceFile>,
     pub limits: Limits,
     pub dirs: Vec<String>,
+    /// Runtime files read into the page cache before the compile (`Language::preload`).
+    pub preload: Vec<String>,
     pub env: Vec<(String, String)>,
     /// Only these box files go into the program snapshot (None: everything but the logs).
     pub keep: Option<Vec<String>>,
@@ -62,6 +64,7 @@ impl CompileJob {
             files: vec![SourceFile { name: language.source_name(source), bytes: source.to_vec() }],
             limits,
             dirs: language.compile_dirs.clone(),
+            preload: language.preload.clone(),
             env: language.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             keep: None,
             refusal: language.class_source_refusal(source),
@@ -78,6 +81,7 @@ pub fn program_for(language: &Language, dir: &Path, source: &[u8]) -> Program {
         processes: language.processes,
         jvm: language.jvm,
         dirs: language.dirs.clone(),
+        preload: language.preload.clone(),
         env: language.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         exception_marker: language.exception_marker.clone(),
         exception_style: language.exception_style,
@@ -126,6 +130,7 @@ fn run_compiler(
         stdio: Stdio { stdin: Some("/dev/null".into()), stdout: Some(LOG.into()), stderr: Some(ERR.into()) },
         env: job.env.clone(),
         dirs: job.dirs.clone(),
+        preload: job.preload.clone(),
         inherit_fds: false,
     };
     let meta = sandbox.run(&spec)?;
@@ -239,6 +244,7 @@ mod tests {
                 stdio: Stdio::default(),
                 env: vec![],
                 dirs,
+                preload: vec![],
                 inherit_fds: false,
             };
             isolate_args(0, &spec, Path::new("/m"))

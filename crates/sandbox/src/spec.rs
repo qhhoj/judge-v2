@@ -54,6 +54,9 @@ pub struct RunSpec {
     pub stdio: Stdio,
     pub env: Vec<(String, String)>,
     pub dirs: Vec<String>,
+    /// Runtime files the judge reads into the page cache before the run (`preload`), so the box is not charged
+    /// for them.
+    pub preload: Vec<String>,
     /// `--inherit-fds`: the box keeps the fds the command was started with (only `command_with_channel` sets it;
     /// isolate otherwise closes every fd above 2).
     pub inherit_fds: bool,
@@ -126,6 +129,7 @@ mod tests {
             },
             env: vec![],
             dirs: vec!["/opt/jdk".into()],
+            preload: vec![],
             inherit_fds: false,
         }
     }

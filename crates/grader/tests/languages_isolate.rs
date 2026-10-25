@@ -134,3 +134,31 @@ fn a_jvm_reports_the_same_memory_whatever_the_hosts_ram() {
     let (Some(small), Some(large)) = (memory_on("2g"), memory_on("64g")) else { return };
     assert!(small.abs_diff(large) * 10 < large, "{small} KiB on a 2 GiB host, {large} KiB on a 64 GiB host");
 }
+
+/// Drops the page cache of every file under `dir` that no process maps, as a reboot or memory pressure does.
+fn evict_page_cache(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let kind = entry.file_type().unwrap();
+        if kind.is_dir() {
+            evict_page_cache(&entry.path());
+        } else if kind.is_file() {
+            let file = std::fs::File::open(entry.path()).unwrap();
+            rustix::fs::fadvise(&file, 0, None, rustix::fs::Advice::DontNeed).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_jvm_reports_the_same_memory_whether_or_not_the_jdk_is_in_the_page_cache() {
+    // The kernel charges a page-cache page to the cgroup that first reads it in: a JVM first to read the JDK
+    // after a reboot or under memory pressure was charged for libjvm.so, the CDS archive and lib/modules.
+    evict_page_cache(&std::path::Path::new(judge_grader::languages::DEFAULT_JAVA).join("lib"));
+    let Some((cold, _)) = run_java(49, PRINT_PROCESSORS, &[]) else { return };
+    let (warm, _) = run_java(49, PRINT_PROCESSORS, &[]).unwrap();
+    let (cold, warm) = (cold.memory_kib, warm.memory_kib);
+    assert!(
+        cold.abs_diff(warm) * 10 < warm,
+        "{cold} KiB with the JDK out of the page cache, {warm} KiB in it"
+    );
+}

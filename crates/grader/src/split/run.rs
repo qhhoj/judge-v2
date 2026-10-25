@@ -73,6 +73,7 @@ fn contestant_spec(case: &SplitCase) -> RunSpec {
         },
         env: program.env.clone(),
         dirs: program.dirs.clone(),
+        preload: program.preload.clone(),
         inherit_fds: true,
     }
 }
@@ -91,6 +92,7 @@ fn jury_spec(case: &SplitCase, contestant: &Limits) -> RunSpec {
         },
         env: case.jury.env.clone(),
         dirs: case.jury.dirs.clone(),
+        preload: case.jury.preload.clone(),
         inherit_fds: true,
     }
 }

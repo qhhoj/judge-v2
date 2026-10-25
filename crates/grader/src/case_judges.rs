@@ -30,7 +30,7 @@ pub const UNREADABLE_ZIP: &str = "the submitted zip cannot be read";
 
 pub enum Check {
     Builtin(Box<dyn Checker>),
-    Custom(CustomChecker),
+    Custom(Box<CustomChecker>),
 }
 
 /// A failed run as a case verdict; Ok(None) when the program ran cleanly and the checker decides.

@@ -88,6 +88,10 @@ pub struct Language {
     /// Extra read-only directories mounted into the compile step only.
     #[serde(default)]
     pub compile_dirs: Vec<String>,
+    /// Runtime files and directories the judge reads into the page cache before each compile and run, so the
+    /// kernel charges their pages to the judge and not to the box (`judge_sandbox::preload`).
+    #[serde(default)]
+    pub preload: Vec<String>,
     /// Environment variables set for runs, on top of `PATH` and `HOME`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,

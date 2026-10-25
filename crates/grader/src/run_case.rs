@@ -128,6 +128,7 @@ fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
         stdio: layout.stdio,
         env: program.env.clone(),
         dirs: program.dirs.clone(),
+        preload: program.preload.clone(),
         inherit_fds: false,
     }
 }

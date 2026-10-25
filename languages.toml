@@ -4,6 +4,8 @@
 # Placeholders: {memory_kib} {memory_mib} (the run memory limit), {class} (JVM public class).
 # In dirs/compile_dirs, {jdk_etc} is /etc/java-NN-openjdk of the JDK /usr/lib/jvm/default-java links to
 # (resolved at load; a language whose directory is missing on the host is not advertised).
+# preload: runtime files or trees the judge reads into the page cache before each compile and run, so the kernel
+# charges their pages to the judge, not to the box whose memory is measured (sandbox/src/preload.rs).
 # compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
 
 [[language]]
@@ -154,6 +156,9 @@ compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-XX:MaxRAM=14311944k", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
+# A JVM that is first to read libjvm.so, the CDS archive and lib/modules is charged their page cache (46 MiB
+# for a hello world): preloaded, every run reports the same memory whatever ran on the host before it.
+preload = ["/usr/lib/jvm/default-java/lib"]
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
 # or the JVM dies with "Error loading java.security file".
 dirs = ["{jdk_etc}"]
@@ -177,6 +182,9 @@ compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-XX:MaxRAM=14311944k", "-Xss64m", "-XX:+UseSerialGC", "{class}"]
 processes = 64
 jvm = true
+# A JVM that is first to read libjvm.so, the CDS archive and lib/modules is charged their page cache (46 MiB
+# for a hello world): preloaded, every run reports the same memory whatever ran on the host before it.
+preload = ["/usr/lib/jvm/default-java/lib"]
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
 # or the JVM dies with "Error loading java.security file".
 dirs = ["{jdk_etc}"]
@@ -201,6 +209,9 @@ compile_processes = 128
 run = ["/usr/lib/jvm/default-java/bin/java", "-Xmx{memory_mib}m", "-XX:MaxRAM=14311944k", "-Xss64m", "-XX:+UseSerialGC", "-jar", "main.jar"]
 processes = 64
 jvm = true
+# A JVM that is first to read libjvm.so, the CDS archive and lib/modules is charged their page cache (46 MiB
+# for a hello world): preloaded, every run reports the same memory whatever ran on the host before it.
+preload = ["/usr/lib/jvm/default-java/lib"]
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
 # or the JVM dies with "Error loading java.security file".
 dirs = ["{jdk_etc}"]

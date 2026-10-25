@@ -348,13 +348,13 @@ fn check_of(
                 _ => ThemisNames::default(),
             };
             let partial = custom.partial;
-            Ok(Check::Custom(CustomChecker {
+            Ok(Check::Custom(Box::new(CustomChecker {
                 program,
                 kind: custom.kind,
                 partial,
                 themis_names,
                 time_limit_s,
-            }))
+            })))
         }
     }
 }
