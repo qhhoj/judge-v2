@@ -85,23 +85,30 @@ pub struct HelloInfo {
     pub features: Vec<String>,
 }
 
+/// Shortest time limit (the backend's minimum): isolate keeps whole milliseconds, so below 1 ms the CPU limit is 0, off.
+const MIN_TIME_LIMIT_S: f64 = 0.01;
 /// Longest time limit an assignment may carry; isolate takes the CPU limit as a float.
 const MAX_TIME_LIMIT_S: f64 = 3600.0;
+/// Smallest memory limit (the bridge's floor): below 1 MiB the `{memory_mib}` placeholder (a JVM's `-Xmx`) is 0.
+const MIN_MEMORY_LIMIT_KIB: u64 = 1024;
 /// isolate refuses memory limits above a C `int` of KiB.
 const MAX_MEMORY_LIMIT_KIB: u64 = i32::MAX as u64;
 
 impl Assignment {
-    /// Why the limits cannot be graded under, if so. A zero, negative, NaN or absurd limit would turn the CPU
+    /// Why the limits cannot be graded under, if so. A tiny, negative, NaN or absurd limit would turn the CPU
     /// limit off or make isolate fail every run, so the submission is refused instead of graded.
     pub fn limits_error(&self) -> Option<String> {
-        let time_ok =
-            self.time_limit_s.is_finite() && self.time_limit_s > 0.0 && self.time_limit_s <= MAX_TIME_LIMIT_S;
+        // A NaN fails both comparisons, so it is refused too.
+        let time_ok = (MIN_TIME_LIMIT_S..=MAX_TIME_LIMIT_S).contains(&self.time_limit_s);
         if !time_ok {
-            return Some(format!("time limit {} s is outside (0, {MAX_TIME_LIMIT_S}]", self.time_limit_s));
-        }
-        if self.memory_kib == 0 || self.memory_kib > MAX_MEMORY_LIMIT_KIB {
             return Some(format!(
-                "memory limit {} KiB is outside [1, {MAX_MEMORY_LIMIT_KIB}]",
+                "time limit {} s is outside [{MIN_TIME_LIMIT_S}, {MAX_TIME_LIMIT_S}]",
+                self.time_limit_s
+            ));
+        }
+        if !(MIN_MEMORY_LIMIT_KIB..=MAX_MEMORY_LIMIT_KIB).contains(&self.memory_kib) {
+            return Some(format!(
+                "memory limit {} KiB is outside [{MIN_MEMORY_LIMIT_KIB}, {MAX_MEMORY_LIMIT_KIB}]",
                 self.memory_kib
             ));
         }
@@ -439,11 +446,12 @@ mod tests {
             ..assignment(v1::Assign { r#ref: Some(v1::AssignmentRef::default()), ..Default::default() })
                 .unwrap()
         };
-        assert_eq!(with(1.0, 1024).limits_error(), None);
-        for time in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e9] {
+        assert_eq!(with(0.01, 1024).limits_error(), None, "the backend minimums");
+        // Below 1 ms isolate rounds the CPU limit to 0 (off); below 1 MiB `{memory_mib}` is 0.
+        for time in [0.0, 0.0005, 0.009, -1.0, f64::NAN, f64::INFINITY, 1e9] {
             assert!(with(time, 1024).limits_error().is_some(), "time {time}");
         }
-        for memory in [0, u64::MAX] {
+        for memory in [0, 1023, u64::MAX] {
             assert!(with(1.0, memory).limits_error().is_some(), "memory {memory}");
         }
     }
