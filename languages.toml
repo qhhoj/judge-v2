@@ -5,7 +5,8 @@
 # In dirs/compile_dirs, {jdk_etc} is /etc/java-NN-openjdk of the JDK /usr/lib/jvm/default-java links to
 # (resolved at load; a language whose directory is missing on the host is not advertised).
 # preload: runtime files or trees the judge reads into the page cache before each compile and run, so the kernel
-# charges their pages to the judge, not to the box whose memory is measured (sandbox/src/preload.rs).
+# charges their pages to the judge, not to the box whose memory is measured (sandbox/src/preload.rs). {runtime} is
+# the directory above the one holding the run command's real file (the JDK for bin/java), never /usr itself.
 # compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
 
 [[language]]
@@ -125,6 +126,10 @@ run = ["/usr/bin/pypy3", "main.py"]
 # PyPy sizes its GC from the host (nursery = cache/2, 1M to 130M seen; max delta = RAM/8), so verdicts near the
 # memory limit varied by CPU: pin the documented 4M nursery default and the 2GB delta of a 16 GiB host.
 env = { PYPY_GC_NURSERY = "4M", PYPY_GC_MAX_DELTA = "2GB" }
+# A PyPy that is first to read libpypy (bin/) and the stdlib it imports at start (lib/) is charged their page
+# cache (58 MiB for a hello world, with no reserve above the limit): preloaded, as the JDK is. A Debian pypy3 in
+# /usr/bin has no {runtime}, so nothing is preloaded and check-config warns.
+preload = ["{runtime}/bin", "{runtime}/lib"]
 version = ["/usr/bin/pypy3", "--version"]
 exception_marker = "Traceback (most recent call last)"
 exception_style = "last_line"
@@ -158,7 +163,7 @@ processes = 64
 jvm = true
 # A JVM that is first to read libjvm.so, the CDS archive and lib/modules is charged their page cache (46 MiB
 # for a hello world): preloaded, every run reports the same memory whatever ran on the host before it.
-preload = ["/usr/lib/jvm/default-java/lib"]
+preload = ["{runtime}/lib"]
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
 # or the JVM dies with "Error loading java.security file".
 dirs = ["{jdk_etc}"]
@@ -184,7 +189,7 @@ processes = 64
 jvm = true
 # A JVM that is first to read libjvm.so, the CDS archive and lib/modules is charged their page cache (46 MiB
 # for a hello world): preloaded, every run reports the same memory whatever ran on the host before it.
-preload = ["/usr/lib/jvm/default-java/lib"]
+preload = ["{runtime}/lib"]
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
 # or the JVM dies with "Error loading java.security file".
 dirs = ["{jdk_etc}"]
@@ -211,7 +216,7 @@ processes = 64
 jvm = true
 # A JVM that is first to read libjvm.so, the CDS archive and lib/modules is charged their page cache (46 MiB
 # for a hello world): preloaded, every run reports the same memory whatever ran on the host before it.
-preload = ["/usr/lib/jvm/default-java/lib"]
+preload = ["{runtime}/lib"]
 # The JDK's conf/ and lib/security/ are symlinks into /etc/java-NN-openjdk ({jdk_etc}): bound read-only,
 # or the JVM dies with "Error loading java.security file".
 dirs = ["{jdk_etc}"]

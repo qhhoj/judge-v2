@@ -162,3 +162,55 @@ fn a_jvm_reports_the_same_memory_whether_or_not_the_jdk_is_in_the_page_cache() {
         "{cold} KiB with the JDK out of the page cache, {warm} KiB in it"
     );
 }
+
+/// PYPY3 as shipped; on a host without it, a portable PyPy at `JUDGE_TEST_PYPY_HOME` (an unpacked pypy3.9
+/// tarball), bound into the box at its own path. None (skip) without either.
+fn pypy() -> Option<judge_grader::languages::Language> {
+    let mut language = registry().get("PYPY3").unwrap().clone();
+    if installed(&language) {
+        return Some(language);
+    }
+    let Ok(home) = std::env::var("JUDGE_TEST_PYPY_HOME") else {
+        eprintln!("skip: PYPY3 (not installed and no JUDGE_TEST_PYPY_HOME)");
+        return None;
+    };
+    let pypy = format!("{home}/bin/pypy3");
+    language.run[0] = pypy.clone();
+    language.compile.as_mut().expect("PYPY3 compiles")[0] = pypy;
+    language.dirs.push(home.clone());
+    language.compile_dirs.push(home);
+    language.resolve_runtime();
+    Some(language)
+}
+
+/// The memory of a hello world in `language`, built first; `evict` drops the page cache of the runtime's install
+/// (`runtime_home`) between the build (which reads the runtime too) and the run.
+fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict: bool) -> u64 {
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let mut sandbox = sandbox_on(offset, dirs[0].path(), Some(0));
+    let job = CompileJob::for_language(language, b"print(1)\n");
+    let outcome = build(&mut sandbox, &job, dirs[1].path()).unwrap();
+    assert!(matches!(outcome, BuildOutcome::Built { .. }), "{outcome:?}");
+    if evict {
+        let home = judge_grader::languages::runtime_home(&language.run[0]).expect("an installed runtime");
+        evict_page_cache(std::path::Path::new(&home));
+    }
+    let program = program_for(language, dirs[1].path(), b"print(1)\n");
+    let input = dirs[2].path().join("in");
+    std::fs::write(&input, "").unwrap();
+    let file = std::fs::File::open(&input).unwrap();
+    let io = CaseIo { input: &file, output_cap: 1 << 20, file_io: None };
+    let runnable = Runnable { program: &program, limits: &LIMITS };
+    let run = run_case(&mut sandbox, &runnable, &io, &dirs[2].path().join("out")).unwrap();
+    assert_eq!(run.verdict, RunVerdict::Ok);
+    run.memory_kib
+}
+
+#[test]
+fn pypy_reports_the_same_memory_whether_or_not_its_runtime_is_in_the_page_cache() {
+    // As for the JDK: a PyPy first to read libpypy and the stdlib it imports at start was charged for them,
+    // and PyPy has no reserve above the memory limit.
+    let Some(language) = pypy() else { return };
+    let (cold, warm) = (hello_memory(&language, 50, true), hello_memory(&language, 50, false));
+    assert!(cold.abs_diff(warm) * 10 < warm, "{cold} KiB with PyPy out of the page cache, {warm} KiB in it");
+}

@@ -50,10 +50,14 @@ The cgroup limit is the memory limit plus room for the page cache of what the ru
 
 The kernel charges a page-cache page to the cgroup that first reads it in, so a run that is first to read its
 runtime would be charged for it: a JVM 46 MiB for `libjvm.so`, the CDS archive and `lib/modules` after a reboot or
-memory pressure evicted them. Before each compile and run the judge reads a language's `preload` paths
-(`languages.toml`; the JDK's `lib` for JAVA, JAVA8 and KOTLIN) into the page cache itself (`sandbox/src/preload.rs`),
-so those pages are charged to the judge and a run reports the same memory whatever ran on the host before it. A page
-evicted between that read and the run's first touch of it is still charged to the box.
+memory pressure evicted them, a PyPy 58 MiB for libpypy and the stdlib it imports at start. Before each compile and
+run the judge reads a language's `preload` paths (`languages.toml`: the JDK's `lib` for JAVA, JAVA8 and KOTLIN, a
+portable PyPy's `bin` and `lib` for PYPY3; `{runtime}` is the install above the run command's real file) into the
+page cache itself (`sandbox/src/preload.rs`), so those pages are charged to the judge and a run reports the same
+memory whatever ran on the host before it. `MemoryLow=512M` on the unit keeps them from being reclaimed; a page
+evicted anyway between that read and the run's first touch of it is still charged to the box. `check-config` and the
+daemon's start warn about a `preload` path missing for an installed language (a Debian `pypy3` in `/usr/bin` has no
+`{runtime}`).
 
 JVM languages (`jvm = true`) get the memory limit raised by `limits.jvm_reserve_kib` (default 128 MiB, in the config), for
 the MLE check and the cgroup alike, with `-Xmx` equal to the problem's memory limit. A `java.lang.OutOfMemoryError` on stderr turns RTE or IR into MLE. Jury programs

@@ -24,6 +24,19 @@ pub fn check_config(config_path: &Path, args: &CheckConfigArgs) -> anyhow::Resul
         args.probe_box
     );
     let (_, bound) = judge_daemon::run::start_checks(&config, &cores, args.probe_box)?;
+    warn_missing_preloads(&config.languages_file)?;
     println!("check-config: {} ok, disk bound {bound:?}", config_path.display());
     Ok(true)
+}
+
+/// A warning (not a failure) per `preload` path of an installed language that is missing on this host.
+fn warn_missing_preloads(languages_file: &Path) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(languages_file)?;
+    let registry = judge_grader::languages::LanguageRegistry::from_toml(&text)?;
+    for (lang, path) in judge_daemon::runtimes::missing_preloads(&registry) {
+        eprintln!(
+            "check-config: warning: {lang} preload {path} is missing; its runs may be charged its page cache"
+        );
+    }
+    Ok(())
 }

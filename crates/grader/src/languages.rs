@@ -125,6 +125,10 @@ pub const JDK_ETC_PLACEHOLDER: &str = "{jdk_etc}";
 /// The distro's default-jdk link (Debian/Ubuntu): its target names the JDK major.
 pub const DEFAULT_JAVA: &str = "/usr/lib/jvm/default-java";
 
+/// Placeholder in `preload` for the runtime's install directory: the one above the directory that holds the
+/// real file of the run command (`runtime_home`).
+pub const RUNTIME_PLACEHOLDER: &str = "{runtime}";
+
 static HOST_JDK_ETC: LazyLock<Option<String>> = LazyLock::new(|| jdk_etc_dir(Path::new(DEFAULT_JAVA)));
 
 /// `/etc/java-NN-openjdk` for the JDK `default_java` resolves to (`java-NN-openjdk-<arch>`): where the
@@ -138,7 +142,30 @@ pub fn jdk_etc_dir(default_java: &Path) -> Option<String> {
     (java == "java" && is_major && openjdk == "openjdk").then(|| format!("/etc/java-{major}-openjdk"))
 }
 
+/// The directory above the one holding the real file `program` resolves to: `/usr/lib/jvm/java-NN-openjdk-<arch>`
+/// for the JDK's `bin/java`, `/opt/pypy` for a portable PyPy's `bin/pypy3.9`. None when `program` is missing or
+/// that directory is a system prefix (a runtime installed straight into `/usr/bin`): never preload all of `/usr`.
+pub fn runtime_home(program: &str) -> Option<String> {
+    install_home(&std::fs::canonicalize(program).ok()?)
+}
+
+/// The directory above `real_program`'s, unless it is a system prefix.
+fn install_home(real_program: &Path) -> Option<String> {
+    let home = real_program.parent()?.parent()?;
+    let system = ["/", "/usr", "/usr/local"].iter().any(|prefix| home == Path::new(prefix));
+    (!system).then(|| home.to_string_lossy().into_owned())
+}
+
 impl Language {
+    /// Replaces `{runtime}` in `preload` with `runtime_home` of the run command; without one it stays, and
+    /// `check-config` warns that the path is missing.
+    pub fn resolve_runtime(&mut self) {
+        let Some(home) = self.run.first().and_then(|program| runtime_home(program)) else { return };
+        for path in &mut self.preload {
+            *path = path.replace(RUNTIME_PLACEHOLDER, &home);
+        }
+    }
+
     /// Replaces `{jdk_etc}` in the bound directories; without a JDK it stays, and the daemon drops the
     /// language because that directory does not exist.
     fn resolve_dirs(&mut self, jdk_etc: Option<&str>) {
@@ -161,6 +188,7 @@ impl LanguageRegistry {
         let mut by_key = BTreeMap::new();
         for mut language in file.language {
             language.resolve_dirs(jdk_etc);
+            language.resolve_runtime();
             if language.kind == LanguageKind::Program && language.run.is_empty() {
                 return Err(GradeError::Io(format!("language {} has no run command", language.key)));
             }
@@ -366,6 +394,25 @@ mod tests {
         let no_run = "[[language]]\nkey='A'\nname='a'\nsource='a'\nrun=[]\nversion=[]\n";
         assert!(LanguageRegistry::from_toml(no_run).is_err());
         assert!(LanguageRegistry::from_toml(&format!("{MINIMAL}colour='red'\n")).is_err(), "unknown key");
+    }
+
+    #[test]
+    fn runtime_resolves_to_the_install_above_the_real_run_binary_but_never_to_a_system_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("opt/pypy");
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        std::fs::write(home.join("bin/pypy3.9"), "").unwrap();
+        let link = root.path().join("pypy3");
+        std::os::unix::fs::symlink(home.join("bin/pypy3.9"), &link).unwrap();
+        let text = format!("{MINIMAL}preload=['{{runtime}}/lib']\n")
+            .replace("run=['x']", &format!("run=['{}']", link.display()));
+        let language = LanguageRegistry::from_toml(&text).unwrap().get("A").unwrap().clone();
+        assert_eq!(language.preload, [format!("{}/lib", home.display())]);
+        assert_eq!(
+            install_home(Path::new("/usr/bin/pypy3.11")),
+            None,
+            "Debian's pypy3: /usr is not a runtime"
+        );
     }
 
     #[test]
