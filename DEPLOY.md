@@ -125,6 +125,7 @@ isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
 
 ```sh
 apt install -y gcc g++ clang fp-compiler python3 pypy3 default-jdk-headless ruby gdc lua5.4 gnat binutils unzip
+# binutils gives `as`/`ld` (GAS64) and `nm`/`c++filt` (split signature role classification).
 
 # Kotlin 2.1.21 (pinned by checksum)
 curl -fsSL -o /tmp/kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip

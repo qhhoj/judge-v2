@@ -73,11 +73,11 @@ fn every_callback_case_on_the_jury_side_guards_the_call_and_reports_a_throw() {
 }
 
 #[test]
-fn a_const_reference_result_is_kept_at_one_address_and_refreshed() {
+fn a_const_reference_result_names_the_runtime_copy_of_its_object() {
     let interface = parse_header("g.h", HEADER).unwrap();
     let glue = contestant_glue(&interface, &ROLES, "grader.h");
-    assert!(glue.contains("static std::vector<std::vector<int> > qhhoj_cache;"));
-    assert!(glue.contains("qhhoj::track_cache(3, &qhhoj_cache);"));
+    assert!(!glue.contains("qhhoj_cache"), "no per-function cache that two references would share");
+    assert!(glue.contains("return qhhoj_call.result_cached<std::vector<std::vector<int> > >();"));
 }
 
 #[test]

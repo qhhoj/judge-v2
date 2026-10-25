@@ -42,9 +42,6 @@ pub(crate) fn arguments(function: &Function) -> String {
 /// A proxy: the definition that sends the call and returns its result. `serve` is `, qhhoj_serve` on the jury.
 pub(crate) fn proxy(function: &Function, serve: &str) -> String {
     let mut out = format!("{} {{\n", signature(function));
-    if let Ret::ConstRef(ty) = &function.ret {
-        out += &format!("  static {} qhhoj_cache;\n", ty.cpp());
-    }
     out += &format!("  qhhoj::Call qhhoj_call({}{serve});\n", function.id);
     for i in 0..function.params.len() {
         out += &format!("  qhhoj_call.put(qhhoj_a{i});\n");
@@ -58,9 +55,7 @@ fn proxy_result(function: &Function) -> String {
     match &function.ret {
         Ret::Void => "  qhhoj_call.done();\n".to_string(),
         Ret::Value(ty) => format!("  return qhhoj_call.result<{} >();\n", ty.cpp()),
-        Ret::ConstRef(_) => format!(
-            "  qhhoj_call.result_into(qhhoj_cache);\n  qhhoj::track_cache({}, &qhhoj_cache);\n  return qhhoj_cache;\n",
-            function.id
-        ),
+        // One copy per object the jury returned, so references to different objects never alias.
+        Ret::ConstRef(ty) => format!("  return qhhoj_call.result_cached<{} >();\n", ty.cpp()),
     }
 }

@@ -53,11 +53,12 @@ impl Default for SandboxConfig {
     }
 }
 
-/// The three channel fds a box receives, in box fd order: 3 = the doorbell this side waits on (read end),
-/// 4 = the doorbell this side rings (write end, non-blocking), 5 = the shared memory (read-write).
+/// The three channel fds a box receives, in box fd order: 3 = what the peer writes (read end), 4 = what the
+/// peer reads (write end), 5 = the shared memory of a ring channel (read-write; `/dev/null` for plain pipes).
+/// In a ring channel fds 3 and 4 are doorbells; in a pipe channel they carry the frames.
 pub struct ChannelFds {
-    pub doorbell_wait: OwnedFd,
-    pub doorbell_ring: OwnedFd,
+    pub from_peer: OwnedFd,
+    pub to_peer: OwnedFd,
     pub shared: OwnedFd,
 }
 
@@ -277,8 +278,8 @@ impl IsolateBox {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", CHANNEL_MOVER, "sh"]).args(self.isolate_command_line(spec)?);
         command
-            .stdin(Stdio::from(fds.doorbell_wait))
-            .stdout(Stdio::from(fds.doorbell_ring))
+            .stdin(Stdio::from(fds.from_peer))
+            .stdout(Stdio::from(fds.to_peer))
             .stderr(Stdio::from(fds.shared));
         Ok(command)
     }
@@ -549,7 +550,7 @@ esac
             let options = OpenOptions::new().read(true).write(true).create(true).truncate(true).clone();
             options.open(dir.join(name)).unwrap().into()
         };
-        ChannelFds { doorbell_wait: open("wait"), doorbell_ring: open("ring"), shared: open("shared") }
+        ChannelFds { from_peer: open("wait"), to_peer: open("ring"), shared: open("shared") }
     }
 
     #[test]

@@ -1,9 +1,11 @@
-//! The split channel: one sealed 3 MiB memfd both boxes map, and two doorbell pipes. The daemon creates it,
-//! never maps it (so the repo keeps zero `unsafe`), hands each side its three fds through
-//! `IsolateBox::command_with_channel`, and drops every copy once both sides are spawned.
+//! Channels on fds 3/4/5 of each box, handed over by `IsolateBox::command_with_channel`; the daemon drops every
+//! copy once both sides are spawned.
 //!
-//! Layout of the shared memory: the contestant-to-jury region at 0, the jury-to-contestant region at 1 MiB, the
-//! void-call log at 2 MiB, each `REGION_BYTES` long.
+//! - `PipeChannel` (split signature on one core): two crossed blocking pipes; fd 5 is `/dev/null`.
+//! - `RingChannel` (for a two-core lane, not graded yet): one sealed 3 MiB memfd both boxes map, and two
+//!   doorbell pipes. The daemon never maps it (so the repo keeps zero `unsafe`). Layout of the shared memory:
+//!   the contestant-to-jury region at 0, the jury-to-contestant region at 1 MiB, the void-call log at 2 MiB,
+//!   each `REGION_BYTES` long.
 
 use crate::error::GradeError;
 use judge_sandbox::ChannelFds;
@@ -30,11 +32,37 @@ impl RingChannel {
         let (contestant_wait, jury_ring) = doorbell()?;
         let contestant_shared = shared.try_clone()?;
         Ok(RingChannel {
-            jury: ChannelFds { doorbell_wait: jury_wait, doorbell_ring: jury_ring, shared },
+            jury: ChannelFds { from_peer: jury_wait, to_peer: jury_ring, shared },
             contestant: ChannelFds {
-                doorbell_wait: contestant_wait,
-                doorbell_ring: contestant_ring,
+                from_peer: contestant_wait,
+                to_peer: contestant_ring,
                 shared: contestant_shared,
+            },
+        })
+    }
+}
+
+/// Two crossed pipes: each side reads on fd 3 what the other writes on fd 4. Both ends block.
+pub struct PipeChannel {
+    pub jury: ChannelFds,
+    pub contestant: ChannelFds,
+}
+
+impl PipeChannel {
+    pub fn create() -> Result<PipeChannel, GradeError> {
+        let (jury_reads, contestant_writes) = std::io::pipe()?;
+        let (contestant_reads, jury_writes) = std::io::pipe()?;
+        let no_memory = || -> Result<OwnedFd, GradeError> { Ok(std::fs::File::open("/dev/null")?.into()) };
+        Ok(PipeChannel {
+            jury: ChannelFds {
+                from_peer: jury_reads.into(),
+                to_peer: jury_writes.into(),
+                shared: no_memory()?,
+            },
+            contestant: ChannelFds {
+                from_peer: contestant_reads.into(),
+                to_peer: contestant_writes.into(),
+                shared: no_memory()?,
             },
         })
     }
@@ -106,10 +134,10 @@ mod tests {
         let RingChannel { jury, contestant } = RingChannel::create().unwrap();
         let nonblocking =
             |fd: &OwnedFd| rustix::fs::fcntl_getfl(fd).unwrap().contains(rustix::fs::OFlags::NONBLOCK);
-        assert!(nonblocking(&jury.doorbell_ring) && nonblocking(&contestant.doorbell_ring));
-        assert!(!nonblocking(&jury.doorbell_wait) && !nonblocking(&contestant.doorbell_wait));
-        std::fs::File::from(contestant.doorbell_ring).write_all(b"x").unwrap();
-        let mut wait = std::fs::File::from(jury.doorbell_wait);
+        assert!(nonblocking(&jury.to_peer) && nonblocking(&contestant.to_peer));
+        assert!(!nonblocking(&jury.from_peer) && !nonblocking(&contestant.from_peer));
+        std::fs::File::from(contestant.to_peer).write_all(b"x").unwrap();
+        let mut wait = std::fs::File::from(jury.from_peer);
         let mut byte = [0u8; 1];
         wait.read_exact(&mut byte).unwrap();
         assert_eq!(wait.read(&mut byte).unwrap(), 0, "the ringer's only write end is gone: EOF, a dead peer");

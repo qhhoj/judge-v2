@@ -230,11 +230,11 @@ impl InitYaml {
         [interactive, signature, output_only, file_io].into_iter().flatten().collect()
     }
 
-    /// A split problem until this judge grades split signature (the one-core and paired variants are not
-    /// graded yet): requeued, never graded by the one-process path.
+    /// A split problem that asks for the paired (two-core) lane, which this judge does not grade yet:
+    /// requeued, never graded on one core or by the one-process path. `cores: 1` or none is graded.
     fn split_feature(&self) -> Option<&'static str> {
         let spec = self.signature_grader.as_ref().filter(|spec| spec.split)?;
-        Some(if spec.cores == Some(2) { SPLIT_PAIRED_FEATURE } else { SPLIT_FEATURE })
+        (spec.cores == Some(2)).then_some(SPLIT_PAIRED_FEATURE)
     }
 
     /// Every checker the file names: problem-wide, the interactive problem's own, then each case's and batch's
@@ -483,10 +483,10 @@ mod tests {
     }
 
     #[test]
-    fn a_split_problem_is_requeued_until_this_judge_grades_it() {
+    fn a_one_core_split_problem_is_graded_and_a_paired_one_requeued() {
         let feature = |tail: &str| split(tail).unwrap().unsupported_feature();
-        assert_eq!(feature(", split: true").as_deref(), Some(SPLIT_FEATURE));
-        assert_eq!(feature(", split: true, cores: 1").as_deref(), Some(SPLIT_FEATURE));
+        assert_eq!(feature(", split: true"), None);
+        assert_eq!(feature(", split: true, cores: 1"), None);
         assert_eq!(feature(", split: true, cores: 2").as_deref(), Some(SPLIT_PAIRED_FEATURE));
         assert_eq!(split(", split: true").unwrap().mode_keys(), vec![ModeKey::SignatureSplit]);
     }

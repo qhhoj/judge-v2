@@ -1,6 +1,6 @@
-//! The generated sources compile: every grammar-v1 type in every position, on both sides, under the oldest and
-//! a recent C++ standard. Syntax only, against a declarations-only runtime; the compile-and-link test under every
-//! C++ key, with the real runtime, belongs to the runtime crate. Without `g++` the tests fail under CI (`CI` set)
+//! The generated sources and the runtime compile: every grammar-v1 type in every position, on both sides, under
+//! the oldest and a recent C++ standard, with warnings as errors for the runtime. Linking and running them is
+//! tested in isolate (`crates/grader/tests/split_isolate.rs`). Without `g++` the tests fail under CI (`CI` set)
 //! and are skipped locally with a note.
 
 use std::io::Write;
@@ -8,23 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use judge_interface::glue::{contestant::contestant_glue, jury::jury_glue, probe};
-use judge_interface::{Role, parse_header};
-
-/// The runtime API the glue calls, declared only.
-const RUNTIME_DECLARATIONS: &str = "#ifndef QHHOJ_RPC_HPP\n#define QHHOJ_RPC_HPP\n\
-#include <string>\n#include <utility>\n#include <vector>\n#include <stdint.h>\n\
-namespace qhhoj {\n\
-class Request {\n public:\n  uint16_t fn() const;\n  template <class T> T get();\n  void end();\n};\n\
-typedef void (*Dispatch)(Request&);\n\
-class Call {\n public:\n  explicit Call(uint16_t fn);\n  Call(uint16_t fn, Dispatch serve);\n\
-  template <class T> void put(const T& value);\n  void done();\n  template <class T> T result();\n\
-  template <class T> void result_into(T& target);\n};\n\
-class Serving {\n public:\n  explicit Serving(uint16_t fn);\n  ~Serving();\n};\n\
-void reply(uint16_t fn);\ntemplate <class T> void reply(uint16_t fn, const T& value);\n\
-template <class T> void reply_cached(uint16_t fn, const T* value);\n\
-template <class T> void track_cache(uint16_t fn, T* cache);\n\
-void callback_threw(uint16_t fn);\nvoid unknown_function(Request& request);\nint contestant_main(Dispatch serve);\n\
-}\n#endif\n";
+use judge_interface::{Role, parse_header, runtime};
 
 const TYPES: [&str; 11] = [
     "int",
@@ -64,7 +48,7 @@ fn work_dir(test: &str) -> PathBuf {
     dir
 }
 
-/// Writes the header, the runtime declarations and the four generated sources into `dir`.
+/// Writes the header, the runtime and the four generated sources into `dir`; returns what to compile.
 fn write_sources(dir: &Path, header: &str, roles: &[Role]) -> Vec<&'static str> {
     let interface = parse_header("grader.h", header).unwrap_or_else(|refusal| panic!("{refusal}"));
     let sources = [
@@ -74,11 +58,12 @@ fn write_sources(dir: &Path, header: &str, roles: &[Role]) -> Vec<&'static str> 
         ("null_contestant.cpp", probe::null_contestant(&interface, roles, "grader.h")),
     ];
     std::fs::write(dir.join("grader.h"), header).unwrap();
-    std::fs::write(dir.join("qhhoj_rpc.hpp"), RUNTIME_DECLARATIONS).unwrap();
+    std::fs::write(dir.join(runtime::HEADER_NAME), runtime::HEADER).unwrap();
+    std::fs::write(dir.join(runtime::SOURCE_NAME), runtime::SOURCE).unwrap();
     for (name, text) in &sources {
         std::fs::write(dir.join(name), text).unwrap();
     }
-    sources.iter().map(|(name, _)| *name).collect()
+    sources.iter().map(|(name, _)| *name).chain([runtime::SOURCE_NAME]).collect()
 }
 
 /// Compiler errors of every generated source under each standard; empty when all compile.
@@ -95,7 +80,7 @@ fn compile_errors(test: &str, header: &str, roles: &[Role]) -> Option<Vec<String
     for name in write_sources(&dir, header, roles) {
         for standard in ["-std=gnu++03", "-std=gnu++17"] {
             let output = Command::new("g++")
-                .args([standard, "-fsyntax-only", "-Wall", name])
+                .args([standard, "-fsyntax-only", "-Wall", "-Werror", name])
                 .current_dir(&dir)
                 .output()
                 .unwrap();
