@@ -241,5 +241,25 @@
   "symlink_directory": {
     "accepted": false,
     "error": "Symbolic links are not allowed: link/"
+  },
+  "folder_with_aes_method": {
+    "accepted": false,
+    "error": "z/ is encrypted or uses an unsupported compression method."
+  },
+  "duplicate_folder_records": {
+    "accepted": false,
+    "error": "Duplicate folder in the archive: z/"
+  },
+  "local_extra_past_central_directory": {
+    "accepted": false,
+    "error": "z.txt points outside the archive."
+  },
+  "deflate_longer_than_declared": {
+    "accepted": false,
+    "error": "1.out is corrupt: too many bytes in the stream. expected 2. got at least 4"
+  },
+  "bad_crc_referenced": {
+    "accepted": false,
+    "error": "1.in is corrupt: its checksum does not match"
   }
 }

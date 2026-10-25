@@ -92,7 +92,8 @@ fn entry_path(entry: &zip::read::ZipFile) -> Result<PathBuf, DataError> {
 fn open_named_directory(file: &std::fs::File) -> Result<zip::ZipArchive<&std::fs::File>, DataError> {
     let named = crate::zip_directory::named_directory(file).map_err(archive_error)?;
     let archive = zip::ZipArchive::new(file).map_err(archive_error)?;
-    if archive.offset() != 0 || archive.central_directory_start() != named.start {
+    let same = archive.central_directory_start() == named.start && archive.len() as u64 == named.entries;
+    if archive.offset() != 0 || !same {
         return Err(archive_error("the central directory read is not the one the end records name"));
     }
     Ok(archive)
@@ -112,12 +113,18 @@ pub fn extract_zip(zip: &Path, into: &Path, limits: &ZipLimits) -> Result<(), Da
             std::fs::create_dir_all(into.join(&relative))?;
             continue;
         }
-        budget = copy_entry(&mut entry, &into.join(relative), budget)?;
+        let declared = entry.size();
+        let written = copy_entry(&mut entry, &into.join(relative), budget)?;
+        if written != declared {
+            return Err(archive_error(format!("entry {:?} is not its declared size", entry.name())));
+        }
+        budget -= written;
     }
     Ok(())
 }
 
-/// Copies at most `budget` bytes; the real byte count is checked, not the declared size.
+/// Copies at most `budget` bytes and returns how many it wrote; the real byte count is checked, not the declared
+/// size. The backend's reader refuses an entry whose bytes differ from its declared size, so the caller does too.
 fn copy_entry(entry: &mut impl Read, target: &Path, budget: u64) -> Result<u64, DataError> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -127,7 +134,7 @@ fn copy_entry(entry: &mut impl Read, target: &Path, budget: u64) -> Result<u64, 
     if written > budget {
         return Err(archive_error("archive is larger than the extraction limit"));
     }
-    Ok(budget - written)
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -149,6 +156,65 @@ mod tests {
 
     fn limits() -> ZipLimits {
         ZipLimits { max_entries: 10, max_total_bytes: 1000 }
+    }
+
+    /// Where `name`'s central directory record starts.
+    fn central_record(bytes: &[u8], name: &[u8]) -> usize {
+        let named = |at: usize| {
+            let len = usize::from(u16::from_le_bytes([bytes[at + 28], bytes[at + 29]]));
+            bytes[at..at + 4] == *b"PK\x01\x02" && bytes.get(at + 46..at + 46 + len) == Some(name)
+        };
+        (0..bytes.len() - 46).find(|&at| named(at)).unwrap()
+    }
+
+    fn patched(zip: &tempfile::NamedTempFile, patch: impl FnOnce(&mut Vec<u8>)) {
+        let mut bytes = std::fs::read(zip.path()).unwrap();
+        patch(&mut bytes);
+        std::fs::write(zip.path(), &bytes).unwrap();
+    }
+
+    #[test]
+    fn an_entry_whose_bytes_differ_from_its_declared_size_is_refused() {
+        let zip = zip_with(&[("1.out", b"1\n2\n")]);
+        patched(&zip, |bytes| {
+            let at = central_record(bytes, b"1.out");
+            bytes[at + 24..at + 28].copy_from_slice(&2u32.to_le_bytes());
+        });
+        let out = tempfile::tempdir().unwrap();
+        assert!(matches!(extract_zip(zip.path(), out.path(), &limits()), Err(DataError::Archive(_))));
+    }
+
+    /// The crate fails on `z/` (an AES method with no AES field) and falls back to an end record hidden in `z/`'s
+    /// central extra field, which names the same directory with only its first two records.
+    #[test]
+    fn a_fallback_end_record_naming_fewer_records_is_refused() {
+        const PLACEHOLDER: u16 = 0x4242;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = zip::ZipWriter::new(file.reopen().unwrap());
+        for name in ["1.in", "1.out"] {
+            writer.start_file(name, SimpleFileOptions::default()).unwrap();
+            writer.write_all(b"1\n").unwrap();
+        }
+        let mut options = zip::write::FullFileOptions::default();
+        options.add_extra_data(PLACEHOLDER, vec![0; 22].into_boxed_slice(), true).unwrap();
+        writer.add_directory("z/", options).unwrap();
+        writer.finish().unwrap();
+        patched(&file, |bytes| {
+            let start = bytes.len() - 22 + 16;
+            let directory = u32::from_le_bytes(bytes[start..start + 4].try_into().unwrap());
+            let at = central_record(bytes, b"z/");
+            bytes[at + 10..at + 12].copy_from_slice(&99u16.to_le_bytes());
+            let field = at + 46 + 2 + 4;
+            let fake = [
+                &0x0605_4b50u32.to_le_bytes()[..],
+                &[0, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0],
+                &directory.to_le_bytes(),
+                &[0, 0],
+            ];
+            bytes[field..field + 22].copy_from_slice(&fake.concat());
+        });
+        let out = tempfile::tempdir().unwrap();
+        assert!(matches!(extract_zip(file.path(), out.path(), &limits()), Err(DataError::Archive(_))));
     }
 
     #[test]
