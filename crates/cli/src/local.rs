@@ -89,6 +89,7 @@ impl LocalJudge {
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow::anyhow!("bad problem dir"))?;
         let root = problem_dir.parent().ok_or_else(|| anyhow::anyhow!("problem dir has no parent"))?;
+        anyhow::ensure!(problem_dir.exists(), "no problem dir {}", problem_dir.display());
         let resolver = Resolver {
             root: root.into(),
             cache: self.cache.clone(),

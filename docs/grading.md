@@ -118,7 +118,8 @@ output of every case. OUTPUT is a zip of outputs read per case by name; a zip th
   after any upload (temp file plus rename).
 - Problem cache key: `(code, data_version)`. A missing stamp (legacy data) means grade with what is on disk, report
   `data_version_used = 0`. A stamp lower than assigned (a lagging NFS) waits up to `data_wait_ms` (default 10 s) then sends
-  `Final{RETRY, DATA_UNAVAILABLE}`. A higher stamp uses the newer data.
+  `Final{RETRY, DATA_UNAVAILABLE}`. A higher stamp uses the newer data. A missing `<code>` directory (data not synced
+  yet, or a renamed code) is `Final{RETRY, DATA_UNAVAILABLE}` at once, never an internal error.
 - Grading reads the data root after resolve, so the upload marker and `.data-version` are read again at the end: a moved
   stamp turns the result into `RETRY DATA_UNAVAILABLE`.
 - Archives are extracted under zip limits (no traversal, symlinks or lying sizes) into `cache_dir`. Problem directories are
