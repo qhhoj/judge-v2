@@ -11,6 +11,8 @@
 
 use crate::checkers::CheckOutcome;
 use crate::checkers::custom::{PartialPoints, PartialScale, checker_limits, helper_argv};
+use crate::checkers::report_window::REPORT_WINDOW;
+use crate::checkers::testlib;
 use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
@@ -83,7 +85,7 @@ fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
     let mut limits = interactor_limits(solution);
     limits.processes = x.interactor.processes.max(1);
     let mut argv = ignoring_sigpipe(helper_argv(x.interactor, &limits));
-    argv.extend(["input", TOUT, "answer"].map(String::from));
+    argv.extend(["input", TOUT, "answer", testlib::RESULT_FILE].map(String::from));
     RunSpec {
         argv,
         limits,
@@ -97,11 +99,12 @@ fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
 fn prepare(boxes: &mut Boxes, x: &Interaction) -> Result<(), GradeError> {
     boxes.solution.reset_with_room(Room::for_files(&[&x.solution.program.dir])?)?;
     boxes.solution.put_tree(&x.solution.program.dir)?;
-    boxes.helper.reset_with_room(Room::for_files(&[&x.interactor.dir, x.input, x.answer])?)?;
+    let room = Room::for_files(&[&x.interactor.dir, x.input, x.answer])?.plus_file(REPORT_WINDOW);
+    boxes.helper.reset_with_room(room)?;
     boxes.helper.put_tree(&x.interactor.dir)?;
     boxes.helper.put("input", x.input, false)?;
     boxes.helper.put("answer", x.answer, false)?;
-    Ok(())
+    testlib::create_result_file(boxes.helper)
 }
 
 pub fn interact(mut boxes: Boxes, x: &Interaction) -> Result<Interactive, GradeError> {

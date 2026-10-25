@@ -1,5 +1,6 @@
 //! The conformance manifest (`tests/programs/manifest.toml`): the verdict each program gets on the a+b
-//! problem under the limits below. Read by the isolate suite and by `qhhoj-judge selftest`; the
+//! problem, or on a problem of `tests/programs/problems` (same two cases, its own checker or interactor),
+//! under the limits below. Read by the isolate suite and by `qhhoj-judge selftest`; the
 //! expectations only hold with exactly these cases and limits.
 
 use crate::judge::{GraderDefaults, Outcome, Submission, SubmissionSource};
@@ -8,6 +9,10 @@ use std::path::Path;
 
 /// The a+b problem every row is judged on: (input, expected output) per case.
 pub const CASES: [(&str, &str); 2] = [("1 2\n", "3\n"), ("4 5\n", "9\n")];
+/// The code of the a+b problem.
+pub const APLUSB: &str = "aplusb";
+/// The other problems, next to the manifest, one directory each.
+pub const PROBLEMS_DIR: &str = "problems";
 pub const TIME_LIMIT_S: f64 = 1.0;
 pub const MEMORY_KIB: u64 = 65_536;
 /// JVM languages need room for the VM itself.
@@ -28,6 +33,12 @@ pub struct Row {
     /// One status code per case, for a program whose cases differ.
     #[serde(default)]
     cases: Option<Vec<String>>,
+    /// The problem under `problems/` it is judged on; the a+b problem when absent.
+    #[serde(default)]
+    problem: Option<String>,
+    /// Each case's points, for a problem whose checker gives partial points.
+    #[serde(default)]
+    points: Option<Vec<f64>>,
 }
 
 impl Row {
@@ -39,6 +50,18 @@ impl Row {
             (Some(status), None) => vec![status.clone(); CASES.len()],
             (None, None) => Vec::new(),
         }
+    }
+
+    pub fn problem(&self) -> &str {
+        self.problem.as_deref().unwrap_or(APLUSB)
+    }
+
+    /// The judged statuses are the expected ones, and so are the cases' points when the row gives them.
+    pub fn matches(&self, statuses: &[String], points: &[f64]) -> bool {
+        let points_match = |want: &Vec<f64>| {
+            want.len() == points.len() && want.iter().zip(points).all(|(want, got)| (want - got).abs() < 1e-9)
+        };
+        statuses == self.expected() && self.points.as_ref().is_none_or(points_match)
     }
 }
 
@@ -63,13 +86,22 @@ impl Manifest {
     /// Refuses unknown keys and a row without exactly one of `expect` and `cases` (of one code per case).
     pub fn parse(text: &str) -> Result<Manifest, String> {
         let manifest: Manifest = toml::from_str(text).map_err(|e| e.to_string())?;
-        let malformed = |row: &&Row| match (&row.expect, &row.cases) {
-            (Some(_), None) => false,
-            (None, Some(cases)) => cases.len() != CASES.len(),
-            _ => true,
+        let malformed = |row: &&Row| {
+            let points = row.points.as_ref().is_some_and(|points| points.len() != CASES.len());
+            points
+                || match (&row.expect, &row.cases) {
+                    (Some(_), None) => false,
+                    (None, Some(cases)) => cases.len() != CASES.len(),
+                    _ => true,
+                }
         };
         match manifest.rows.iter().find(malformed) {
-            Some(row) => Err(format!("{} {}: give `expect` or {} `cases`", row.lang, row.file, CASES.len())),
+            Some(row) => Err(format!(
+                "{} {}: give `expect` or {n} `cases`, and {n} `points` if any",
+                row.lang,
+                row.file,
+                n = CASES.len()
+            )),
             None => Ok(manifest),
         }
     }
@@ -96,6 +128,23 @@ pub fn write_problem(dir: &Path, cases: &[(&str, &str)]) -> std::io::Result<()> 
         init.push_str(&format!("- {{in: {i}.in, out: {i}.out, points: 1}}\n"));
     }
     std::fs::write(dir.join("init.yml"), init)
+}
+
+/// Lays out every problem the rows are judged on under `root`: the a+b problem, and a copy of each
+/// directory of `programs/problems`.
+pub fn write_problems(root: &Path, programs: &Path) -> std::io::Result<()> {
+    write_problem(&root.join(APLUSB), &CASES)?;
+    let Ok(entries) = std::fs::read_dir(programs.join(PROBLEMS_DIR)) else { return Ok(()) };
+    for entry in entries {
+        let entry = entry?;
+        let into = root.join(entry.file_name());
+        std::fs::create_dir_all(&into)?;
+        for file in std::fs::read_dir(entry.path())? {
+            let file = file?;
+            std::fs::copy(file.path(), into.join(file.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 /// A row's submission under the manifest's limits.

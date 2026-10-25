@@ -96,10 +96,20 @@ enter it.
 - **Built-in** (`standard`, `floats`, `floatsabs`, `floatsrel`, `identical`, `linecount`): native Rust over the solution
   output (already capped) and the answer, with no sandbox. `unicode` in `hints` makes token comparison UTF-8 aware.
 - **Custom (`bridged`)**: compiled once per content hash into the cache, run in the worker's second box with `input`,
-  `output` and `answer` copied in read-only. Limits: time max(10 s, 2 x TL), 1 GiB, one process, no network. testlib exit
-  codes: 0 AC, 1 WA, 2 presentation error (WA), 3 fail (internal error), 7 with `points N` partial. `default` uses the
-  documented exit-code convention of the old judge. The checker's stderr (at most 50 bytes of feedback, 512 extended)
-  becomes the case feedback.
+  `output` and `answer` copied in read-only. Limits: time max(10 s, 2 x TL), 1 GiB, one process, no network.
+  - testlib (checkers and interactors): built with `-DTESTSYS` and run with a fifth argument, `.result.txt`, a file
+    the judge creates empty in the freshly staged box (a program file of that name is IE). testlib writes its quit
+    message there; the verdict is the exit code: 0 AC, 1 WA, 2 and 4 presentation error (WA), 8 unexpected EOF
+    (WA), 3 fail (IE), 7 partial: the number that starts the message (`quitp` and `quitf(_points, ...)` alike) as
+    points of the case (percent with `treat_checker_points_as_percentage`; outside the case, or not a number, IE);
+    a program that leaves the result file empty gives them as a last stderr line of exactly `points <number>`,
+    50 + n `_pc(n)`: n / 200 of the case, when stderr ends with testlib's own result-file line. Any other code is
+    IE. Apart from that `points` line, nothing the program prints on stderr decides the verdict.
+  - `default` uses the documented exit-code convention of the old judge: 0 AC, 1 WA, 2 the share that starts
+    stdout.
+  - The feedback is at most 50 bytes, the details 512: testlib's message after the program's stderr trace; the
+    first stderr line for `default`. Each stream is read through a 64 KiB window, whole lines only, at the end that
+    holds what is read (themis stdout and testlib stderr: the end; `default`: the start).
 - **Interactor** (`interactive`): two isolate runs started together, joined by two pipes (solution stdout to interactor
   stdin and back). The interactor gets `input` and `answer`; its wall time is the solution's plus 2 s, CPU max(10 s,
   2 x TL). The interactor's verdict counts only when the solution ended normally: a solution TLE, MLE, RTE or IR wins.

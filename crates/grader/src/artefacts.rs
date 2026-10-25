@@ -1,6 +1,7 @@
 //! Checkers and interactors compiled once per content hash (docs/grading.md#caching-and-data-version).
 //! The sources are problem-author code: they are compiled inside a box and only ever run in one.
 
+use crate::checkers::testlib::TESTSYS_DEFINE;
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::error::GradeError;
 use crate::languages::{Language, LanguageRegistry};
@@ -56,10 +57,12 @@ pub fn artefact_key(files: &[SourceFile], lang: &str, build_id: &str) -> String 
 /// (checker, interactor, generator, validator) gets at least this much.
 const HELPER_COMPILE_TIME_S: f64 = 30.0;
 
-/// Makes `job` compile a problem-author program: `/testlib` mounted and on the include path, and at least
+/// Makes `job` compile a problem-author program: `/testlib` mounted and on the include path, testlib's
+/// `TESTSYS` defined for a C or C++ compiler (`_pc(n)` then exits 50 + n), and at least
 /// `HELPER_COMPILE_TIME_S` of CPU (twice that of wall time).
 pub fn for_helper(mut job: CompileJob, language: &Language, testlib_dir: &std::path::Path) -> CompileJob {
-    job.argv = job.argv.map(|argv| with_testlib(argv, language.testlib_flag.as_deref()));
+    let flag = language.testlib_flag.as_deref();
+    job.argv = job.argv.map(|argv| with_testsys(with_testlib(argv, flag), flag));
     job.dirs.push(format!("/testlib={}", testlib_dir.display()));
     job.limits.time_s = job.limits.time_s.max(HELPER_COMPILE_TIME_S);
     job.limits.wall_s = job.limits.wall_s.max(2.0 * HELPER_COMPILE_TIME_S);
@@ -73,6 +76,18 @@ pub fn with_testlib(mut argv: Vec<String>, flag: Option<&str>) -> Vec<String> {
     }
     argv
 }
+
+/// `-DTESTSYS` after the compiler when the language includes testlib with `-I` (C and C++).
+fn with_testsys(mut argv: Vec<String>, testlib_flag: Option<&str>) -> Vec<String> {
+    if testlib_flag.is_some_and(|flag| flag.starts_with("-I")) && !argv.is_empty() {
+        argv.insert(1, TESTSYS_DEFINE.to_string());
+    }
+    argv
+}
+
+/// Part of every helper's cache key: how helpers are built beyond their language (`TESTSYS`), so a binary
+/// built another way is never reused.
+const HELPER_BUILD: &str = TESTSYS_DEFINE;
 
 /// A file stored next to init.yml, read through the resolver's checked handle and capped.
 pub fn read_data_source(problem: &ResolvedProblem, name: &str) -> Result<SourceFile, GradeError> {
@@ -127,7 +142,8 @@ impl Artefacts {
             for_helper(CompileJob::for_language(language, &main.bytes), language, &self.setup.testlib_dir);
         job.files.extend(source.files[1..].iter().cloned());
         let build_id = self.setup.build_ids.get(&source.lang).map_or("", String::as_str);
-        let key = format!("artefacts/{}", artefact_key(&source.files, &source.lang, build_id));
+        let build_id = format!("{build_id}\n{HELPER_BUILD}");
+        let key = format!("artefacts/{}", artefact_key(&source.files, &source.lang, &build_id));
         let lease = self.setup.cache.get_or_build(&key, |into| compile_helper(sandbox, &job, into))?;
         let mut program = program_for(language, lease.path(), &main.bytes);
         program.lease = Some(Arc::new(lease));
@@ -163,7 +179,8 @@ mod tests {
             (HELPER_COMPILE_TIME_S, 2.0 * HELPER_COMPILE_TIME_S)
         );
         assert!(job.dirs.contains(&"/testlib=/opt/testlib".to_string()));
-        assert!(job.argv.unwrap().contains(&"-I/testlib".to_string()));
+        let argv = job.argv.unwrap();
+        assert!(argv.contains(&"-I/testlib".to_string()) && argv.contains(&TESTSYS_DEFINE.to_string()));
         let slow = Language {
             compile_limits: Some(crate::languages::CompileLimitOverride {
                 time_s: 90.0,

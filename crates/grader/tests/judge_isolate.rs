@@ -490,12 +490,14 @@ int main(int argc, char* argv[]) {
 #[test]
 fn an_interactor_grades_partial_points_as_case_points_or_a_percentage() {
     let mut b = bench(90);
-    let modes =
-        [("halfpoints", "", 40.0), ("halfpercent", ", treat_checker_points_as_percentage: true", 20.0)];
-    for (code, flag, points) in modes {
+    let modes = [
+        ("halfpoints", "", 100, 50.0),
+        ("halfpercent", ", treat_checker_points_as_percentage: true", 40, 20.0),
+    ];
+    for (code, flag, case_points, points) in modes {
         let init = format!(
             "interactive: {{files: inter.cpp, type: testlib, lang: CPP17{flag}}}\n\
-             test_cases:\n- {{in: 1.in, out: 1.out, points: 40}}\n"
+             test_cases:\n- {{in: 1.in, out: 1.out, points: {case_points}}}\n"
         );
         let files: [(&str, &[u8]); 4] = [
             ("init.yml", init.as_bytes()),
