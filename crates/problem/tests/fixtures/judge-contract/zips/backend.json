@@ -258,8 +258,8 @@
     "accepted": false,
     "error": "1.out is corrupt: too many bytes in the stream. expected 2. got at least 4"
   },
-  "bad_crc_referenced": {
+  "bad_crc_unlisted": {
     "accepted": false,
-    "error": "1.in is corrupt: its checksum does not match"
+    "error": ".notes is corrupt: its checksum does not match"
   }
 }
