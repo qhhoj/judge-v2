@@ -110,7 +110,7 @@ fn host_registry() -> LanguageRegistry {
 
 fn suite() -> Suite {
     let dirs: Vec<_> = (0..4).map(|_| tempfile::tempdir().unwrap()).collect();
-    write_problem(dirs[0].path(), "aplusb", &manifest::CASES);
+    manifest::write_problems(dirs[0].path(), &PathBuf::from(ROOT).join("tests/programs")).unwrap();
     write_problem(dirs[0].path(), "secure", &[("", "ok\n")]);
     let registry = host_registry();
     let cache = Arc::new(DirCache::new(dirs[1].path().into(), 4 << 30));
@@ -190,11 +190,18 @@ fn every_manifest_row_gets_its_verdict() {
             skipped.insert(row.lang.clone());
             continue;
         }
-        let (outcome, cases) = judge(&mut s, "aplusb", &row.lang, program(&row.file));
-        let got = manifest::statuses(&outcome, &cases.iter().map(String::as_str).collect::<Vec<_>>());
+        let (outcome, cases) = judge_cases(&mut s, row.problem(), &row.lang, program(&row.file));
+        let codes: Vec<&str> = cases.iter().map(|c| c.status.code()).collect();
+        let got = manifest::statuses(&outcome, &codes);
+        let points: Vec<f64> = cases.iter().map(|c| c.points).collect();
         judged += 1;
-        if got != row.expected() {
-            failures.push(format!("{} {}: expected {:?}, got {got:?}", row.lang, row.file, row.expected()));
+        if !row.matches(&got, &points) {
+            failures.push(format!(
+                "{} {}: expected {:?}, got {got:?} {points:?}",
+                row.lang,
+                row.file,
+                row.expected()
+            ));
         }
     }
     failures.dedup();

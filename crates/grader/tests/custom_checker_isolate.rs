@@ -161,7 +161,11 @@ fn testlib_points_are_case_points_or_a_percentage_with_the_flag() {
     let mut f = fixture(7, CustomKind::Testlib, POINTS_CHECKER);
     let three_of_five = judge_worth(&mut f, "3", 5.0);
     assert!(three_of_five.passed && (three_of_five.fraction - 0.6).abs() < 1e-9, "{three_of_five:?}");
-    assert_eq!(judge_worth(&mut f, "9", 5.0).fraction, 1.0, "clamped to the case");
+    let over = judge(&mut f, "", "9");
+    assert!(
+        matches!(&over, Err(GradeError::Checker(m)) if m.contains("9 points")),
+        "more than the case: {over:?}"
+    );
     assert_eq!(judge_worth(&mut f, "0", 5.0).fraction, 1.0, "accepted is full points");
     f.checker.partial = PartialPoints::Percentage;
     let half = judge_worth(&mut f, "50", 40.0);

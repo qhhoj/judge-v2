@@ -175,7 +175,7 @@ impl Reporter for Cases {
 /// The row's statuses (`manifest::statuses`) and every case's report.
 fn judge_row(
     judge: &mut LocalJudge,
-    problem: &Path,
+    problems: &Path,
     programs: &Path,
     row: &Row,
 ) -> anyhow::Result<(Vec<String>, Vec<CaseReport>)> {
@@ -183,7 +183,8 @@ fn judge_row(
         .map_err(|e| anyhow::anyhow!("{}: {e}", programs.join(&row.file).display()))?;
     let jvm = judge.registry.get(&row.lang).is_some_and(|l| l.jvm);
     let mut cases = Cases::default();
-    let outcome = judge.judge(problem, &manifest::submission(&row.lang, jvm, source), &mut cases)?;
+    let problem = problems.join(row.problem());
+    let outcome = judge.judge(&problem, &manifest::submission(&row.lang, jvm, source), &mut cases)?;
     let codes: Vec<&str> = cases.0.iter().map(|c| c.status.code()).collect();
     Ok((manifest::statuses(&outcome, &codes), cases.0))
 }
@@ -198,9 +199,13 @@ fn short(statuses: &[String]) -> String {
 fn print_row(row: &Row, got: &[String], cases: &[CaseReport]) {
     let time = cases.iter().map(|c| c.time_s).fold(0.0, f64::max);
     let memory = cases.iter().map(|c| c.memory_kib).max().unwrap_or(0);
-    let mark = if got == row.expected() { "ok" } else { "MISMATCH" };
+    let mark = if matches(row, got, cases) { "ok" } else { "MISMATCH" };
     let (want, got) = (short(&row.expected()), short(got));
     println!("{:<7} {:<26} {want:<5} {got:<5} {time:>6.3}s {memory:>7}K  {mark}", row.lang, row.file);
+}
+
+fn matches(row: &Row, got: &[String], cases: &[CaseReport]) -> bool {
+    row.matches(got, &cases.iter().map(|c| c.points).collect::<Vec<_>>())
 }
 
 /// Rows of languages the judge advertises are judged; the others are skipped.
@@ -213,8 +218,7 @@ struct Tally {
 
 fn run_rows(judge: &mut LocalJudge, programs: &Path, rows: &[Row]) -> anyhow::Result<Tally> {
     let work = tempfile::tempdir()?;
-    let problem = work.path().join("aplusb");
-    manifest::write_problem(&problem, &manifest::CASES)?;
+    manifest::write_problems(work.path(), programs)?;
     println!("{:<7} {:<26} {:<5} {:<5} {:>7} {:>8}", "LANG", "FILE", "WANT", "GOT", "TIME", "MEM");
     let mut tally = Tally::default();
     for row in rows {
@@ -222,10 +226,10 @@ fn run_rows(judge: &mut LocalJudge, programs: &Path, rows: &[Row]) -> anyhow::Re
             tally.skipped.insert(row.lang.clone());
             continue;
         }
-        let (got, cases) = judge_row(judge, &problem, programs, row)?;
+        let (got, cases) = judge_row(judge, work.path(), programs, row)?;
         print_row(row, &got, &cases);
         tally.judged += 1;
-        tally.mismatched += usize::from(got != row.expected());
+        tally.mismatched += usize::from(!matches(row, &got, &cases));
     }
     Ok(tally)
 }
