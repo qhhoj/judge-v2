@@ -1,7 +1,0 @@
-archive: "tests.zip"
-checker: "standard"
-output_limit_length: 0
-test_cases:
-  - in: "1.in"
-    out: "1.out"
-    points: 1

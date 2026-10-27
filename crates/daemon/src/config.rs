@@ -212,6 +212,14 @@ pub fn check_cache_size(config: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// A default of 0 would make every problem without its own `output_limit_length` an output-limit failure.
+pub fn check_output_limit(config: &Config) -> Result<(), ConfigError> {
+    if config.limits.default_output_limit == 0 {
+        return Err(invalid("default_output_limit must be at least 1 byte"));
+    }
+    Ok(())
+}
+
 /// The daemon waits for data that never comes when `problem_data_root` is not there (a missing mount).
 pub fn check_data_root(config: &Config) -> Result<(), ConfigError> {
     if !config.problem_data_root.is_dir() {
@@ -257,6 +265,13 @@ mod tests {
         let sized = |bytes: u64| parse(&format!("{MIN}cache_max_bytes = {bytes}\n")).unwrap();
         assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES - 1)).is_err());
         assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn the_default_output_limit_must_not_be_zero() {
+        let with = |limit: u64| parse(&format!("{MIN}[limits]\ndefault_output_limit = {limit}\n")).unwrap();
+        assert!(check_output_limit(&with(0)).is_err());
+        assert!(check_output_limit(&with(1)).is_ok());
     }
 
     #[test]
