@@ -10,7 +10,7 @@
 # one level below it, /usr/local included; entries naming it are dropped on a host where it does not resolve.
 # Other entries are absolute paths, files or trees, taken as written (never /, /usr or /usr/local themselves);
 # one whose last component holds `*` (libruby*.so*) stands for the entries of its directory that match it, so no
-# version is written; it is dropped where nothing matches.
+# version is written. check-config fails for an installed language none of whose preload paths exists or matches.
 # compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
 
 [[language]]
@@ -240,7 +240,8 @@ run = ["/usr/bin/ruby", "main.rb"]
 # Ruby starts a timer thread: with processes = 1 it hangs at exit until the wall limit.
 processes = 4
 # As for PY3 (5 MiB for a hello world): the interpreter, libruby and the stdlib and extensions it loads at start.
-preload = ["/usr/bin/ruby*", "/usr/lib/x86_64-linux-gnu/libruby*.so*", "/usr/lib/x86_64-linux-gnu/ruby", "/usr/lib/ruby"]
+preload = ["/usr/bin/ruby*", "/usr/lib/x86_64-linux-gnu/libruby*.so*", "/usr/lib/x86_64-linux-gnu/ruby", "/usr/lib/ruby",
+  "/usr/lib/x86_64-linux-gnu/libgmp.so*", "/usr/lib/x86_64-linux-gnu/libyaml-0.so*"]
 version = ["/usr/bin/ruby", "--version"]
 exception_marker = "main.rb:"
 exception_style = "parenthesized"

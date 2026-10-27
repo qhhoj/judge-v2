@@ -92,6 +92,9 @@ pub struct Language {
     /// kernel charges their pages to the judge and not to the box (`judge_sandbox::preload`).
     #[serde(default)]
     pub preload: Vec<String>,
+    /// Set at load: `preload` had entries for this host's layout and none of them expanded to a file.
+    #[serde(skip)]
+    pub preload_matched_nothing: bool,
     /// Environment variables set for runs, on top of `PATH` and `HOME`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -203,15 +206,21 @@ impl Language {
             }
             None => self.preload.retain(|path| !path.contains(RUNTIME_PLACEHOLDER)),
         }
+        let written = self.preload.len();
         self.preload = self.preload.iter().flat_map(|path| expand_wildcard(path)).collect();
+        self.preload_matched_nothing = written > 0 && self.preload.is_empty();
     }
 
-    /// The first `preload` path that is not absolute, is a whole system tree (`/`, `/usr`, `/usr/local`) or
-    /// still holds a `*` (a wildcard with no literal text, `/usr/lib/*`, or one before the last component).
+    /// The first `preload` path that is not absolute, is a whole system tree (`/`, `/usr`, `/usr/local`),
+    /// climbs with `..` (`/usr/lib/..` is `/usr`) or still holds a `*` (a wildcard with no literal text,
+    /// `/usr/lib/*`, or one before the last component).
     fn refused_preload(&self) -> Option<&str> {
         let system = |path: &Path| ["/", "/usr", "/usr/local"].iter().any(|root| path == Path::new(root));
-        let refused =
-            |path: &&String| !Path::new(path).is_absolute() || system(Path::new(path)) || path.contains('*');
+        let climbs = |path: &Path| path.components().any(|part| part == std::path::Component::ParentDir);
+        let refused = |path: &&String| {
+            let path_ref = Path::new(path);
+            !path_ref.is_absolute() || system(path_ref) || climbs(path_ref) || path.contains('*')
+        };
         self.preload.iter().find(refused).map(String::as_str)
     }
 
@@ -474,6 +483,11 @@ mod tests {
         let apt = format!("{apt}preload=['{{runtime}}/lib', '/usr/lib/pypy3.9']\n");
         let language = LanguageRegistry::from_toml(&apt).unwrap().get("A").unwrap().clone();
         assert_eq!(language.preload, ["/usr/lib/pypy3.9"], "no {{runtime}} here: its layout is dropped");
+    }
+
+    #[test]
+    fn preload_wildcards_match_by_name_and_an_entry_that_climbs_or_is_a_system_tree_is_refused() {
+        let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("lib");
         std::fs::create_dir_all(&dir).unwrap();
         for name in ["libpy3.14.so.1", "libpy3.14.a", "libother.so", "py3.14"] {
@@ -482,9 +496,18 @@ mod tests {
         let wild =
             format!("{MINIMAL}preload=['{0}/libpy3.*.so*', '{0}/py3*', '{0}/nothing*']\n", dir.display());
         let language = LanguageRegistry::from_toml(&wild).unwrap().get("A").unwrap().clone();
+        assert!(!language.preload_matched_nothing, "some entries matched");
+        let none = format!("{MINIMAL}preload=['{0}/nothing*']\n", dir.display());
+        let none = LanguageRegistry::from_toml(&none).unwrap().get("A").unwrap().clone();
+        assert!(
+            none.preload_matched_nothing && none.preload.is_empty(),
+            "a wildcard matching nothing is noticed"
+        );
         let found: Vec<_> = language.preload.iter().map(|path| path.rsplit('/').next().unwrap()).collect();
         assert_eq!(found, ["libpy3.14.so.1", "py3.14"], "a wildcard matches by name, not libpy3.14.a");
-        for refused in ["'/usr/'", "'/'", "'lib'", "'/usr/lib/*'", "'/usr/*/lib'"] {
+        for refused in
+            ["'/usr/'", "'/'", "'lib'", "'/usr/lib/*'", "'/usr/*/lib'", "'/usr/lib/..'", "'/usr/lib/../..'"]
+        {
             let text = format!("{MINIMAL}preload=[{refused}]\n");
             assert!(LanguageRegistry::from_toml(&text).is_err(), "preload {refused}");
         }

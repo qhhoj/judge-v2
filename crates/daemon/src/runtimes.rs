@@ -88,14 +88,16 @@ fn missing_dir(language: &Language) -> Option<&str> {
     dirs.find(|dir| !Path::new(dir).is_dir())
 }
 
-/// The installed languages (run command on this host) that preload but none of whose `preload` paths exists:
+/// The installed languages (run command on this host) that preload but none of whose `preload` paths exists
+/// (or whose wildcards matched no file at all):
 /// their runs are charged for the page cache of the runtime they are first to read (`judge_sandbox::preload`).
 /// A language may list several layouts (PYPY3: portable and apt); one present is enough.
 pub fn unpreloaded(registry: &LanguageRegistry) -> Vec<&Language> {
     let installed =
         |language: &&Language| language.run.first().is_some_and(|program| Path::new(program).exists());
     let none_present = |language: &&Language| {
-        !language.preload.is_empty() && !language.preload.iter().any(|path| Path::new(path).exists())
+        language.preload_matched_nothing
+            || (!language.preload.is_empty() && !language.preload.iter().any(|path| Path::new(path).exists()))
     };
     let languages = registry.keys().into_iter().filter_map(|key| registry.get(key));
     languages.filter(installed).filter(none_present).collect()
@@ -141,11 +143,17 @@ mod tests {
     #[test]
     fn an_installed_language_none_of_whose_preload_paths_exists_is_reported() {
         let text = "[[language]]\nkey='SH'\nname='sh'\nsource='a'\nrun=['/bin/sh']\nversion=[]\npreload=['/nonexistent/lib']\n\
+            [[language]]\nkey='WILD'\nname='w'\nsource='a'\nrun=['/bin/sh']\nversion=[]\npreload=['/nonexistent/lib*']\n\
             [[language]]\nkey='ONE'\nname='o'\nsource='a'\nrun=['/bin/sh']\nversion=[]\npreload=['/nonexistent/lib', '/bin']\n\
-            [[language]]\nkey='GONE'\nname='g'\nsource='a'\nrun=['/nonexistent/bin']\nversion=[]\npreload=['/nonexistent/lib']\n";
+            [[language]]\nkey='GONE'\nname='g'\nsource='a'\nrun=['/nonexistent/bin']\nversion=[]\npreload=['/nonexistent/lib']\n\
+            [[language]]\nkey='GONEWILD'\nname='gw'\nsource='a'\nrun=['/nonexistent/bin']\nversion=[]\npreload=['/nonexistent/lib*']\n";
         let registry = LanguageRegistry::from_toml(text).unwrap();
         let keys: Vec<_> = unpreloaded(&registry).iter().map(|language| language.key.as_str()).collect();
-        assert_eq!(keys, ["SH"], "one present layout is enough; a language not installed is not reported");
+        assert_eq!(
+            keys,
+            ["SH", "WILD"],
+            "one present layout is enough; a language not installed is not reported"
+        );
     }
 
     #[test]
