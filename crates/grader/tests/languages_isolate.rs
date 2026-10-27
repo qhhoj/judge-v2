@@ -192,9 +192,10 @@ fn pypy() -> Option<judge_grader::languages::Language> {
 /// The memory of a hello world in `language`, built first; `evict` drops the page cache of the runtime's install
 /// (`runtime_home`) between the build (which reads the runtime too) and the run.
 fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict: bool) -> u64 {
+    let source: &[u8] = if language.key == "RUBY" { b"puts 1\n" } else { b"print(1)\n" };
     let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
     let mut sandbox = sandbox_on(offset, dirs[0].path(), Some(0));
-    let job = CompileJob::for_language(language, b"print(1)\n");
+    let job = CompileJob::for_language(language, source);
     let outcome = build(&mut sandbox, &job, dirs[1].path()).unwrap();
     assert!(matches!(outcome, BuildOutcome::Built { .. }), "{outcome:?}");
     if evict {
@@ -205,7 +206,7 @@ fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict
             None => language.preload.iter().for_each(|path| evict_page_cache(std::path::Path::new(path))),
         }
     }
-    let program = program_for(language, dirs[1].path(), b"print(1)\n");
+    let program = program_for(language, dirs[1].path(), source);
     let input = dirs[2].path().join("in");
     std::fs::write(&input, "").unwrap();
     let file = std::fs::File::open(&input).unwrap();
@@ -223,4 +224,19 @@ fn pypy_reports_the_same_memory_whether_or_not_its_runtime_is_in_the_page_cache(
     let Some(language) = pypy() else { return };
     let (cold, warm) = (hello_memory(&language, 50, true), hello_memory(&language, 50, false));
     assert!(cold.abs_diff(warm) * 10 < warm, "{cold} KiB with PyPy out of the page cache, {warm} KiB in it");
+}
+
+#[test]
+fn cpython_and_ruby_report_the_same_memory_whether_or_not_their_runtime_is_in_the_page_cache() {
+    // As for PyPy: the interpreter, its shared library and the stdlib it loads at start were charged to the
+    // first run (7 MiB for CPython, 5 MiB for Ruby), against problems limited to a few MiB.
+    for (key, offset) in [("PY3", 51), ("RUBY", 52)] {
+        let language = registry().get(key).unwrap().clone();
+        if !installed(&language) {
+            eprintln!("skip: {key} (not installed)");
+            continue;
+        }
+        let (cold, warm) = (hello_memory(&language, offset, true), hello_memory(&language, offset, false));
+        assert!(cold.abs_diff(warm) * 10 < warm, "{key}: {cold} KiB out of the page cache, {warm} KiB in it");
+    }
 }
