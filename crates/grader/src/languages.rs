@@ -92,9 +92,13 @@ pub struct Language {
     /// kernel charges their pages to the judge and not to the box (`judge_sandbox::preload`).
     #[serde(default)]
     pub preload: Vec<String>,
-    /// Set at load: `preload` had entries for this host's layout and none of them expanded to a file.
+    /// Like `preload`, but entries that may be absent on a working host (an extra library, the run binary's own
+    /// name, the other install layout): they are preloaded when present and never reported missing.
+    #[serde(default)]
+    pub preload_optional: Vec<String>,
+    /// Set at load: the `preload` (required) entries, as written for this host, that name no existing file.
     #[serde(skip)]
-    pub preload_matched_nothing: bool,
+    pub preload_missing: Vec<String>,
     /// Environment variables set for runs, on top of `PATH` and `HOME`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -161,6 +165,28 @@ fn install_home(real_program: &Path) -> Option<String> {
     (!system).then(|| home.to_string_lossy().into_owned())
 }
 
+/// One written `preload` entry as this host resolves it.
+struct Entry {
+    written: String,
+    paths: Vec<String>,
+    /// Some resolved path exists.
+    present: bool,
+}
+
+/// Each entry with `{runtime}` replaced by `home` (dropped when there is none) and wildcards expanded.
+fn expand_entries(entries: &[String], home: Option<&str>) -> Vec<Entry> {
+    let resolve = |written: &String| match home {
+        Some(home) => Some(written.replace(RUNTIME_PLACEHOLDER, home)),
+        None => (!written.contains(RUNTIME_PLACEHOLDER)).then(|| written.clone()),
+    };
+    let entry = |written: String| {
+        let paths = expand_wildcard(&written);
+        let present = paths.iter().any(|path| Path::new(path).exists());
+        Entry { written, paths, present }
+    };
+    entries.iter().filter_map(resolve).map(entry).collect()
+}
+
 /// `path` itself, or, when its last component holds `*` between literal text (`libruby*.so*`), the sorted
 /// entries of its directory whose name matches (each `*` is any text). A component with no literal text (`*`,
 /// a `*` after a `/`) is kept as written, to be refused.
@@ -200,15 +226,12 @@ impl Language {
     /// component holds `*` (`libruby*.so*`, so no version is written) becomes the entries of its directory
     /// that match it; one matching nothing is dropped.
     pub fn resolve_runtime(&mut self) {
-        match self.run.first().and_then(|program| runtime_home(program)) {
-            Some(home) => {
-                self.preload.iter_mut().for_each(|path| *path = path.replace(RUNTIME_PLACEHOLDER, &home))
-            }
-            None => self.preload.retain(|path| !path.contains(RUNTIME_PLACEHOLDER)),
-        }
-        let written = self.preload.len();
-        self.preload = self.preload.iter().flat_map(|path| expand_wildcard(path)).collect();
-        self.preload_matched_nothing = written > 0 && self.preload.is_empty();
+        let home = self.run.first().and_then(|program| runtime_home(program));
+        let required = expand_entries(&self.preload, home.as_deref());
+        let optional = expand_entries(&self.preload_optional, home.as_deref());
+        self.preload_missing =
+            required.iter().filter(|entry| !entry.present).map(|entry| entry.written.clone()).collect();
+        self.preload = required.into_iter().chain(optional).flat_map(|entry| entry.paths).collect();
     }
 
     /// The first `preload` path that is not absolute, is a whole system tree (`/`, `/usr`, `/usr/local`),
@@ -496,13 +519,15 @@ mod tests {
         let wild =
             format!("{MINIMAL}preload=['{0}/libpy3.*.so*', '{0}/py3*', '{0}/nothing*']\n", dir.display());
         let language = LanguageRegistry::from_toml(&wild).unwrap().get("A").unwrap().clone();
-        assert!(!language.preload_matched_nothing, "some entries matched");
-        let none = format!("{MINIMAL}preload=['{0}/nothing*']\n", dir.display());
-        let none = LanguageRegistry::from_toml(&none).unwrap().get("A").unwrap().clone();
-        assert!(
-            none.preload_matched_nothing && none.preload.is_empty(),
-            "a wildcard matching nothing is noticed"
+        let nothing = format!("{}/nothing*", dir.display());
+        assert_eq!(
+            language.preload_missing,
+            std::slice::from_ref(&nothing),
+            "a required wildcard matching nothing is noticed"
         );
+        let optional = format!("{MINIMAL}preload_optional=['{nothing}']\n");
+        let optional = LanguageRegistry::from_toml(&optional).unwrap().get("A").unwrap().clone();
+        assert!(optional.preload_missing.is_empty(), "an optional entry may match nothing");
         let found: Vec<_> = language.preload.iter().map(|path| path.rsplit('/').next().unwrap()).collect();
         assert_eq!(found, ["libpy3.14.so.1", "py3.14"], "a wildcard matches by name, not libpy3.14.a");
         for refused in
