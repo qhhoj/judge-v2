@@ -233,13 +233,13 @@ fn copy_tree(from: &str, to: &std::path::Path) {
     assert!(status.success(), "cp {from}");
 }
 
-/// The entries of `dir` whose name starts with `prefix` and holds no `-` (not `python3.14-config`), sorted.
+/// The entries of `dir` whose name starts with `prefix` and is not a `-config` script, sorted.
 fn named(dir: &str, prefix: &str) -> Vec<std::path::PathBuf> {
     let entries = std::fs::read_dir(dir).unwrap().flatten().map(|entry| entry.path());
     let mut found: Vec<_> = entries
         .filter(|path| {
             let name = path.file_name().unwrap().to_string_lossy();
-            name.starts_with(prefix) && !name.contains('-')
+            name.starts_with(prefix) && !name.ends_with("-config")
         })
         .collect();
     found.sort();
@@ -297,7 +297,7 @@ fn private_runtime(key: &str) -> Option<(tempfile::TempDir, judge_grader::langua
         compile[0] = format!("{home}/bin/{exe}");
     }
     let shipped = language.preload.iter().map(|path| path.replacen("/usr/", &format!("{home}/"), 1));
-    language.preload = shipped.flat_map(|path| judge_grader::languages::expand_prefix(&path)).collect();
+    language.preload = shipped.flat_map(|path| judge_grader::languages::expand_wildcard(&path)).collect();
     language.dirs.push(home.clone());
     language.compile_dirs.push(home);
     Some((tmp, language))

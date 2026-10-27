@@ -158,31 +158,44 @@ fn install_home(real_program: &Path) -> Option<String> {
     (!system).then(|| home.to_string_lossy().into_owned())
 }
 
-/// `path` itself, or for `dir/prefix*` the sorted entries of `dir` whose name starts with `prefix`
-/// (a `*` after a `/` is kept, to be refused).
-pub fn expand_prefix(path: &str) -> Vec<String> {
-    let Some((dir, prefix)) = path.strip_suffix('*').and_then(|pattern| pattern.rsplit_once('/')) else {
+/// `path` itself, or, when its last component holds `*` between literal text (`libruby*.so*`), the sorted
+/// entries of its directory whose name matches (each `*` is any text). A component with no literal text (`*`,
+/// a `*` after a `/`) is kept as written, to be refused.
+pub fn expand_wildcard(path: &str) -> Vec<String> {
+    let Some((dir, pattern)) = path.rsplit_once('/').filter(|(_, pattern)| pattern.contains('*')) else {
         return vec![path.to_string()];
     };
-    if prefix.is_empty() {
+    if pattern.chars().all(|c| c == '*') {
         return vec![path.to_string()];
     }
     let mut found: Vec<String> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
+        .filter(|entry| matches_wildcard(pattern, &entry.file_name().to_string_lossy()))
         .map(|entry| entry.path().to_string_lossy().into_owned())
         .collect();
     found.sort();
     found
 }
 
+/// Whether `name` matches `pattern`, where each `*` stands for any text (possibly none).
+fn matches_wildcard(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((head, rest)) => name.strip_prefix(head).is_some_and(|tail| {
+            (0..=tail.len())
+                .filter(|&at| tail.is_char_boundary(at))
+                .any(|at| matches_wildcard(rest, &tail[at..]))
+        }),
+    }
+}
+
 impl Language {
     /// Replaces `{runtime}` in `preload` with `runtime_home` of the run command; without one, the entries that
-    /// name it are dropped (that layout is not this host's) and the absolute ones stay. An entry ending in `*`
-    /// (`/usr/lib/python3.*`, so no version is written) becomes the entries of its directory that start with
-    /// the text before the `*`; one matching nothing is dropped.
+    /// name it are dropped (that layout is not this host's) and the absolute ones stay. An entry whose last
+    /// component holds `*` (`libruby*.so*`, so no version is written) becomes the entries of its directory
+    /// that match it; one matching nothing is dropped.
     pub fn resolve_runtime(&mut self) {
         match self.run.first().and_then(|program| runtime_home(program)) {
             Some(home) => {
@@ -190,11 +203,11 @@ impl Language {
             }
             None => self.preload.retain(|path| !path.contains(RUNTIME_PLACEHOLDER)),
         }
-        self.preload = self.preload.iter().flat_map(|path| expand_prefix(path)).collect();
+        self.preload = self.preload.iter().flat_map(|path| expand_wildcard(path)).collect();
     }
 
     /// The first `preload` path that is not absolute, is a whole system tree (`/`, `/usr`, `/usr/local`) or
-    /// still holds a `*` (a wildcard with no name before it, `/usr/lib/*`, or one not at the end).
+    /// still holds a `*` (a wildcard with no literal text, `/usr/lib/*`, or one before the last component).
     fn refused_preload(&self) -> Option<&str> {
         let system = |path: &Path| ["/", "/usr", "/usr/local"].iter().any(|root| path == Path::new(root));
         let refused =
@@ -466,10 +479,11 @@ mod tests {
         for name in ["libpy3.14.so.1", "libpy3.14.a", "libother.so", "py3.14"] {
             std::fs::write(dir.join(name), "").unwrap();
         }
-        let wild = format!("{MINIMAL}preload=['{0}/libpy3*', '{0}/py3*', '{0}/nothing*']\n", dir.display());
+        let wild =
+            format!("{MINIMAL}preload=['{0}/libpy3.*.so*', '{0}/py3*', '{0}/nothing*']\n", dir.display());
         let language = LanguageRegistry::from_toml(&wild).unwrap().get("A").unwrap().clone();
         let found: Vec<_> = language.preload.iter().map(|path| path.rsplit('/').next().unwrap()).collect();
-        assert_eq!(found, ["libpy3.14.a", "libpy3.14.so.1", "py3.14"], "a prefix wildcard matches by name");
+        assert_eq!(found, ["libpy3.14.so.1", "py3.14"], "a wildcard matches by name, not libpy3.14.a");
         for refused in ["'/usr/'", "'/'", "'lib'", "'/usr/lib/*'", "'/usr/*/lib'"] {
             let text = format!("{MINIMAL}preload=[{refused}]\n");
             assert!(LanguageRegistry::from_toml(&text).is_err(), "preload {refused}");

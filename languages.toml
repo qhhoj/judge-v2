@@ -9,8 +9,8 @@
 # the directory above the one holding the run command's real file (the JDK for bin/java), never / or a directory
 # one level below it, /usr/local included; entries naming it are dropped on a host where it does not resolve.
 # Other entries are absolute paths, files or trees, taken as written (never /, /usr or /usr/local themselves);
-# one ending in a name and `*` (/usr/lib/python3.*) stands for the entries of its directory starting with that name,
-# so no version is written; it is dropped where nothing matches.
+# one whose last component holds `*` (libruby*.so*) stands for the entries of its directory that match it, so no
+# version is written; it is dropped where nothing matches.
 # compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
 
 [[language]]
@@ -118,7 +118,7 @@ compile = ["/usr/bin/python3", "-m", "py_compile", "main.py"]
 run = ["/usr/bin/python3", "-B", "main.py"]
 # A CPython first to read its binary, libpython and the stdlib it imports at start is charged their page cache (7 MiB
 # for a hello world, against limits of a few MiB): preloaded, as the JDK is. Ubuntu's layout (python3-minimal).
-preload = ["/usr/bin/python3.*", "/usr/lib/x86_64-linux-gnu/libpython3.*", "/usr/lib/python3.*"]
+preload = ["/usr/bin/python3.*", "/usr/lib/x86_64-linux-gnu/libpython3.*.so*", "/usr/lib/python3.*"]
 version = ["/usr/bin/python3", "--version"]
 exception_marker = "Traceback (most recent call last)"
 exception_style = "last_line"
@@ -240,7 +240,7 @@ run = ["/usr/bin/ruby", "main.rb"]
 # Ruby starts a timer thread: with processes = 1 it hangs at exit until the wall limit.
 processes = 4
 # As for PY3 (5 MiB for a hello world): the interpreter, libruby and the stdlib and extensions it loads at start.
-preload = ["/usr/bin/ruby*", "/usr/lib/x86_64-linux-gnu/libruby*", "/usr/lib/x86_64-linux-gnu/ruby", "/usr/lib/ruby"]
+preload = ["/usr/bin/ruby*", "/usr/lib/x86_64-linux-gnu/libruby*.so*", "/usr/lib/x86_64-linux-gnu/ruby", "/usr/lib/ruby"]
 version = ["/usr/bin/ruby", "--version"]
 exception_marker = "main.rb:"
 exception_style = "parenthesized"
