@@ -95,6 +95,7 @@ pub fn start_checks(
     probe_box: u32,
 ) -> anyhow::Result<(SandboxConfig, DiskBound)> {
     crate::config::check_cache_size(config)?;
+    crate::config::check_output_limit(config)?;
     check_pinning(config, cores)?;
     checked_sandbox(config, probe_box)
 }
