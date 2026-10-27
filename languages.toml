@@ -120,8 +120,9 @@ compile = ["/usr/bin/python3", "-m", "py_compile", "main.py"]
 run = ["/usr/bin/python3", "-B", "main.py"]
 # A CPython first to read its binary, libpython and the stdlib it imports at start is charged their page cache (7 MiB
 # for a hello world, against limits of a few MiB): preloaded, as the JDK is. Ubuntu's layout (python3-minimal).
-preload = ["/usr/lib/x86_64-linux-gnu/libpython3.*.so*", "/usr/lib/python3.*"]
-preload_optional = ["/usr/bin/python3.*"]
+preload = ["/usr/lib/python3.*"]
+# Ubuntu's python3 is statically linked: libpython comes only from the separate libpython3.N package.
+preload_optional = ["/usr/bin/python3.*", "/usr/lib/x86_64-linux-gnu/libpython3.*.so*"]
 version = ["/usr/bin/python3", "--version"]
 exception_marker = "Traceback (most recent call last)"
 exception_style = "last_line"
