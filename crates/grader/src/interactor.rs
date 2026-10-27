@@ -77,6 +77,7 @@ fn solution_spec(x: &Interaction) -> RunSpec {
         stdio: Stdio { stdin: None, stdout: None, stderr: Some(stderr.into()) },
         env: program.env.clone(),
         dirs: program.dirs.clone(),
+        preload: program.preload.clone(),
         inherit_fds: false,
     }
 }
@@ -92,6 +93,7 @@ fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
         stdio: Stdio { stdin: None, stdout: None, stderr: Some(MANAGER_STDERR.into()) },
         env: x.interactor.env.clone(),
         dirs: x.interactor.dirs.clone(),
+        preload: x.interactor.preload.clone(),
         inherit_fds: false,
     }
 }

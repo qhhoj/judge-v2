@@ -43,6 +43,7 @@ fn probe_run(argv: Vec<String>) -> RunSpec {
         stdio: Stdio { stdin: None, stdout: Some(PROBE_OUT.into()), stderr: Some("/dev/null".into()) },
         env: vec![],
         dirs: vec![],
+        preload: vec![],
         inherit_fds: true,
     }
 }

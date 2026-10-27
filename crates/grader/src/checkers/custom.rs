@@ -184,6 +184,7 @@ impl CustomChecker {
             stdio: Stdio { stdin: Some(stdin), stdout: Some(STDOUT.into()), stderr: Some(STDERR.into()) },
             env: self.program.env.clone(),
             dirs: self.program.dirs.clone(),
+            preload: self.program.preload.clone(),
             inherit_fds: false,
         }
     }

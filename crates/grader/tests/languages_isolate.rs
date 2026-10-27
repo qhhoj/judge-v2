@@ -5,6 +5,7 @@ mod common;
 use common::{installed, language_or_skip, registry, sandbox, sandbox_on};
 use judge_grader::compile::{BuildOutcome, CompileJob, build, program_for};
 use judge_grader::error::GradeError;
+use judge_grader::languages::LanguageRegistry;
 use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
 use judge_sandbox::classify::RunVerdict;
 
@@ -133,4 +134,93 @@ fn a_jvm_reports_the_same_memory_whatever_the_hosts_ram() {
     };
     let (Some(small), Some(large)) = (memory_on("2g"), memory_on("64g")) else { return };
     assert!(small.abs_diff(large) * 10 < large, "{small} KiB on a 2 GiB host, {large} KiB on a 64 GiB host");
+}
+
+/// Drops the page cache of `path`, or of every file under it, that no process maps, as a reboot or memory
+/// pressure does.
+fn evict_page_cache(path: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        if let Ok(file) = std::fs::File::open(path) {
+            rustix::fs::fadvise(&file, 0, None, rustix::fs::Advice::DontNeed).unwrap();
+        }
+        return;
+    };
+    for entry in entries.flatten() {
+        let kind = entry.file_type().unwrap();
+        if kind.is_dir() {
+            evict_page_cache(&entry.path());
+        } else if kind.is_file() {
+            let file = std::fs::File::open(entry.path()).unwrap();
+            rustix::fs::fadvise(&file, 0, None, rustix::fs::Advice::DontNeed).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_jvm_reports_the_same_memory_whether_or_not_the_jdk_is_in_the_page_cache() {
+    // The kernel charges a page-cache page to the cgroup that first reads it in: a JVM first to read the JDK
+    // after a reboot or under memory pressure was charged for libjvm.so, the CDS archive and lib/modules.
+    evict_page_cache(&std::path::Path::new(judge_grader::languages::DEFAULT_JAVA).join("lib"));
+    let Some((cold, _)) = run_java(49, PRINT_PROCESSORS, &[]) else { return };
+    let (warm, _) = run_java(49, PRINT_PROCESSORS, &[]).unwrap();
+    let (cold, warm) = (cold.memory_kib, warm.memory_kib);
+    assert!(
+        cold.abs_diff(warm) * 10 < warm,
+        "{cold} KiB with the JDK out of the page cache, {warm} KiB in it"
+    );
+}
+
+/// PYPY3 as shipped; on a host without it, a portable PyPy at `JUDGE_TEST_PYPY_HOME` (an unpacked pypy3.9
+/// tarball), bound into the box at its own path. None (skip) without either.
+fn pypy() -> Option<judge_grader::languages::Language> {
+    let language = registry().get("PYPY3").unwrap().clone();
+    if installed(&language) {
+        return Some(language);
+    }
+    let Ok(home) = std::env::var("JUDGE_TEST_PYPY_HOME") else {
+        eprintln!("skip: PYPY3 (not installed and no JUDGE_TEST_PYPY_HOME)");
+        return None;
+    };
+    // The shipped entry with the portable binary, so its `{runtime}` preload resolves against it.
+    let shipped = common::SHIPPED.replace("\"/usr/bin/pypy3\"", &format!("\"{home}/bin/pypy3\""));
+    let mut language = LanguageRegistry::from_toml(&shipped).unwrap().get("PYPY3").unwrap().clone();
+    language.dirs.push(home.clone());
+    language.compile_dirs.push(home);
+    Some(language)
+}
+
+/// The memory of a hello world in `language`, built first; `evict` drops the page cache of the runtime's install
+/// (`runtime_home`) between the build (which reads the runtime too) and the run.
+fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict: bool) -> u64 {
+    let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let mut sandbox = sandbox_on(offset, dirs[0].path(), Some(0));
+    let job = CompileJob::for_language(language, b"print(1)\n");
+    let outcome = build(&mut sandbox, &job, dirs[1].path()).unwrap();
+    assert!(matches!(outcome, BuildOutcome::Built { .. }), "{outcome:?}");
+    if evict {
+        // The whole install when it has one (so the test does not depend on the preload list), else the
+        // apt layout's preload paths.
+        match judge_grader::languages::runtime_home(&language.run[0]) {
+            Some(home) => evict_page_cache(std::path::Path::new(&home)),
+            None => language.preload.iter().for_each(|path| evict_page_cache(std::path::Path::new(path))),
+        }
+    }
+    let program = program_for(language, dirs[1].path(), b"print(1)\n");
+    let input = dirs[2].path().join("in");
+    std::fs::write(&input, "").unwrap();
+    let file = std::fs::File::open(&input).unwrap();
+    let io = CaseIo { input: &file, output_cap: 1 << 20, file_io: None };
+    let runnable = Runnable { program: &program, limits: &LIMITS };
+    let run = run_case(&mut sandbox, &runnable, &io, &dirs[2].path().join("out")).unwrap();
+    assert_eq!(run.verdict, RunVerdict::Ok);
+    run.memory_kib
+}
+
+#[test]
+fn pypy_reports_the_same_memory_whether_or_not_its_runtime_is_in_the_page_cache() {
+    // As for the JDK: a PyPy first to read libpypy and the stdlib it imports at start was charged for them,
+    // and PyPy has no reserve above the memory limit.
+    let Some(language) = pypy() else { return };
+    let (cold, warm) = (hello_memory(&language, 50, true), hello_memory(&language, 50, false));
+    assert!(cold.abs_diff(warm) * 10 < warm, "{cold} KiB with PyPy out of the page cache, {warm} KiB in it");
 }

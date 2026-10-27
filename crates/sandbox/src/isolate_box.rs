@@ -237,12 +237,14 @@ impl IsolateBox {
 
     /// `[taskset -c <core>] isolate <args>`: the command line both `command` and `command_with_channel` run.
     /// The previous run's meta file is removed first, so a run that writes none (isolate killed by a signal, or
-    /// never started) fails `read_meta` instead of being graded from old data.
+    /// never started) fails `read_meta` instead of being graded from old data. The spec's runtime files are read
+    /// into the page cache from here (`preload`), so the box is not charged for them.
     fn isolate_command_line(&self, spec: &RunSpec) -> Result<Vec<OsString>, SandboxError> {
         if self.dirty {
             return Err(SandboxError::Dirty);
         }
         self.remove_meta()?;
+        crate::preload::preload(&spec.preload);
         let mut line: Vec<OsString> = Vec::new();
         if let Some(core) = self.core {
             line.extend([self.config.taskset_bin.clone().into(), "-c".into(), core.to_string().into()]);
@@ -477,6 +479,7 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
             stdio: crate::spec::Stdio::default(),
             env: vec![],
             dirs: vec![],
+            preload: vec![],
             inherit_fds: false,
         }
     }

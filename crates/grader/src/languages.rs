@@ -88,6 +88,10 @@ pub struct Language {
     /// Extra read-only directories mounted into the compile step only.
     #[serde(default)]
     pub compile_dirs: Vec<String>,
+    /// Runtime files and directories the judge reads into the page cache before each compile and run, so the
+    /// kernel charges their pages to the judge and not to the box (`judge_sandbox::preload`).
+    #[serde(default)]
+    pub preload: Vec<String>,
     /// Environment variables set for runs, on top of `PATH` and `HOME`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -121,6 +125,10 @@ pub const JDK_ETC_PLACEHOLDER: &str = "{jdk_etc}";
 /// The distro's default-jdk link (Debian/Ubuntu): its target names the JDK major.
 pub const DEFAULT_JAVA: &str = "/usr/lib/jvm/default-java";
 
+/// Placeholder in `preload` for the runtime's install directory: the one above the directory that holds the
+/// real file of the run command (`runtime_home`).
+pub const RUNTIME_PLACEHOLDER: &str = "{runtime}";
+
 static HOST_JDK_ETC: LazyLock<Option<String>> = LazyLock::new(|| jdk_etc_dir(Path::new(DEFAULT_JAVA)));
 
 /// `/etc/java-NN-openjdk` for the JDK `default_java` resolves to (`java-NN-openjdk-<arch>`): where the
@@ -134,7 +142,41 @@ pub fn jdk_etc_dir(default_java: &Path) -> Option<String> {
     (java == "java" && is_major && openjdk == "openjdk").then(|| format!("/etc/java-{major}-openjdk"))
 }
 
+/// The directory above the one holding the real file `program` resolves to: `/usr/lib/jvm/java-NN-openjdk-<arch>`
+/// for the JDK's `bin/java`, `/opt/pypy` for a portable PyPy's `bin/pypy3.9`. None when `program` is missing or
+/// that directory is a system prefix (a runtime installed straight into `/usr/bin`) or one level below `/` (`/opt`,
+/// `/srv`, `/home` for a binary in `/opt/bin`): never preload a whole tree of the host.
+pub fn runtime_home(program: &str) -> Option<String> {
+    install_home(&std::fs::canonicalize(program).ok()?)
+}
+
+/// The directory above `real_program`'s, unless it is a system prefix or has fewer than two components.
+fn install_home(real_program: &Path) -> Option<String> {
+    let home = real_program.parent()?.parent()?;
+    let shallow = home.components().count() < 3; // the root and two names: `/opt/pypy`
+    let system = shallow || home == Path::new("/usr/local");
+    (!system).then(|| home.to_string_lossy().into_owned())
+}
+
 impl Language {
+    /// Replaces `{runtime}` in `preload` with `runtime_home` of the run command; without one, the entries that
+    /// name it are dropped (that layout is not this host's) and the absolute ones stay.
+    pub fn resolve_runtime(&mut self) {
+        match self.run.first().and_then(|program| runtime_home(program)) {
+            Some(home) => {
+                self.preload.iter_mut().for_each(|path| *path = path.replace(RUNTIME_PLACEHOLDER, &home))
+            }
+            None => self.preload.retain(|path| !path.contains(RUNTIME_PLACEHOLDER)),
+        }
+    }
+
+    /// The first `preload` path that is not absolute or is a whole system tree (`/`, `/usr`, `/usr/local`).
+    fn refused_preload(&self) -> Option<&str> {
+        let system = |path: &Path| ["/", "/usr", "/usr/local"].iter().any(|root| path == Path::new(root));
+        let refused = |path: &&String| !Path::new(path).is_absolute() || system(Path::new(path));
+        self.preload.iter().find(refused).map(String::as_str)
+    }
+
     /// Replaces `{jdk_etc}` in the bound directories; without a JDK it stays, and the daemon drops the
     /// language because that directory does not exist.
     fn resolve_dirs(&mut self, jdk_etc: Option<&str>) {
@@ -157,6 +199,13 @@ impl LanguageRegistry {
         let mut by_key = BTreeMap::new();
         for mut language in file.language {
             language.resolve_dirs(jdk_etc);
+            language.resolve_runtime();
+            if let Some(path) = language.refused_preload() {
+                return Err(GradeError::Io(format!(
+                    "language {}: preload {path:?} is not a runtime",
+                    language.key
+                )));
+            }
             if language.kind == LanguageKind::Program && language.run.is_empty() {
                 return Err(GradeError::Io(format!("language {} has no run command", language.key)));
             }
@@ -362,6 +411,35 @@ mod tests {
         let no_run = "[[language]]\nkey='A'\nname='a'\nsource='a'\nrun=[]\nversion=[]\n";
         assert!(LanguageRegistry::from_toml(no_run).is_err());
         assert!(LanguageRegistry::from_toml(&format!("{MINIMAL}colour='red'\n")).is_err(), "unknown key");
+    }
+
+    #[test]
+    fn runtime_resolves_to_the_install_above_the_real_run_binary_but_never_to_a_system_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("opt/pypy");
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        std::fs::write(home.join("bin/pypy3.9"), "").unwrap();
+        let link = root.path().join("pypy3");
+        std::os::unix::fs::symlink(home.join("bin/pypy3.9"), &link).unwrap();
+        let text = format!("{MINIMAL}preload=['{{runtime}}/lib']\n")
+            .replace("run=['x']", &format!("run=['{}']", link.display()));
+        let language = LanguageRegistry::from_toml(&text).unwrap().get("A").unwrap().clone();
+        assert_eq!(language.preload, [format!("{}/lib", home.display())]);
+        assert_eq!(
+            install_home(Path::new("/usr/bin/pypy3.11")),
+            None,
+            "Debian's pypy3: /usr is not a runtime"
+        );
+        assert_eq!(install_home(Path::new("/opt/bin/pypy3")), None, "a binary in /opt/bin: not all of /opt");
+        assert_eq!(install_home(Path::new("/opt/pypy/bin/pypy3.9")).as_deref(), Some("/opt/pypy"));
+        let apt = MINIMAL.replace("run=['x']", "run=['/nonexistent/pypy3']");
+        let apt = format!("{apt}preload=['{{runtime}}/lib', '/usr/lib/pypy3.9']\n");
+        let language = LanguageRegistry::from_toml(&apt).unwrap().get("A").unwrap().clone();
+        assert_eq!(language.preload, ["/usr/lib/pypy3.9"], "no {{runtime}} here: its layout is dropped");
+        for refused in ["'/usr/'", "'/'", "'lib'"] {
+            let text = format!("{MINIMAL}preload=[{refused}]\n");
+            assert!(LanguageRegistry::from_toml(&text).is_err(), "preload {refused}");
+        }
     }
 
     #[test]

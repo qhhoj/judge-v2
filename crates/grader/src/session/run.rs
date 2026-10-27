@@ -244,6 +244,7 @@ mod tests {
             stdio: judge_sandbox::spec::Stdio::default(),
             env: vec![],
             dirs: vec![],
+            preload: vec![],
             inherit_fds: true,
         }
     }

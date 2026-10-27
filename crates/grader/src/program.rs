@@ -17,6 +17,8 @@ pub struct Program {
     pub processes: u32,
     pub jvm: bool,
     pub dirs: Vec<String>,
+    /// From the language: runtime files read into the page cache before each run (`Language::preload`).
+    pub preload: Vec<String>,
     pub env: Vec<(String, String)>,
     /// From the language: stderr text of an uncaught exception.
     pub exception_marker: Option<String>,

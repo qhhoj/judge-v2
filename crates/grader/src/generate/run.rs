@@ -78,6 +78,7 @@ fn spec_of(run: &ProgramRun) -> RunSpec {
         },
         env: run.program.env.clone(),
         dirs: run.program.dirs.clone(),
+        preload: run.program.preload.clone(),
         inherit_fds: false,
     }
 }
@@ -145,6 +146,7 @@ mod tests {
             processes,
             jvm,
             dirs: vec![],
+            preload: vec![],
             env: vec![],
             exception_marker: None,
             exception_style: Default::default(),

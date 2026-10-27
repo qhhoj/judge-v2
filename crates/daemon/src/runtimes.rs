@@ -88,6 +88,19 @@ fn missing_dir(language: &Language) -> Option<&str> {
     dirs.find(|dir| !Path::new(dir).is_dir())
 }
 
+/// The installed languages (run command on this host) that preload but none of whose `preload` paths exists:
+/// their runs are charged for the page cache of the runtime they are first to read (`judge_sandbox::preload`).
+/// A language may list several layouts (PYPY3: portable and apt); one present is enough.
+pub fn unpreloaded(registry: &LanguageRegistry) -> Vec<&Language> {
+    let installed =
+        |language: &&Language| language.run.first().is_some_and(|program| Path::new(program).exists());
+    let none_present = |language: &&Language| {
+        !language.preload.is_empty() && !language.preload.iter().any(|path| Path::new(path).exists())
+    };
+    let languages = registry.keys().into_iter().filter_map(|key| registry.get(key));
+    languages.filter(installed).filter(none_present).collect()
+}
+
 /// Whether the host can run `language`: a detected version and every bound directory present (logged otherwise).
 fn runnable(language: &Language, versions: &HashMap<String, String>) -> bool {
     let lang = language.key.as_str();
@@ -105,6 +118,10 @@ fn runnable(language: &Language, versions: &HashMap<String, String>) -> bool {
 /// Drops (and logs) every language without a detected version or with a missing bound directory.
 pub fn available(mut registry: LanguageRegistry, versions: &HashMap<String, String>) -> LanguageRegistry {
     registry.retain(|language| runnable(language, versions));
+    for language in unpreloaded(&registry) {
+        let (lang, paths) = (language.key.as_str(), language.preload.join(" "));
+        tracing::warn!(lang, paths, "no preload path exists; runs may be charged the runtime's page cache");
+    }
     registry
 }
 
@@ -120,6 +137,16 @@ mod tests {
         [[language]]\nkey='BOUND'\nname='b'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1']\ndirs=['/usr']\ncompile_dirs=['/bin']\n\
         [[language]]\nkey='NO_DIR'\nname='d'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1']\ndirs=['/nonexistent/etc']\n\
         [[language]]\nkey='NO_COMPILE_DIR'\nname='e'\nsource='a'\nrun=['x']\nversion=['/bin/sh','-c','echo 1']\ncompile_dirs=['/nonexistent/etc']\n";
+
+    #[test]
+    fn an_installed_language_none_of_whose_preload_paths_exists_is_reported() {
+        let text = "[[language]]\nkey='SH'\nname='sh'\nsource='a'\nrun=['/bin/sh']\nversion=[]\npreload=['/nonexistent/lib']\n\
+            [[language]]\nkey='ONE'\nname='o'\nsource='a'\nrun=['/bin/sh']\nversion=[]\npreload=['/nonexistent/lib', '/bin']\n\
+            [[language]]\nkey='GONE'\nname='g'\nsource='a'\nrun=['/nonexistent/bin']\nversion=[]\npreload=['/nonexistent/lib']\n";
+        let registry = LanguageRegistry::from_toml(text).unwrap();
+        let keys: Vec<_> = unpreloaded(&registry).iter().map(|language| language.key.as_str()).collect();
+        assert_eq!(keys, ["SH"], "one present layout is enough; a language not installed is not reported");
+    }
 
     #[test]
     fn versions_are_first_lines_and_missing_runtimes_drop_out() {

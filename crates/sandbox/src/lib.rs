@@ -6,6 +6,7 @@ pub mod error;
 pub mod fds;
 pub mod isolate_box;
 pub mod meta;
+pub mod preload;
 pub mod room;
 pub mod spec;
 
