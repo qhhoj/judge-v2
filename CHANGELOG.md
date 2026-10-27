@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.2 (2026-10-27)
+
+### Fixes
+
+- PY3 and RUBY `preload` their interpreter, shared library and standard library, so a run reports the same memory whether or not they were in the page cache before it (a hello world reported about 7 MiB more for CPython and 5 MiB more for Ruby when they were not). A `preload` entry's last component may hold `*` (`libruby*.so*`) to match directory entries by name, without writing a version. With the runtime already cached the preload costs about 13 ms per run for PY3 and 26 ms for RUBY.
+- `check-config` fails when a language installed on the host (its run command is present) has a required `preload` entry that names no file; entries in the new `preload_optional` list never fail it. A `preload` entry containing `..` is refused.
+
 ## 2.5.1 (2026-10-27)
 
 ### Fixes
