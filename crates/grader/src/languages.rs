@@ -160,7 +160,7 @@ fn install_home(real_program: &Path) -> Option<String> {
 
 /// `path` itself, or for `dir/prefix*` the sorted entries of `dir` whose name starts with `prefix`
 /// (a `*` after a `/` is kept, to be refused).
-fn expand_prefix(path: &str) -> Vec<String> {
+pub fn expand_prefix(path: &str) -> Vec<String> {
     let Some((dir, prefix)) = path.strip_suffix('*').and_then(|pattern| pattern.rsplit_once('/')) else {
         return vec![path.to_string()];
     };
@@ -181,7 +181,7 @@ fn expand_prefix(path: &str) -> Vec<String> {
 impl Language {
     /// Replaces `{runtime}` in `preload` with `runtime_home` of the run command; without one, the entries that
     /// name it are dropped (that layout is not this host's) and the absolute ones stay. An entry ending in `*`
-    /// (`/usr/lib/python3*`, so no version is written) becomes the entries of its directory that start with
+    /// (`/usr/lib/python3.*`, so no version is written) becomes the entries of its directory that start with
     /// the text before the `*`; one matching nothing is dropped.
     pub fn resolve_runtime(&mut self) {
         match self.run.first().and_then(|program| runtime_home(program)) {
