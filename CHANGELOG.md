@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.1 (2026-10-27)
+
+### Fixes
+
+- Problem archives the backend and the judge could read differently are refused; `check-config` and the daemon refuse a `cache_max_bytes` below 4 GiB, and `check-config` a missing `problem_data_root`.
+- Security update (GHSA-xq9q-frch-g89j).
+- A JVM run no longer reports the JDK's page cache as its own memory: JAVA, JAVA8 and KOTLIN `preload` the JDK's `lib` (read into the page cache by the judge before each compile and run), so a Java run reports the same memory whether or not the JDK was in the page cache before it (it reported 46 MiB more for a hello world when it was not). PYPY3 preloads its install the same way (a hello world reported 83 MiB instead of 24 MiB when PyPy was not in the page cache); both Ubuntu's `pypy3` package and a portable PyPy are preloaded. `check-config` and the daemon's start warn when none of a language's `preload` paths exists.
+- An `init.yml` with `output_limit_length: 0` (problem, batch or case) is refused as invalid, with a message to omit it for the default; -1 stays refused at parse.
+
 ## 2.5.0 (2026-10-25)
 
 ### Features
