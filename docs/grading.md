@@ -57,7 +57,7 @@ page cache itself (`sandbox/src/preload.rs`), so those pages are charged to the 
 memory whatever ran on the host before it. A page evicted between that read and the run's first touch of it is
 still charged to the box (a short window: the read is right before every compile and run). PYPY3 lists both the
 portable layout and Ubuntu's `pypy3` package (`libpypy3.9-c.so`, `/usr/lib/pypy3.9`); `check-config` and the daemon's
-start warn when none of an installed language's `preload` paths exists.
+start warn when none of an installed language's `preload` paths exists; `check-config` fails for an installed language when any `preload` entry names no file (a stale pattern would otherwise stop preloading silently); `preload_optional` (same syntax: an extra library, the run binary's own name, PYPY3's portable layout) is never reported, and a language not installed is not checked. A preload entry with `..` is refused like a system tree. PY3 and RUBY preload Ubuntu's interpreter, shared library and stdlib (7 and 5 MiB for a hello world); an entry whose last component holds `*` (`libruby*.so*`) stands for the directory entries that match it, so no version is written. With the runtime already cached the preload costs about 13 ms per run for PY3 and 26 ms for RUBY (5.6 ms for the JDK, same method: median of 100 calls after warm-up), once per compile and once per run.
 
 JVM languages (`jvm = true`) get the memory limit raised by `limits.jvm_reserve_kib` (default 128 MiB, in the config), for
 the MLE check and the cgroup alike, with `-Xmx` equal to the problem's memory limit. A `java.lang.OutOfMemoryError` on stderr turns RTE or IR into MLE. Jury programs

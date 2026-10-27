@@ -192,9 +192,10 @@ fn pypy() -> Option<judge_grader::languages::Language> {
 /// The memory of a hello world in `language`, built first; `evict` drops the page cache of the runtime's install
 /// (`runtime_home`) between the build (which reads the runtime too) and the run.
 fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict: bool) -> u64 {
+    let source: &[u8] = if language.key == "RUBY" { b"puts 1\n" } else { b"print(1)\n" };
     let dirs: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
     let mut sandbox = sandbox_on(offset, dirs[0].path(), Some(0));
-    let job = CompileJob::for_language(language, b"print(1)\n");
+    let job = CompileJob::for_language(language, source);
     let outcome = build(&mut sandbox, &job, dirs[1].path()).unwrap();
     assert!(matches!(outcome, BuildOutcome::Built { .. }), "{outcome:?}");
     if evict {
@@ -205,7 +206,7 @@ fn hello_memory(language: &judge_grader::languages::Language, offset: u32, evict
             None => language.preload.iter().for_each(|path| evict_page_cache(std::path::Path::new(path))),
         }
     }
-    let program = program_for(language, dirs[1].path(), b"print(1)\n");
+    let program = program_for(language, dirs[1].path(), source);
     let input = dirs[2].path().join("in");
     std::fs::write(&input, "").unwrap();
     let file = std::fs::File::open(&input).unwrap();
@@ -223,4 +224,92 @@ fn pypy_reports_the_same_memory_whether_or_not_its_runtime_is_in_the_page_cache(
     let Some(language) = pypy() else { return };
     let (cold, warm) = (hello_memory(&language, 50, true), hello_memory(&language, 50, false));
     assert!(cold.abs_diff(warm) * 10 < warm, "{cold} KiB with PyPy out of the page cache, {warm} KiB in it");
+}
+
+/// `from` copied to `to` (links kept) as new files: nothing maps them, so their page cache can be dropped.
+fn copy_tree(from: &str, to: &std::path::Path) {
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    let status = std::process::Command::new("cp").args(["-a", from]).arg(to).status().unwrap();
+    assert!(status.success(), "cp {from}");
+}
+
+/// The entries of `dir` whose name starts with `prefix` and is not a `-config` script, sorted.
+fn named(dir: &str, prefix: &str) -> Vec<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).unwrap().flatten().map(|entry| entry.path());
+    let mut found: Vec<_> = entries
+        .filter(|path| {
+            let name = path.file_name().unwrap().to_string_lossy();
+            name.starts_with(prefix) && !name.ends_with("-config")
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// CPython's interpreter and stdlib copied under `home` as under `/usr`; the interpreter's name.
+fn copy_python(home: &std::path::Path) -> String {
+    let exe = named("/usr/bin", "python3.")[0].file_name().unwrap().to_string_lossy().into_owned();
+    copy_tree(&format!("/usr/bin/{exe}"), &home.join("bin").join(&exe));
+    for dir in named("/usr/lib", "python3.") {
+        copy_tree(dir.to_str().unwrap(), &home.join("lib").join(dir.file_name().unwrap()));
+    }
+    exe
+}
+
+/// Ruby's interpreter and library dirs copied under `home` as under `/usr`, with `RUBYLIB` pointing at the
+/// copies (the load path is compiled in as `/usr/lib/ruby/X.Y.0`); the interpreter's name.
+fn copy_ruby(home: &std::path::Path, language: &mut judge_grader::languages::Language) -> String {
+    copy_tree("/usr/bin/ruby3.3", &home.join("bin/ruby"));
+    let mut rubylib = vec![];
+    for dir in ["/usr/lib/ruby", "/usr/lib/x86_64-linux-gnu/ruby"] {
+        let copy = home.join(dir.strip_prefix("/usr/").unwrap());
+        copy_tree(dir, &copy);
+        rubylib.extend(named(copy.to_str().unwrap(), "3."));
+    }
+    let paths: Vec<_> = rubylib.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+    language.env.insert("RUBYLIB".into(), paths.join(":"));
+    "ruby".to_string()
+}
+
+/// PY3 or RUBY run from a private copy of the host's runtime, laid out as under `/usr` (`bin`, `lib`,
+/// `lib/x86_64-linux-gnu`) and bound into the box at its own path, with the shipped `preload` entries pointed at
+/// the copy. The host's own interpreter is mapped by other processes, so its page cache cannot be dropped; the
+/// copy's can (`CARGO_TARGET_TMPDIR` is on disk: a tmpfs has no page cache to drop). None (skip) without the runtime.
+fn private_runtime(key: &str) -> Option<(tempfile::TempDir, judge_grader::languages::Language)> {
+    let mut language = registry().get(key).unwrap().clone();
+    if !installed(&language) {
+        eprintln!("skip: {key} (not installed)");
+        return None;
+    }
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (home, python) = (tmp.path().to_str().unwrap().to_string(), key == "PY3");
+    let exe = if python { copy_python(tmp.path()) } else { copy_ruby(tmp.path(), &mut language) };
+    for so in named("/usr/lib/x86_64-linux-gnu", if python { "libpython3" } else { "libruby" }) {
+        copy_tree(
+            so.to_str().unwrap(),
+            &tmp.path().join("lib/x86_64-linux-gnu").join(so.file_name().unwrap()),
+        );
+    }
+    std::process::Command::new("sync").status().unwrap();
+    language.env.insert("LD_LIBRARY_PATH".into(), format!("{home}/lib/x86_64-linux-gnu"));
+    language.run[0] = format!("{home}/bin/{exe}");
+    if let Some(compile) = language.compile.as_mut() {
+        compile[0] = format!("{home}/bin/{exe}");
+    }
+    let shipped = language.preload.iter().map(|path| path.replacen("/usr/", &format!("{home}/"), 1));
+    language.preload = shipped.flat_map(|path| judge_grader::languages::expand_wildcard(&path)).collect();
+    language.dirs.push(home.clone());
+    language.compile_dirs.push(home);
+    Some((tmp, language))
+}
+
+#[test]
+fn cpython_and_ruby_report_the_same_memory_whether_or_not_their_runtime_is_in_the_page_cache() {
+    // As for PyPy: the interpreter, its shared library and the stdlib it loads at start were charged to the
+    // first run (7 MiB for CPython, 5 MiB for Ruby), against problems limited to a few MiB.
+    for (key, offset) in [("PY3", 51), ("RUBY", 52)] {
+        let Some((_tmp, language)) = private_runtime(key) else { continue };
+        let (cold, warm) = (hello_memory(&language, offset, true), hello_memory(&language, offset, false));
+        assert!(cold.abs_diff(warm) * 10 < warm, "{key}: {cold} KiB out of the page cache, {warm} KiB in it");
+    }
 }

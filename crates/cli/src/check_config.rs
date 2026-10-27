@@ -24,20 +24,23 @@ pub fn check_config(config_path: &Path, args: &CheckConfigArgs) -> anyhow::Resul
         args.probe_box
     );
     let (_, bound) = judge_daemon::run::start_checks(&config, &cores, args.probe_box)?;
-    warn_missing_preloads(&config.languages_file)?;
+    check_preloads(&config.languages_file)?;
     println!("check-config: {} ok, disk bound {bound:?}", config_path.display());
     Ok(true)
 }
 
-/// A warning (not a failure) per installed language none of whose `preload` paths exists on this host.
-fn warn_missing_preloads(languages_file: &Path) -> anyhow::Result<()> {
+/// Fails for an installed (advertised) language with a required `preload` entry that names no file here: its
+/// runs would be charged the runtime's page cache again, and a stale pattern would do so silently. A language
+/// not installed is not checked (a host may lack it); `preload_optional` entries never fail.
+fn check_preloads(languages_file: &Path) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(languages_file)?;
     let registry = judge_grader::languages::LanguageRegistry::from_toml(&text)?;
-    for language in judge_daemon::runtimes::unpreloaded(&registry) {
-        let (lang, paths) = (&language.key, language.preload.join(" "));
-        eprintln!(
-            "check-config: warning: {lang}: no preload path exists ({paths}); runs may be charged for it"
-        );
-    }
+    let stale: Vec<_> =
+        judge_daemon::runtimes::unpreloaded(&registry).iter().map(|l| l.key.as_str()).collect();
+    anyhow::ensure!(
+        stale.is_empty(),
+        "a required preload path is missing for {}; fix languages.toml",
+        stale.join(", ")
+    );
     Ok(())
 }
