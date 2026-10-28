@@ -13,12 +13,21 @@ pub struct Limits {
     pub open_files: u32,
 }
 
+/// CPU seconds at which a contestant run is killed: the time limit plus the larger of 0.5 s and 70 %. isolate's
+/// `--extra-time` is the CPU time since the start (isolate.c `check_timeout`: killed once past both `--time`
+/// and `--extra-time`), so a run that goes past the limit is still TLE (status TO), but its recorded time
+/// is the real one up to this cap, and a run that ends on its own under the cap tells a slow program from a
+/// hopeless one (`judge_grader::rerun`). 70 % is above the slowdown measured under full load (x1.63).
+pub fn hard_cap_s(time_limit_s: f64) -> f64 {
+    (time_limit_s + 0.5).max(1.7 * time_limit_s)
+}
+
 impl Limits {
     pub fn for_solution(time_limit_s: f64, memory_kib: u64, processes: u32, output_cap_bytes: u64) -> Limits {
         Limits {
             time_s: time_limit_s,
             wall_s: 3.0 * time_limit_s + 1.0,
-            extra_time_s: 0.5,
+            extra_time_s: hard_cap_s(time_limit_s),
             memory_kib,
             processes,
             // one KiB of slack so output of exactly the cap is not cut off
@@ -156,6 +165,20 @@ mod tests {
         assert!(has(&args, &format!("--cg-mem={}", 8192 + small.fsize_kib)), "{args:?}");
         let huge = Limits::for_solution(1.0, 8192, 1, 1 << 30);
         assert_eq!(cgroup_memory_kib(&huge), 8192 + PAGE_CACHE_ROOM_MAX_KIB);
+    }
+
+    #[test]
+    fn a_contestant_run_is_killed_past_the_larger_of_half_a_second_and_70_percent_over_the_limit() {
+        let extra = |time_limit_s: f64| {
+            let args = isolate_args(
+                0,
+                &RunSpec { limits: Limits::for_solution(time_limit_s, 1, 1, 1), ..spec() },
+                Path::new("/m"),
+            );
+            args.into_iter().find_map(|a| a.strip_prefix("--extra-time=").map(str::to_string)).unwrap()
+        };
+        assert_eq!(extra(0.5), "1", "TL + 0.5 s for a short limit");
+        assert_eq!(extra(2.0), "3.4", "1.7 x TL for a long one");
     }
 
     #[test]

@@ -14,11 +14,12 @@ use crate::checkers::themis::{self, ThemisNames};
 use crate::compile::{BuildOutcome, CompileJob, build, program_for};
 use crate::error::GradeError;
 use crate::file_io::SolutionFileIo;
-use crate::grade::grade_cases;
+use crate::grade::{CaseJudge, grade_cases};
 use crate::languages::{Language, LanguageKind};
 use crate::output_only::OutputSource;
 use crate::program::Program;
 use crate::report::Reporter;
+use crate::rerun::TleRerun;
 use crate::run_case::CaseLimits;
 use crate::session::Boxes;
 use crate::signature::{SIGNATURE_LANGUAGES, signature_job};
@@ -30,7 +31,7 @@ use judge_problem::data_version::{DataError, StampSource};
 use judge_problem::init::{CheckerSpec, FilesSpec, InitYaml, InteractiveSpec, SignatureSpec};
 use judge_problem::plan::{CasePlan, PlanOptions, plan_cases};
 use judge_problem::resolve::ResolvedProblem;
-use judge_sandbox::IsolateBox;
+use judge_sandbox::{IsolateBox, RunGate};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -44,6 +45,8 @@ pub struct GraderDefaults {
     pub default_output_limit: u64,
     pub default_output_prefix: u64,
     pub jvm_reserve_kib: u64,
+    /// TLE re-runs that may confirm a TLE per submission (`crate::rerun`); 0 turns re-runs off.
+    pub tle_reruns: u32,
 }
 
 /// One worker's grading resources. `stamps` is the resolver's stamp source: a loose-file problem's
@@ -301,9 +304,10 @@ fn judge_split(
     let check = check_of(env, problem, &single_checker(&run.plan)?, run.submission.time_limit_s)?;
     let context = CaseContext { problem, check, scratch: env.scratch.clone() };
     let limits = limits_of(run.submission, &env.defaults);
+    let reruns = (env.solution.gate().clone(), env.defaults.tle_reruns);
     let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
     let mut judge = SplitCases { context, boxes, contestant, jury: jury.program, limits };
-    grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)?;
+    grade_rerunning(&mut judge, reruns, run)?;
     Ok(None)
 }
 
@@ -374,6 +378,17 @@ fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {
     }
 }
 
+/// Grades the plan with a program's cases judged through the TLE re-run (`crate::rerun`), `budget` per submission.
+fn grade_rerunning(
+    judge: &mut dyn CaseJudge,
+    (gate, budget): (Arc<RunGate>, u32),
+    run: Run,
+) -> Result<(), GradeError> {
+    let time_limit_s = run.submission.time_limit_s;
+    let mut judge = TleRerun { judge, gate, time_limit_s, budget };
+    grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
+}
+
 /// An interactive problem compiles only the checker its `interactive.checker` names: the top-level and
 /// per-case checkers of a legacy interactive problem are never compiled or run.
 fn grade_program(
@@ -388,9 +403,10 @@ fn grade_program(
     let check = check_of(env, problem, &single_checker(&run.plan)?, run.submission.time_limit_s)?;
     let context = CaseContext { problem, check, scratch: env.scratch.clone() };
     let limits = limits_of(run.submission, &env.defaults);
+    let reruns = (env.solution.gate().clone(), env.defaults.tle_reruns);
     let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
     let mut judge = ProgramCases { context, boxes, program, limits, file_io };
-    grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
+    grade_rerunning(&mut judge, reruns, run)
 }
 
 fn interactor_files(files: &FilesSpec) -> Vec<&str> {
@@ -418,9 +434,10 @@ fn grade_interactive(
         PartialPoints::Absolute
     };
     let limits = limits_of(run.submission, &env.defaults);
+    let reruns = (env.solution.gate().clone(), env.defaults.tle_reruns);
     let boxes = Boxes { solution: &mut env.solution, helper: &mut env.helper };
     let mut judge = InteractiveCases { problem, boxes, program, interactor, limits, checker, partial };
-    grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
+    grade_rerunning(&mut judge, reruns, run)
 }
 
 /// TEXT answers every case with the source. An OUTPUT zip that cannot be opened is graded as

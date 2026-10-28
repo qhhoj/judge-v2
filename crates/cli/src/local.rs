@@ -6,6 +6,7 @@ use judge_grader::generate::{Control, GenerationFailure, GenerationJob, generate
 use judge_grader::judge::{GraderDefaults, JudgeEnv, Outcome, Submission, judge_submission};
 use judge_grader::languages::LanguageRegistry;
 use judge_grader::report::Reporter;
+use judge_grader::rerun::DEFAULT_TLE_RERUNS;
 use judge_problem::data_version::{FsStamps, WaitPolicy};
 use judge_problem::dir_cache::DirCache;
 use judge_problem::resolve::Resolver;
@@ -15,8 +16,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Same limits the daemon's `config.example.toml` ships.
-const DEFAULTS: GraderDefaults =
-    GraderDefaults { default_output_limit: 25_165_824, default_output_prefix: 64, jvm_reserve_kib: 131_072 };
+const DEFAULTS: GraderDefaults = GraderDefaults {
+    default_output_limit: 25_165_824,
+    default_output_prefix: 64,
+    jvm_reserve_kib: 131_072,
+    tle_reruns: DEFAULT_TLE_RERUNS,
+};
 const CACHE_BYTES: u64 = 4 << 30;
 const DATA_WAIT: Duration = Duration::from_millis(200);
 

@@ -25,6 +25,7 @@ regex.workspace = true
 zip.workspace = true
 libc.workspace = true
 rustix.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

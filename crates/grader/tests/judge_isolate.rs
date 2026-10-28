@@ -80,6 +80,7 @@ fn bench(offset: u32) -> Bench {
             default_output_limit: 1 << 20,
             default_output_prefix: 64,
             jvm_reserve_kib: 131_072,
+            tle_reruns: judge_grader::rerun::DEFAULT_TLE_RERUNS,
         },
     };
     Bench { _dirs: dirs, root, resolver, env }

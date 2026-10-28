@@ -58,14 +58,17 @@ pub fn signal_name(signal: i32) -> String {
 /// Output over the cap is OLE even when the run then timed out: the JVM ignores SIGXFSZ and `PrintStream`
 /// swallows the write error, so a Java or Kotlin print loop runs on to the time limit once its output is cut.
 ///
-/// A run killed at the time limit is TLE (or OLE), not MLE, unless the cgroup OOM-killed it: on a TO isolate's
-/// max-rss is its own proxy's (~820 KiB), so `Meta::memory_kib` stays under the limit.
+/// A run past its time limit (status TO, CPU over the limit) is TLE (or OLE), not MLE, even when the cgroup
+/// OOM-killed it on the way to the hard cap (`spec::hard_cap_s`): it had already failed on time. On a TO
+/// isolate's max-rss is its own proxy's (~820 KiB), so `Meta::memory_kib` stays under the limit.
 pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     let status = meta.status.as_deref();
     if status == Some("XX") {
         return RunVerdict::Internal(meta.message.clone());
     }
-    if meta.oom_killed || meta.memory_kib(output.own_files_kib) > limits.memory_kib {
+    let past_time_limit = status == Some("TO") && meta.time_s > limits.time_s;
+    let over_memory = meta.oom_killed || meta.memory_kib(output.own_files_kib) > limits.memory_kib;
+    if over_memory && !past_time_limit {
         return RunVerdict::Mle;
     }
     if output.written > output.cap || meta.exit_signal == Some(SIGXFSZ) {
@@ -169,5 +172,13 @@ mod tests {
         assert_eq!(verdict(jvm_flood, 4097), RunVerdict::Ole);
         assert_eq!(verdict(jvm_flood, 4096), RunVerdict::Tle, "exactly the cap is not over it");
         assert_eq!(verdict("status:SG\nexitsig:9\ncg-oom-killed:1\n", 5000), RunVerdict::Mle);
+    }
+
+    #[test]
+    fn a_run_past_the_time_limit_is_tle_even_when_the_cgroup_then_oom_killed_it() {
+        let past = "time:1.400\nstatus:TO\nexitsig:9\nmax-rss:900\ncg-mem:17000\ncg-oom-killed:1\n";
+        assert_eq!(verdict(past, 0), RunVerdict::Tle, "failed on time before the memory ran out");
+        let wall_only = "time:0.300\nstatus:TO\nexitsig:9\nmax-rss:900\ncg-mem:17000\ncg-oom-killed:1\n";
+        assert_eq!(verdict(wall_only, 0), RunVerdict::Mle, "under the CPU limit the OOM kill decides");
     }
 }

@@ -4,6 +4,7 @@
 //! expectations only hold with exactly these cases and limits.
 
 use crate::judge::{GraderDefaults, Outcome, Submission, SubmissionSource};
+use crate::rerun::DEFAULT_TLE_RERUNS;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -18,8 +19,12 @@ pub const MEMORY_KIB: u64 = 65_536;
 /// JVM languages need room for the VM itself.
 pub const JVM_MEMORY_KIB: u64 = 262_144;
 /// A 64 KiB output limit, so the OLE rows hit it long before the time limit.
-pub const DEFAULTS: GraderDefaults =
-    GraderDefaults { default_output_limit: 64 << 10, default_output_prefix: 512, jvm_reserve_kib: 131_072 };
+pub const DEFAULTS: GraderDefaults = GraderDefaults {
+    default_output_limit: 64 << 10,
+    default_output_prefix: 512,
+    jvm_reserve_kib: 131_072,
+    tle_reruns: DEFAULT_TLE_RERUNS,
+};
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]

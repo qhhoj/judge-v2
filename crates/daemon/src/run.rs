@@ -25,7 +25,7 @@ use judge_problem::data_version::{FsStamps, StampSource, WaitPolicy};
 use judge_problem::dir_cache::DirCache;
 use judge_problem::resolve::Resolver;
 use judge_sandbox::boxes::{box_pair, cleanup_owned};
-use judge_sandbox::{DiskQuota, IsolateBox, SandboxConfig, disk_quota_works};
+use judge_sandbox::{DiskQuota, IsolateBox, RunGate, SandboxConfig, disk_quota_works};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -72,6 +72,7 @@ fn sandbox_config(config: &Config) -> SandboxConfig {
             .isolate
             .disk_quota
             .map(|q| DiskQuota { headroom_kib: q.headroom_kib, headroom_inodes: q.headroom_inodes }),
+        gate: Arc::new(RunGate::new(Some(config.run_lock()))),
     }
 }
 
@@ -118,6 +119,7 @@ fn grader_defaults(config: &Config) -> GraderDefaults {
         default_output_limit: config.limits.default_output_limit,
         default_output_prefix: config.limits.default_output_prefix,
         jvm_reserve_kib: config.limits.jvm_reserve_kib,
+        tle_reruns: config.limits.tle_reruns,
     }
 }
 

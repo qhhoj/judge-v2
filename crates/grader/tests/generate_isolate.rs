@@ -41,6 +41,7 @@ fn bench(offset: u32) -> Bench {
             default_output_limit: MEBIBYTE,
             default_output_prefix: 64,
             jvm_reserve_kib: 131_072,
+            tle_reruns: judge_grader::rerun::DEFAULT_TLE_RERUNS,
         },
     };
     Bench { dirs, env }

@@ -1,5 +1,6 @@
 //! `/etc/qhhoj-judge/config.toml` (docs/operations.md#config).
 
+use judge_grader::rerun::DEFAULT_TLE_RERUNS;
 use judge_problem::archive::{BACKEND_ARCHIVE_MAX_BYTES, MIN_CACHE_MAX_BYTES};
 use judge_problem::plan::MAX_OUTPUT_LIMIT;
 use serde::Deserialize;
@@ -31,6 +32,8 @@ pub struct LimitDefaults {
     pub default_output_limit: u64,
     pub default_output_prefix: u64,
     pub jvm_reserve_kib: u64,
+    /// TLE re-runs alone that may confirm a TLE per submission (docs/grading.md#tle-re-run); 0 turns them off.
+    pub tle_reruns: u32,
 }
 
 impl Default for LimitDefaults {
@@ -39,6 +42,7 @@ impl Default for LimitDefaults {
             default_output_limit: 25_165_824,
             default_output_prefix: 64,
             jvm_reserve_kib: 131_072,
+            tle_reruns: DEFAULT_TLE_RERUNS,
         }
     }
 }
@@ -147,6 +151,14 @@ pub struct Config {
     pub reconnect: Reconnect,
     #[serde(default)]
     pub isolate: IsolatePaths,
+}
+
+impl Config {
+    /// The host lock of the run gate (`judge_sandbox::run_gate`), shared by the daemon and `selftest`: in the
+    /// cache directory, which both run as the judge user, and which a restart does not wipe.
+    pub fn run_lock(&self) -> PathBuf {
+        self.cache_dir.join("run.lock")
+    }
 }
 
 /// Parsed with `http::Uri`; a URL with userinfo (`http://localhost:1@evil.com`) is never loopback.

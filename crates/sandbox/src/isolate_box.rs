@@ -4,6 +4,7 @@
 use crate::error::SandboxError;
 use crate::meta::{Meta, parse_meta};
 use crate::room::Room;
+use crate::run_gate::{RunGate, RunPass};
 use crate::spec::{RunSpec, isolate_args};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -12,6 +13,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 /// A disk quota on everything in a box (isolate `--quota`, in 1 KiB blocks); `--fsize` caps one file only.
 /// isolate sets it on the box uid at `--init`, and at `--run` charges every file in `/box` to that uid, the
@@ -40,6 +42,8 @@ pub struct SandboxConfig {
     pub meta_dir: PathBuf,
     /// `None`: no quota (isolate's box root needs user quotas for one).
     pub disk_quota: Option<DiskQuota>,
+    /// Held by every run of a box with this config (`run_gate`); clones share it.
+    pub gate: Arc<RunGate>,
 }
 
 impl Default for SandboxConfig {
@@ -49,6 +53,7 @@ impl Default for SandboxConfig {
             taskset_bin: "/usr/bin/taskset".into(),
             meta_dir: "/var/cache/qhhoj-judge/meta".into(),
             disk_quota: None,
+            gate: Arc::default(),
         }
     }
 }
@@ -137,6 +142,16 @@ impl IsolateBox {
 
     pub fn id(&self) -> u32 {
         self.id
+    }
+
+    /// The run gate this box's runs hold (`run_gate`).
+    pub fn gate(&self) -> &Arc<RunGate> {
+        &self.config.gate
+    }
+
+    /// A shared pass for one run of this box: the caller holds it until the run has ended.
+    pub fn run_pass(&self) -> Result<RunPass, SandboxError> {
+        self.config.gate.shared()
     }
 
     pub fn dir(&self) -> &Path {
@@ -308,7 +323,9 @@ impl IsolateBox {
         parse_meta(&text)
     }
 
+    /// One run, holding a shared pass of the run gate from before the preload until isolate has exited.
     pub fn run(&mut self, spec: &RunSpec) -> Result<Meta, SandboxError> {
+        let _pass = self.run_pass()?;
         let mut command = self.command(spec)?;
         self.dirty = true;
         let status = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
