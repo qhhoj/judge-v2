@@ -22,6 +22,9 @@ server_name = "bridge.qhhoj.internal"
 default_output_limit = 25165824
 default_output_prefix = 64
 jvm_reserve_kib = 131072
+# A case that ends TLE under the hard cap is run once more with the host alone; at most this many such
+# re-runs per submission may confirm a TLE (re-runs that flip it are free). 0 turns re-runs off.
+tle_reruns = 2
 
 [reconnect]
 initial_ms = 500

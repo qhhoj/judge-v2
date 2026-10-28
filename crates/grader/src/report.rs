@@ -1,6 +1,8 @@
 //! What one graded case reports, and where grading events go (the proto's `CaseResults`).
 
 use judge_problem::verdict::Status;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// One case as the bridge stores it. `points` is this case's share of `total`; inside a batch every case
 /// carries the batch total, and the batch score (the minimum over its cases) is the bridge's to compute.
@@ -32,4 +34,8 @@ pub trait Reporter {
     }
     /// Called before each case; false stops grading (abort). May block for backpressure.
     fn before_case(&mut self) -> bool;
+    /// The job's abort flag, for a wait inside a case (a TLE re-run waiting for the host). None: never aborted.
+    fn abort_signal(&self) -> Option<Arc<AtomicBool>> {
+        None
+    }
 }

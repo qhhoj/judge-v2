@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod output_only;
 pub mod program;
 pub mod report;
+pub mod rerun;
 pub mod run_case;
 pub mod session;
 pub mod signature;

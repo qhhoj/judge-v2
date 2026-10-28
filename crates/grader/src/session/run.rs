@@ -6,9 +6,9 @@
 use crate::error::GradeError;
 use crate::session::channel::{PipeChannel, RingChannel};
 use judge_sandbox::ChannelFds;
-use judge_sandbox::IsolateBox;
 use judge_sandbox::error::SandboxError;
 use judge_sandbox::spec::{Limits, RunSpec};
+use judge_sandbox::{IsolateBox, RunPass};
 use std::process::{Child, ExitStatus, Stdio as ProcessStdio};
 use std::time::{Duration, Instant};
 
@@ -42,10 +42,11 @@ pub struct MemberSpec<'a> {
     pub run: &'a RunSpec,
 }
 
-/// The running isolate processes of one session.
+/// The running isolate processes of one session, and the run gate pass both hold (`judge_sandbox::run_gate`).
 pub struct Session {
     manager: Child,
     contestant: Child,
+    _pass: RunPass,
 }
 
 /// The manager's wall limit plus the host slack: past it the session is killed and the job retried.
@@ -58,21 +59,24 @@ pub fn ignoring_sigpipe(argv: Vec<String>) -> Vec<String> {
     IGNORE_SIGPIPE.iter().map(|part| part.to_string()).chain(argv).collect()
 }
 
+/// Both members start under one pass of the run gate, held until the session drops.
 pub fn spawn_session(
     manager: &MemberSpec,
     contestant: &MemberSpec,
     channel: ChannelPlan,
 ) -> Result<Session, GradeError> {
-    match channel {
+    let pass = contestant.sandbox.run_pass()?;
+    let (manager, contestant) = match channel {
         ChannelPlan::StdioPipes => spawn_piped(manager, contestant),
         ChannelPlan::Pipes(pipes) => spawn_on_fds(manager, contestant, (pipes.jury, pipes.contestant)),
         ChannelPlan::Ring(ring) => spawn_on_fds(manager, contestant, (ring.jury, ring.contestant)),
-    }
+    }?;
+    Ok(Session { manager, contestant, _pass: pass })
 }
 
 /// Two `std::io::pipe()`s; every pipe end is moved into a `Command` and is gone when this returns. Both command
 /// lines are built before either is spawned, so a refused one leaves no isolate running.
-fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<Session, GradeError> {
+fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<(Child, Child), GradeError> {
     let (mut manager_command, mut contestant_command) =
         (manager.sandbox.command(manager.run)?, contestant.sandbox.command(contestant.run)?);
     let (to_manager_read, to_manager_write) = std::io::pipe()?;
@@ -88,7 +92,7 @@ fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<Session,
         .stderr(ProcessStdio::null())
         .spawn();
     match contestant_child {
-        Ok(child) => Ok(Session { manager: manager_child, contestant: child }),
+        Ok(child) => Ok((manager_child, child)),
         Err(error) => {
             let _ = manager_child.kill();
             let _ = manager_child.wait();
@@ -104,13 +108,13 @@ fn spawn_on_fds(
     manager: &MemberSpec,
     contestant: &MemberSpec,
     (jury, contestant_fds): (ChannelFds, ChannelFds),
-) -> Result<Session, GradeError> {
+) -> Result<(Child, Child), GradeError> {
     let mut manager_command = manager.sandbox.command_with_channel(manager.run, jury)?;
     let mut contestant_command = contestant.sandbox.command_with_channel(contestant.run, contestant_fds)?;
     let mut manager_child = manager_command.spawn()?;
     drop(manager_command); // the daemon's copies of the jury's fds close now
     match contestant_command.spawn() {
-        Ok(child) => Ok(Session { manager: manager_child, contestant: child }),
+        Ok(child) => Ok((manager_child, child)),
         Err(error) => {
             let _ = manager_child.kill();
             let _ = manager_child.wait();

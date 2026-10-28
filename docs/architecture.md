@@ -36,7 +36,8 @@ and `conformance` (test support, no prefix). The binary is `qhhoj-judge`, built 
    chooses the checker (`checkers/select.rs`) and calls `grade.rs`.
 6. `grade.rs` `grade_cases` walks the case plan (short-circuit, batches, points). For each case `case_judges.rs` runs
    `run_case.rs`, which puts the input in the solution box, calls `sandbox` and turns the meta file into a run verdict
-   (`sandbox/src/classify.rs`), then asks the checker for AC, WA or partial points.
+   (`sandbox/src/classify.rs`), then asks the checker for AC, WA or partial points. `rerun.rs` judges a near-miss TLE
+   case again with the host alone; every isolate run holds the run gate (`sandbox/src/run_gate.rs`).
 7. Each case becomes a `CaseReport` (`report.rs`) sent through the `Reporter` to the worker, which batches them
    (`batcher.rs`: every 100 ms or 64 cases) into outbox messages.
 8. `link.rs` `flush` sends the outbox messages in `seq` order; `ResultAck` trims them. `Final` is last.

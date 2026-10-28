@@ -60,7 +60,8 @@ COPY --from=kotlin /usr/local/lib/kotlinc /usr/local/lib/kotlinc
 RUN useradd --system isolate \
     && usermod --add-subuids 20000-64999 --add-subgids 20000-64999 isolate \
     && chmod 4755 /usr/local/bin/isolate \
-    && install -d /var/local/lib/isolate /etc/qhhoj-judge /srv/qhhoj/problem-data /var/cache/qhhoj-judge
+    && install -d /var/local/lib/isolate /etc/qhhoj-judge /srv/qhhoj/problem-data \
+    && install -d -m 0700 /var/cache/qhhoj-judge
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge
 COPY languages.toml LICENSE DEPLOY.md /opt/qhhoj-judge/current/
 COPY assets/testlib /opt/qhhoj-judge/current/assets/testlib

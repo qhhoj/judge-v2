@@ -9,10 +9,11 @@ use judge_daemon::cores::{SYSFS_CPU, physical_cores, worker_cores};
 use judge_grader::languages::{LanguageRegistry, host_languages};
 use judge_grader::manifest::{self, Manifest, Row};
 use judge_grader::report::{CaseReport, Reporter};
-use judge_sandbox::SandboxConfig;
 use judge_sandbox::boxes::owned_box_ids;
+use judge_sandbox::{RunGate, SandboxConfig};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(clap::Args)]
 pub struct SelftestArgs {
@@ -97,6 +98,7 @@ fn plan_with_config(
     let sandbox = SandboxConfig {
         isolate_bin: config.isolate.bin.clone(),
         taskset_bin: config.isolate.taskset.clone(),
+        gate: Arc::new(RunGate::new(Some(config.run_lock()))),
         ..SandboxConfig::default()
     };
     let core = Some(spare_core(args.core, &slot_cores, sysfs)?);

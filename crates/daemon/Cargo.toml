@@ -16,6 +16,7 @@ isolate = ["judge-grader/isolate"]
 judge-problem.workspace = true
 judge-sandbox.workspace = true
 judge-grader.workspace = true
+rustix = { workspace = true, features = ["process"] }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

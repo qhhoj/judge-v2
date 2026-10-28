@@ -13,12 +13,34 @@ pub struct Limits {
     pub open_files: u32,
 }
 
+/// CPU seconds at which a contestant run is killed: the larger of the time limit plus 0.5 s and twice the limit.
+/// isolate's `--extra-time` is the CPU time since the start (isolate.c `check_timeout`: killed once past both
+/// `--time` and `--extra-time`), so a run that goes past the limit is still TLE (status TO), but its recorded
+/// time is the real one up to this cap, and a run that ends on its own under the cap tells a slow program from
+/// a hopeless one (`judge_grader::rerun`). Twice is above the slowdown measured under full load on production
+/// (x1.46-1.63), with room for the cloud host's own noise.
+pub fn hard_cap_s(time_limit_s: f64) -> f64 {
+    (time_limit_s + 0.5).max(2.0 * time_limit_s)
+}
+
+/// `seconds` in whole milliseconds, the unit isolate counts, limits and reports time in: compare times as these.
+pub fn whole_ms(seconds: f64) -> u64 {
+    (seconds * 1000.0).round() as u64
+}
+
+/// The isolate argument for a time limit of `seconds`: its whole ms plus half a ms. isolate reads a limit as
+/// `(int)(1000 * atof(arg))` (isolate.c), which truncates, so `2.006` would be 2005 ms; the half ms makes it land
+/// on exactly `whole_ms(seconds)` whatever the float rounding.
+fn isolate_seconds(seconds: f64) -> String {
+    format!("{}", (whole_ms(seconds) as f64 + 0.5) / 1000.0)
+}
+
 impl Limits {
     pub fn for_solution(time_limit_s: f64, memory_kib: u64, processes: u32, output_cap_bytes: u64) -> Limits {
         Limits {
             time_s: time_limit_s,
             wall_s: 3.0 * time_limit_s + 1.0,
-            extra_time_s: 0.5,
+            extra_time_s: hard_cap_s(time_limit_s),
             memory_kib,
             processes,
             // one KiB of slack so output of exactly the cap is not cut off
@@ -77,9 +99,9 @@ pub fn cgroup_memory_kib(limits: &Limits) -> u64 {
 fn limit_args(limits: &Limits) -> Vec<String> {
     vec![
         format!("--cg-mem={}", cgroup_memory_kib(limits)),
-        format!("--time={}", limits.time_s),
-        format!("--extra-time={}", limits.extra_time_s),
-        format!("--wall-time={}", limits.wall_s),
+        format!("--time={}", isolate_seconds(limits.time_s)),
+        format!("--extra-time={}", isolate_seconds(limits.extra_time_s)),
+        format!("--wall-time={}", isolate_seconds(limits.wall_s)),
         format!("--processes={}", limits.processes),
         format!("--fsize={}", limits.fsize_kib),
         format!("--open-files={}", limits.open_files),
@@ -156,6 +178,28 @@ mod tests {
         assert!(has(&args, &format!("--cg-mem={}", 8192 + small.fsize_kib)), "{args:?}");
         let huge = Limits::for_solution(1.0, 8192, 1, 1 << 30);
         assert_eq!(cgroup_memory_kib(&huge), 8192 + PAGE_CACHE_ROOM_MAX_KIB);
+    }
+
+    /// The milliseconds isolate makes of `flag`'s argument, as isolate.c does: `(int)(1000 * atof(arg))`.
+    fn isolate_ms(args: &[String], flag: &str) -> u64 {
+        let arg = args.iter().find_map(|a| a.strip_prefix(flag)).unwrap();
+        (1000.0 * arg.parse::<f64>().unwrap()) as u64
+    }
+
+    #[test]
+    fn isolate_reads_every_limit_as_its_whole_milliseconds_and_kills_past_the_hard_cap() {
+        for ms in 1..=60_000 {
+            let limits = Limits::for_solution(ms as f64 / 1000.0, 1, 1, 1);
+            let args = isolate_args(0, &RunSpec { limits: limits.clone(), ..spec() }, Path::new("/m"));
+            assert_eq!(isolate_ms(&args, "--time="), ms, "TL {ms} ms");
+            assert_eq!(isolate_ms(&args, "--extra-time="), whole_ms(hard_cap_s(limits.time_s)), "TL {ms} ms");
+            assert_eq!(isolate_ms(&args, "--wall-time="), whole_ms(limits.wall_s), "TL {ms} ms");
+        }
+        assert_eq!(
+            (whole_ms(hard_cap_s(0.3)), whole_ms(hard_cap_s(2.0))),
+            (800, 4000),
+            "TL + 0.5 s, then 2 x TL"
+        );
     }
 
     #[test]

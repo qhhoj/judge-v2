@@ -2,6 +2,7 @@
 //! it; `selftest` covers the languages file. An install runs it with the new binary before it switches `current`,
 //! so a config these checks refuse fails before the switch, not in a restart loop after it.
 
+use judge_daemon::config::CacheDirAccess;
 use judge_daemon::cores::{SYSFS_CPU, worker_cores};
 use judge_sandbox::boxes::owned_box_ids;
 use std::path::Path;
@@ -24,6 +25,9 @@ pub fn check_config(config_path: &Path, args: &CheckConfigArgs) -> anyhow::Resul
         args.probe_box
     );
     let (_, bound) = judge_daemon::run::start_checks(&config, &cores, args.probe_box)?;
+    if let CacheDirAccess::Tighten { mode } = judge_daemon::config::cache_dir_access(&config)? {
+        println!("check-config: cache_dir has mode {mode:o}; the daemon will set it to 0700 at start");
+    }
     check_preloads(&config.languages_file)?;
     println!("check-config: {} ok, disk bound {bound:?}", config_path.display());
     Ok(true)

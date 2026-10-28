@@ -8,8 +8,10 @@ pub mod isolate_box;
 pub mod meta;
 pub mod preload;
 pub mod room;
+pub mod run_gate;
 pub mod spec;
 
 pub use error::SandboxError;
 pub use isolate_box::{ChannelFds, DiskQuota, IsolateBox, SandboxConfig, cleanup_box, disk_quota_works};
 pub use room::Room;
+pub use run_gate::{RunGate, RunPass};

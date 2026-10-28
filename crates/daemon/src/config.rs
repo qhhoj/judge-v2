@@ -1,5 +1,6 @@
 //! `/etc/qhhoj-judge/config.toml` (docs/operations.md#config).
 
+use judge_grader::rerun::DEFAULT_TLE_RERUNS;
 use judge_problem::archive::{BACKEND_ARCHIVE_MAX_BYTES, MIN_CACHE_MAX_BYTES};
 use judge_problem::plan::MAX_OUTPUT_LIMIT;
 use serde::Deserialize;
@@ -31,6 +32,8 @@ pub struct LimitDefaults {
     pub default_output_limit: u64,
     pub default_output_prefix: u64,
     pub jvm_reserve_kib: u64,
+    /// TLE re-runs alone that may confirm a TLE per submission (docs/grading.md#tle-re-run); 0 turns them off.
+    pub tle_reruns: u32,
 }
 
 impl Default for LimitDefaults {
@@ -39,6 +42,7 @@ impl Default for LimitDefaults {
             default_output_limit: 25_165_824,
             default_output_prefix: 64,
             jvm_reserve_kib: 131_072,
+            tle_reruns: DEFAULT_TLE_RERUNS,
         }
     }
 }
@@ -149,6 +153,14 @@ pub struct Config {
     pub isolate: IsolatePaths,
 }
 
+impl Config {
+    /// The host lock of the run gate (`judge_sandbox::run_gate`), shared by the daemon and `selftest`: in the
+    /// cache directory, which both run as the judge user, and which a restart does not wipe.
+    pub fn run_lock(&self) -> PathBuf {
+        self.cache_dir.join("run.lock")
+    }
+}
+
 /// Parsed with `http::Uri`; a URL with userinfo (`http://localhost:1@evil.com`) is never loopback.
 pub fn is_loopback_url(url: &str) -> bool {
     let Ok(uri) = url.parse::<http::Uri>() else { return false };
@@ -212,6 +224,54 @@ pub fn check_cache_size(config: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// What the daemon does with `cache_dir` at start; `check-config` reports the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheDirAccess {
+    /// Missing (the daemon creates it 0700, `run::fresh_dirs`) or the owner's alone already.
+    Private,
+    /// Ours, but group or others can reach it (`mode`): the daemon sets it to 0700.
+    Tighten { mode: u32 },
+}
+
+/// `cache_dir` must be the judge user's alone, as systemd's `CacheDirectoryMode=0700` makes it: it holds the run
+/// gate's lock files (`Config::run_lock`), which anyone who can open them could hold for ever, stalling every
+/// run. One this process owns is tightened (an older install or a script made it 0755); one another user owns
+/// and others can reach is refused, since the daemon cannot fix it.
+pub fn cache_dir_access(config: &Config) -> Result<CacheDirAccess, ConfigError> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = match std::fs::metadata(&config.cache_dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(CacheDirAccess::Private),
+        meta => meta?,
+    };
+    let euid = rustix::process::geteuid().as_raw();
+    access_of(&config.cache_dir, (meta.mode() & 0o777, meta.uid()), euid)
+}
+
+fn access_of(dir: &Path, (mode, owner): (u32, u32), euid: u32) -> Result<CacheDirAccess, ConfigError> {
+    if mode & 0o077 == 0 {
+        Ok(CacheDirAccess::Private)
+    } else if owner == euid {
+        Ok(CacheDirAccess::Tighten { mode })
+    } else {
+        Err(invalid(format!(
+            "cache_dir {} has mode {mode:o} and another owner (uid {owner}): make it 0700 and the judge user's \
+             (it holds the run lock)",
+            dir.display()
+        )))
+    }
+}
+
+/// Applies `cache_dir_access` at daemon start: a cache dir of ours that others can reach becomes 0700, logged.
+pub fn secure_cache_dir(config: &Config) -> Result<(), ConfigError> {
+    use std::os::unix::fs::PermissionsExt;
+    if let CacheDirAccess::Tighten { mode } = cache_dir_access(config)? {
+        std::fs::set_permissions(&config.cache_dir, std::fs::Permissions::from_mode(0o700))?;
+        let dir = config.cache_dir.display();
+        tracing::warn!(cache_dir = %dir, was = format!("{mode:o}"), "cache_dir set to 0700: it holds the run lock");
+    }
+    Ok(())
+}
+
 /// A default of 0 would make every problem without its own `output_limit_length` an output-limit failure.
 pub fn check_output_limit(config: &Config) -> Result<(), ConfigError> {
     if config.limits.default_output_limit == 0 {
@@ -265,6 +325,23 @@ mod tests {
         let sized = |bytes: u64| parse(&format!("{MIN}cache_max_bytes = {bytes}\n")).unwrap();
         assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES - 1)).is_err());
         assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn a_cache_dir_others_can_reach_is_tightened_when_ours_and_refused_when_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = parse(MIN).unwrap();
+        config.cache_dir = dir.path().join("missing");
+        assert_eq!(cache_dir_access(&config).unwrap(), CacheDirAccess::Private, "the daemon creates it 0700");
+        config.cache_dir = dir.path().into();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(cache_dir_access(&config).unwrap(), CacheDirAccess::Tighten { mode: 0o755 });
+        secure_cache_dir(&config).unwrap();
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!((mode, cache_dir_access(&config).unwrap()), (0o700, CacheDirAccess::Private));
+        assert!(access_of(dir.path(), (0o750, 1000), 1001).is_err(), "another owner's: refused");
+        assert_eq!(access_of(dir.path(), (0o700, 1000), 1001).unwrap(), CacheDirAccess::Private);
     }
 
     #[test]
