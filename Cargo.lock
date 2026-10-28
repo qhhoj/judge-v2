@@ -686,6 +686,7 @@ dependencies = [
  "prometheus",
  "prost",
  "rand",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

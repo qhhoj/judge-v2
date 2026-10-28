@@ -54,11 +54,12 @@ struct Daemon {
 }
 
 /// Stale cache entries are never trusted: every start begins with empty cache dirs. A missing `cache_dir` is
-/// made 0700 (`config::check_cache_dir_private`).
+/// made 0700, and one of ours that others can reach is set to 0700 (`config::cache_dir_access`).
 fn fresh_dirs(config: &Config) -> anyhow::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     let made = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&config.cache_dir);
     made.with_context(|| format!("create {}", config.cache_dir.display()))?;
+    crate::config::secure_cache_dir(config)?;
     for name in ["data", "artefacts", "work", "meta"] {
         let dir = config.cache_dir.join(name);
         let _ = std::fs::remove_dir_all(&dir);
@@ -101,7 +102,7 @@ pub fn start_checks(
 ) -> anyhow::Result<(SandboxConfig, DiskBound)> {
     crate::config::check_cache_size(config)?;
     crate::config::check_output_limit(config)?;
-    crate::config::check_cache_dir_private(config)?;
+    crate::config::cache_dir_access(config)?;
     check_pinning(config, cores)?;
     checked_sandbox(config, probe_box)
 }

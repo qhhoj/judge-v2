@@ -224,21 +224,50 @@ pub fn check_cache_size(config: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// `cache_dir` must be the judge user's alone (no group or other bits): it holds the run gate's lock files
-/// (`Config::run_lock`), which anyone who can open them could hold for ever, stalling every run. A `cache_dir`
-/// that does not exist yet is fine: the daemon creates it 0700 (`run::fresh_dirs`), as systemd's
-/// `CacheDirectoryMode=0700` does.
-pub fn check_cache_dir_private(config: &Config) -> Result<(), ConfigError> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = match std::fs::metadata(&config.cache_dir) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        meta => meta?.permissions().mode() & 0o777,
+/// What the daemon does with `cache_dir` at start; `check-config` reports the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheDirAccess {
+    /// Missing (the daemon creates it 0700, `run::fresh_dirs`) or the owner's alone already.
+    Private,
+    /// Ours, but group or others can reach it (`mode`): the daemon sets it to 0700.
+    Tighten { mode: u32 },
+}
+
+/// `cache_dir` must be the judge user's alone, as systemd's `CacheDirectoryMode=0700` makes it: it holds the run
+/// gate's lock files (`Config::run_lock`), which anyone who can open them could hold for ever, stalling every
+/// run. One this process owns is tightened (an older install or a script made it 0755); one another user owns
+/// and others can reach is refused, since the daemon cannot fix it.
+pub fn cache_dir_access(config: &Config) -> Result<CacheDirAccess, ConfigError> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = match std::fs::metadata(&config.cache_dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(CacheDirAccess::Private),
+        meta => meta?,
     };
-    if mode & 0o077 != 0 {
-        return Err(invalid(format!(
-            "cache_dir {} has mode {mode:o}: it must be 0700, the judge user's alone (it holds the run lock)",
-            config.cache_dir.display()
-        )));
+    let euid = rustix::process::geteuid().as_raw();
+    access_of(&config.cache_dir, (meta.mode() & 0o777, meta.uid()), euid)
+}
+
+fn access_of(dir: &Path, (mode, owner): (u32, u32), euid: u32) -> Result<CacheDirAccess, ConfigError> {
+    if mode & 0o077 == 0 {
+        Ok(CacheDirAccess::Private)
+    } else if owner == euid {
+        Ok(CacheDirAccess::Tighten { mode })
+    } else {
+        Err(invalid(format!(
+            "cache_dir {} has mode {mode:o} and another owner (uid {owner}): make it 0700 and the judge user's \
+             (it holds the run lock)",
+            dir.display()
+        )))
+    }
+}
+
+/// Applies `cache_dir_access` at daemon start: a cache dir of ours that others can reach becomes 0700, logged.
+pub fn secure_cache_dir(config: &Config) -> Result<(), ConfigError> {
+    use std::os::unix::fs::PermissionsExt;
+    if let CacheDirAccess::Tighten { mode } = cache_dir_access(config)? {
+        std::fs::set_permissions(&config.cache_dir, std::fs::Permissions::from_mode(0o700))?;
+        let dir = config.cache_dir.display();
+        tracing::warn!(cache_dir = %dir, was = format!("{mode:o}"), "cache_dir set to 0700: it holds the run lock");
     }
     Ok(())
 }
@@ -299,17 +328,20 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_dir_others_can_reach_is_refused() {
+    fn a_cache_dir_others_can_reach_is_tightened_when_ours_and_refused_when_not() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let mut config = parse(MIN).unwrap();
         config.cache_dir = dir.path().join("missing");
-        assert!(check_cache_dir_private(&config).is_ok(), "the daemon creates it 0700");
+        assert_eq!(cache_dir_access(&config).unwrap(), CacheDirAccess::Private, "the daemon creates it 0700");
         config.cache_dir = dir.path().into();
-        for (mode, private) in [(0o700, true), (0o750, false), (0o705, false)] {
-            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
-            assert_eq!(check_cache_dir_private(&config).is_ok(), private, "mode {mode:o}");
-        }
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(cache_dir_access(&config).unwrap(), CacheDirAccess::Tighten { mode: 0o755 });
+        secure_cache_dir(&config).unwrap();
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!((mode, cache_dir_access(&config).unwrap()), (0o700, CacheDirAccess::Private));
+        assert!(access_of(dir.path(), (0o750, 1000), 1001).is_err(), "another owner's: refused");
+        assert_eq!(access_of(dir.path(), (0o700, 1000), 1001).unwrap(), CacheDirAccess::Private);
     }
 
     #[test]

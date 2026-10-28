@@ -30,8 +30,6 @@ fn problem(root: &Path) {
 fn config_text(url: &str, dirs: &[tempfile::TempDir]) -> String {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     std::fs::write(dirs[0].path().join("key"), "k\n").unwrap();
-    // the cache dir is the judge user's alone, as systemd makes it (`config::check_cache_dir_private`)
-    std::fs::set_permissions(dirs[2].path(), std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
     format!(
         "name = 'j1'\nbridge_url = '{url}'\nkey_file = '{}'\nproblem_data_root = '{}'\ncache_dir = '{}'\n\
          languages_file = '{}'\ntestlib_dir = '{}'\nslots = 1\ncores = [0]\nbox_base = {}\n\

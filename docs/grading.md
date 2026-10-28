@@ -54,8 +54,8 @@ output, checker result) replaces the first one before short-circuiting sees it (
   cases and runs in flight on the other slots; no slot starts a run or a case (compile, case or helper) until it
   ends. An aborted job does not wait for it. In the daemon the gate is a FIFO queue, so a run waits for at most the re-runs asked for
   before it; `selftest` shares it across processes through `flock` on `<cache_dir>/run.lock`, with a turn file so a
-  waiting re-run is not passed by new runs. The lock files are 0600, and the daemon and `check-config` refuse a
-  `cache_dir` with any group or other permission bit; a `flock` wait over 30 s is logged as a warning.
+  waiting re-run is not passed by new runs. The lock files are 0600, and `cache_dir` must be the judge user's
+  alone (operations.md#config); a `flock` wait over 30 s is logged as a warning.
 - **Milliseconds:** isolate reads a limit as `(int)(1000 * atof(arg))`, which truncates (`2.006` is 2005 ms), and
   counts and reports whole ms. The judge passes each limit as its whole ms plus half a ms, so isolate lands on it
   exactly, and compares times in whole ms (`spec::whole_ms`): a run killed at the cap is never taken for one that
