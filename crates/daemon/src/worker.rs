@@ -137,6 +137,10 @@ impl Reporter for ChannelReporter {
         let _ = self.tx.send(Event::Cases(reports));
     }
 
+    fn abort_signal(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.abort.clone())
+    }
+
     /// Waits while the outboxes are over the watermark; false once the job is aborted.
     fn before_case(&mut self) -> bool {
         while self.outboxes.over_watermark() && !self.abort.load(Ordering::SeqCst) {

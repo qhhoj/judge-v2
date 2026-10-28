@@ -224,6 +224,25 @@ pub fn check_cache_size(config: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// `cache_dir` must be the judge user's alone (no group or other bits): it holds the run gate's lock files
+/// (`Config::run_lock`), which anyone who can open them could hold for ever, stalling every run. A `cache_dir`
+/// that does not exist yet is fine: the daemon creates it 0700 (`run::fresh_dirs`), as systemd's
+/// `CacheDirectoryMode=0700` does.
+pub fn check_cache_dir_private(config: &Config) -> Result<(), ConfigError> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = match std::fs::metadata(&config.cache_dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        meta => meta?.permissions().mode() & 0o777,
+    };
+    if mode & 0o077 != 0 {
+        return Err(invalid(format!(
+            "cache_dir {} has mode {mode:o}: it must be 0700, the judge user's alone (it holds the run lock)",
+            config.cache_dir.display()
+        )));
+    }
+    Ok(())
+}
+
 /// A default of 0 would make every problem without its own `output_limit_length` an output-limit failure.
 pub fn check_output_limit(config: &Config) -> Result<(), ConfigError> {
     if config.limits.default_output_limit == 0 {
@@ -277,6 +296,20 @@ mod tests {
         let sized = |bytes: u64| parse(&format!("{MIN}cache_max_bytes = {bytes}\n")).unwrap();
         assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES - 1)).is_err());
         assert!(check_cache_size(&sized(MIN_CACHE_MAX_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn a_cache_dir_others_can_reach_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = parse(MIN).unwrap();
+        config.cache_dir = dir.path().join("missing");
+        assert!(check_cache_dir_private(&config).is_ok(), "the daemon creates it 0700");
+        config.cache_dir = dir.path().into();
+        for (mode, private) in [(0o700, true), (0o750, false), (0o705, false)] {
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(check_cache_dir_private(&config).is_ok(), private, "mode {mode:o}");
+        }
     }
 
     #[test]

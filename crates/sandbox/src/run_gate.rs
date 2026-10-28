@@ -10,8 +10,10 @@
 //!   pass keeps the turn until it holds `host_lock`, so no new run slips past a waiting re-run (a plain shared
 //!   `flock` is granted while an exclusive one waits).
 //!
-//! A thread already holding a pass (a re-run's own runs, a session's runs) gets a nested pass that waits for
-//! nothing. Every pass is a guard: a panic or an error releases it.
+//! A thread already holding a pass (a re-run's own runs, a session's runs, the runs of a case that holds one)
+//! gets a nested pass that waits for nothing. Every pass is a guard: a panic or an error releases it. The lock
+//! files are 0600 and the daemon refuses a `cache_dir` others can reach, so no other user can hold the host; a
+//! `flock` wait past 30 s is logged.
 
 use crate::error::SandboxError;
 use rustix::fs::{FlockOperation, flock};
@@ -19,9 +21,14 @@ use std::cell::Cell;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::marker::PhantomData;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
+
+/// A `flock` wait longer than this is logged: a re-run lasts one case, so a longer wait means a stuck holder.
+const SLOW_LOCK: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -87,6 +94,11 @@ impl RunGate {
         self.lock_queue().exclusive
     }
 
+    /// Whether some thread holds a shared pass (tests).
+    pub fn is_shared(&self) -> bool {
+        self.lock_queue().shared > 0
+    }
+
     fn pass(self: &Arc<Self>, mode: Mode) -> Result<RunPass, SandboxError> {
         let gate = if HELD.get() > 0 { None } else { Some((self.clone(), mode)) };
         if gate.is_some() {
@@ -134,15 +146,12 @@ impl RunGate {
     /// exist (the daemon creates it, so no daemon runs on this host).
     fn lock_host(&self, mode: Mode) -> Result<Option<File>, SandboxError> {
         let Some(path) = &self.host_lock else { return Ok(None) };
-        let (Some(turn), Some(runs)) = (open_lock(&turn_path(path))?, open_lock(path)?) else {
+        let turn_path = turn_path(path);
+        let (Some(turn), Some(runs)) = (open_lock(&turn_path)?, open_lock(path)?) else {
             return Ok(None);
         };
-        lock(&turn, FlockOperation::LockExclusive)?;
-        let operation = match mode {
-            Mode::Shared => FlockOperation::LockShared,
-            Mode::Exclusive => FlockOperation::LockExclusive,
-        };
-        lock(&runs, operation)?;
+        lock((&turn, &turn_path), Mode::Exclusive)?;
+        lock((&runs, path), mode)?;
         Ok(Some(runs)) // the turn closes here: the next pass may queue on `runs`
     }
 
@@ -168,26 +177,65 @@ fn turn_path(host_lock: &Path) -> PathBuf {
     name.into()
 }
 
-/// Opens (creating) a lock file, mode 0666 so a lock file root made stays usable by the judge user (the
-/// directory keeps it private). None when the directory does not exist.
+/// Opens (creating, mode 0600) a lock file. None when the directory does not exist.
 fn open_lock(path: &Path) -> Result<Option<File>, SandboxError> {
     let opened =
-        OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o666).open(path);
+        OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600).open(path);
     let file = match opened {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         file => file?,
     };
-    let _ = file.set_permissions(std::fs::Permissions::from_mode(0o666)); // only its owner may, and needs to
+    give_to_directory_owner(&file, path);
     Ok(Some(file))
 }
 
-fn lock(file: &File, operation: FlockOperation) -> Result<(), SandboxError> {
+/// A lock file another user made (`selftest` run as root) goes to the owner of its directory, the judge user,
+/// who could not open it otherwise. Only root may, so for anyone else this changes nothing.
+fn give_to_directory_owner(file: &File, path: &Path) {
+    let dir = path.parent().and_then(|dir| std::fs::metadata(dir).ok());
+    let (Some(dir), Ok(own)) = (dir, file.metadata()) else { return };
+    if own.uid() != dir.uid() {
+        let _ = std::os::unix::fs::fchown(file, Some(dir.uid()), Some(dir.gid()));
+    }
+}
+
+fn operation(mode: Mode, wait: bool) -> FlockOperation {
+    match (mode, wait) {
+        (Mode::Shared, true) => FlockOperation::LockShared,
+        (Mode::Exclusive, true) => FlockOperation::LockExclusive,
+        (Mode::Shared, false) => FlockOperation::NonBlockingLockShared,
+        (Mode::Exclusive, false) => FlockOperation::NonBlockingLockExclusive,
+    }
+}
+
+/// `flock` without EINTR; Ok(false) when `wait` is off and another holder has it.
+fn try_flock(file: &File, mode: Mode, wait: bool) -> Result<bool, SandboxError> {
     loop {
-        match flock(file, operation) {
+        match flock(file, operation(mode, wait)) {
+            Ok(()) => return Ok(true),
             Err(rustix::io::Errno::INTR) => continue,
-            done => return done.map_err(|error| SandboxError::Io(format!("run lock: {error}"))),
+            Err(rustix::io::Errno::WOULDBLOCK) if !wait => return Ok(false),
+            Err(error) => return Err(SandboxError::Io(format!("run lock: {error}"))),
         }
     }
+}
+
+/// Locks `file` in `mode`; a wait longer than `SLOW_LOCK` is logged with the lock's `path`.
+fn lock((file, path): (&File, &Path), mode: Mode) -> Result<(), SandboxError> {
+    if try_flock(file, mode, false)? {
+        return Ok(());
+    }
+    let (done, waiting) = channel::<()>();
+    let path = path.to_path_buf();
+    let watch = std::thread::spawn(move || {
+        if waiting.recv_timeout(SLOW_LOCK) == Err(RecvTimeoutError::Timeout) {
+            tracing::warn!(lock = %path.display(), ?mode, "a run has waited over 30 s for the host lock");
+        }
+    });
+    let locked = try_flock(file, mode, true);
+    drop(done); // the watch ends at once
+    let _ = watch.join();
+    locked.map(|_| ())
 }
 
 #[cfg(test)]
@@ -265,6 +313,10 @@ mod tests {
         assert!(flock(other(), FlockOperation::NonBlockingLockShared).is_ok(), "runs share the host");
         assert!(flock(other(), FlockOperation::NonBlockingLockExclusive).is_err());
         drop(run);
+        for file in [path.clone(), turn_path(&path)] {
+            let mode = std::fs::metadata(file).unwrap().mode() & 0o777;
+            assert_eq!(mode, 0o600, "no other user can hold the host");
+        }
         let missing = Arc::new(RunGate::new(Some(dir.path().join("none/run.lock"))));
         assert!(missing.shared().is_ok(), "no lock directory: no daemon on this host");
     }

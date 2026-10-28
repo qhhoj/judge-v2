@@ -1,7 +1,7 @@
 //! isolate meta → run verdict (docs/grading.md#verdict-rules).
 
 use crate::meta::Meta;
-use crate::spec::Limits;
+use crate::spec::{Limits, whole_ms};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunVerdict {
@@ -66,7 +66,7 @@ pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     if status == Some("XX") {
         return RunVerdict::Internal(meta.message.clone());
     }
-    let past_time_limit = status == Some("TO") && meta.time_s > limits.time_s;
+    let past_time_limit = status == Some("TO") && whole_ms(meta.time_s) > whole_ms(limits.time_s);
     let over_memory = meta.oom_killed || meta.memory_kib(output.own_files_kib) > limits.memory_kib;
     if over_memory && !past_time_limit {
         return RunVerdict::Mle;
@@ -180,5 +180,10 @@ mod tests {
         assert_eq!(verdict(past, 0), RunVerdict::Tle, "failed on time before the memory ran out");
         let wall_only = "time:0.300\nstatus:TO\nexitsig:9\nmax-rss:900\ncg-mem:17000\ncg-oom-killed:1\n";
         assert_eq!(verdict(wall_only, 0), RunVerdict::Mle, "under the CPU limit the OOM kill decides");
+        let limits = Limits::for_solution(2.01, 16_384, 1, 4096);
+        let one_ms_past =
+            parse_meta("time:2.011\nstatus:TO\nexitsig:9\ncg-mem:17000\ncg-oom-killed:1\n").unwrap();
+        let output = OutputUse { written: 0, cap: 4096, own_files_kib: Some(0) };
+        assert_eq!(classify(&one_ms_past, output, &limits), RunVerdict::Tle, "TL 2.01: 2.011 s is past it");
     }
 }

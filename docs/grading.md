@@ -38,7 +38,7 @@ Case statuses, as the bridge stores them:
 A run killed by the wall clock under its CPU limit is TLE, not MLE, unless the cgroup OOM-killed it.
 
 Time is the CPU time from the meta file; wall time only stops sleeping or blocked programs. A contestant run is
-killed at the hard cap, max(TL + 0.5 s, 1.7 x TL) of CPU (`spec::hard_cap_s`, isolate `--extra-time`, which counts
+killed at the hard cap, max(TL + 0.5 s, 2 x TL) of CPU (`spec::hard_cap_s`, isolate `--extra-time`, which counts
 CPU time from the start), so a TLE reports its real time up to the cap.
 
 ### TLE re-run
@@ -49,11 +49,17 @@ at most the hard cap (not killed at the cap, not a wall-clock TLE), is judged ag
 or split case, then its checker) while it holds the host alone, and the re-run's result (verdict, time, memory,
 output, checker result) replaces the first one before short-circuiting sees it (`grader/src/rerun.rs`).
 
-- **The host alone** is the run gate (`sandbox/src/run_gate.rs`): every isolate run takes it shared, a re-run takes it
-  exclusive. A re-run waits for the runs in flight on the other slots; no slot starts a run (compile, case or
-  helper) until it ends. In the daemon the gate is a FIFO queue, so a run waits for at most the re-runs asked for
+- **The host alone** is the run gate (`sandbox/src/run_gate.rs`): every isolate run and every whole case (staging,
+  runs, a built-in checker, the output read) takes it shared, a re-run takes it exclusive. A re-run waits for the
+  cases and runs in flight on the other slots; no slot starts a run or a case (compile, case or helper) until it
+  ends. An aborted job does not wait for it. In the daemon the gate is a FIFO queue, so a run waits for at most the re-runs asked for
   before it; `selftest` shares it across processes through `flock` on `<cache_dir>/run.lock`, with a turn file so a
-  waiting re-run is not passed by new runs.
+  waiting re-run is not passed by new runs. The lock files are 0600, and the daemon and `check-config` refuse a
+  `cache_dir` with any group or other permission bit; a `flock` wait over 30 s is logged as a warning.
+- **Milliseconds:** isolate reads a limit as `(int)(1000 * atof(arg))`, which truncates (`2.006` is 2005 ms), and
+  counts and reports whole ms. The judge passes each limit as its whole ms plus half a ms, so isolate lands on it
+  exactly, and compares times in whole ms (`spec::whole_ms`): a run killed at the cap is never taken for one that
+  ended under it, and a TO one ms past the TL is past it.
 - **Budget:** at most `limits.tle_reruns` (default 2) re-runs per submission may confirm a TLE; after that a TLE
   stands. A re-run that turns the TLE into something else is not counted. 0 turns re-runs off.
 - Each re-run is logged at info with the case, both times and the outcome. Load from other tenants of a cloud

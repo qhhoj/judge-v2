@@ -378,14 +378,15 @@ fn limits_of(submission: &Submission, defaults: &GraderDefaults) -> CaseLimits {
     }
 }
 
-/// Grades the plan with a program's cases judged through the TLE re-run (`crate::rerun`), `budget` per submission.
+/// Grades the plan with each case holding a pass of the run gate, and a TLE judged again alone (`crate::rerun`),
+/// `budget` per submission.
 fn grade_rerunning(
     judge: &mut dyn CaseJudge,
     (gate, budget): (Arc<RunGate>, u32),
     run: Run,
 ) -> Result<(), GradeError> {
-    let time_limit_s = run.submission.time_limit_s;
-    let mut judge = TleRerun { judge, gate, time_limit_s, budget };
+    let (time_limit_s, abort) = (run.submission.time_limit_s, run.reporter.abort_signal());
+    let mut judge = TleRerun { judge, gate, time_limit_s, budget, abort };
     grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
 }
 
@@ -465,8 +466,9 @@ fn grade_outputs(
     };
     let check = check_of(env, problem, &single_checker(plan)?, run.submission.time_limit_s)?;
     let context = CaseContext { problem, check, scratch: env.scratch.clone() };
+    let gate = env.helper.gate().clone();
     let mut judge = OutputCases { context, helper: &mut env.helper, source: outputs };
-    grade_cases(plan, &mut judge, short_circuit, run.reporter)
+    grade_rerunning(&mut judge, (gate, 0), run) // no time to re-run; each case still holds a pass
 }
 
 /// The zip's central directory parses. In memory, so a failure is the bytes' fault, never the host's.

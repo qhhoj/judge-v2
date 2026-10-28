@@ -17,7 +17,9 @@ time stable.
 
 Every isolate run of the daemon and of `selftest` holds the run gate (`<cache_dir>/run.lock` and `run.lock.turn`,
 [grading.md](grading.md#tle-re-run)): shared for a run, exclusive for a TLE re-run. A `selftest` without a daemon
-config, or before the daemon first made `cache_dir`, gates its own runs only.
+config, or before the daemon first made `cache_dir`, gates its own runs only. The daemon and `check-config` refuse a
+`cache_dir` with any group or other permission bit (it must be 0700, as `CacheDirectoryMode=0700` makes it): anyone who
+could open the lock files could stall every run.
 
 ## Host
 

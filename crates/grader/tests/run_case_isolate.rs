@@ -9,7 +9,7 @@ use judge_grader::program::Program;
 use judge_grader::run_case::{CaseIo, CaseLimits, CaseRun, Runnable, run_case};
 use judge_problem::init::FileIo;
 use judge_sandbox::classify::RunVerdict;
-use judge_sandbox::spec::hard_cap_s;
+use judge_sandbox::spec::{hard_cap_s, whole_ms};
 use judge_sandbox::{DiskQuota, IsolateBox, SandboxConfig, disk_quota_works};
 use std::fs::File;
 use std::path::PathBuf;
@@ -188,8 +188,8 @@ fn a_tle_is_killed_past_the_hard_cap_and_reports_its_real_time() {
     let file = input(&f, "");
     let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
     assert_eq!(run.verdict, RunVerdict::Tle);
-    // isolate kills once the CPU time is past both --time and --extra-time (the hard cap, 1.7 s for 1 s)
-    assert!(run.time_s > hard_cap_s(LIMITS.time_limit_s), "{}", run.time_s);
+    // isolate kills once the CPU time is past both --time and --extra-time (the hard cap, 2 s for 1 s)
+    assert!(whole_ms(run.time_s) > whole_ms(hard_cap_s(LIMITS.time_limit_s)), "{}", run.time_s);
 }
 
 /// JAVA with the JRE-only layout of this host: javac is reached through the compiler module, and the
