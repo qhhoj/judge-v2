@@ -264,7 +264,11 @@ async fn grade(
     };
     let forwarder = Forwarder::new(deps, &job.assignment);
     let forward = tokio::spawn(forwarder.run(rx));
+    // Grader events (a TLE re-run) carry the submission through this span.
+    let a = &job.assignment;
+    let span = tracing::info_span!("grade", judge = %deps.judge, submission_id = %a.r.submission_id);
     let blocking = tokio::task::spawn_blocking(move || {
+        let _span = span.enter();
         let Prepared { problem, submission } = prepared;
         let ran = catch_unwind(AssertUnwindSafe(|| runner.run(&problem, &submission, &mut reporter)));
         drop(reporter); // closes the channel: the forwarder flushes and ends
