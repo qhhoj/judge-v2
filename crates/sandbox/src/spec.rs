@@ -203,6 +203,15 @@ mod tests {
     }
 
     #[test]
+    fn the_wall_clock_limit_is_three_times_the_time_limit_plus_one_second() {
+        let wall_ms = |tl: f64| {
+            let limits = Limits::for_solution(tl, 1, 1, 1);
+            isolate_ms(&isolate_args(0, &RunSpec { limits, ..spec() }, Path::new("/m")), "--wall-time=")
+        };
+        assert_eq!([wall_ms(0.5), wall_ms(1.0), wall_ms(2.0)], [2500, 4000, 7000]);
+    }
+
+    #[test]
     fn inherited_fds_are_asked_for_only_by_a_channel_run() {
         let plain = isolate_args(0, &spec(), Path::new("/m"));
         assert!(!has(&plain, "--inherit-fds"));
