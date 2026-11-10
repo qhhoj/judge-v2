@@ -3,10 +3,16 @@
 //! CPU time under load is not the program's own: other slots share the cache and memory bandwidth (x1.46 for
 //! cache-bound code measured on production with 4 slots busy), so a TLE under load may be an AC alone.
 //!
+//! A TLE the wall clock ended, its CPU time within the limit (#95), is judged again alone too: a program blocked
+//! on a busy shared disk accrues wall time but no CPU. One that sleeps or blocks on its own times out again, so
+//! it stays TLE after one extra run. Such a TLE is reported with the feedback `wall time` (`WALL_TIME`). A
+//! signal from inside the box can be forged, so a count caps these: at most `MAX_WALL_RERUNS` per submission,
+//! flips counted, and none after one confirmed the TLE (the program blocks by itself).
+//!
 //! The re-run sits inside `grade_cases`'s judge, so short-circuiting sees only the re-run's verdict. Only
 //! re-runs that confirm the TLE spend the submission's budget (`GraderDefaults::tle_reruns`); one that flips
-//! the verdict is free. A run killed at the hard cap (`spec::hard_cap_s`) or by the wall clock alone is never
-//! re-run: it is not a near miss, and re-running it would only stall the host.
+//! the verdict is free. A case is re-run at most once. A run killed at the hard cap (`spec::hard_cap_s`) is
+//! never re-run: it is not a near miss, and re-running it would only stall the host.
 //!
 //! Every case holds a shared pass of the gate for all of its work (staging, runs, a built-in checker in the
 //! daemon, reading the output), so a re-run on another slot waits for whole cases, not only isolate runs. An
@@ -24,6 +30,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Re-runs that may confirm a TLE per submission unless the config says otherwise (`limits.tle_reruns`).
 pub const DEFAULT_TLE_RERUNS: u32 = 2;
 
+/// Wall-clock TLE re-runs per submission, flips counted; a confirmed one ends them (`TleRerun::wall_reruns`).
+pub const MAX_WALL_RERUNS: u32 = 2;
+
 /// Wraps a submission's case judge; one per submission, so the budget is per submission.
 pub struct TleRerun<'a> {
     pub judge: &'a mut dyn CaseJudge,
@@ -31,9 +40,14 @@ pub struct TleRerun<'a> {
     pub time_limit_s: f64,
     /// Re-runs that may still confirm a TLE; 0 turns re-runs off.
     pub budget: u32,
+    /// Wall-clock TLE re-runs left, `MAX_WALL_RERUNS` at the start: a flip spends one, a confirmation all.
+    pub wall_reruns: u32,
     /// The job's abort flag (`Reporter::abort_signal`).
     pub abort: Option<Arc<AtomicBool>>,
 }
+
+/// Feedback of a TLE the wall clock ended (`wall_clock_tle`), so such cases can be told apart and counted.
+pub const WALL_TIME: &str = "wall time";
 
 /// A TLE on CPU time that ended on its own: over the time limit, at most the hard cap, in the whole
 /// milliseconds isolate limits and reports (`spec::whole_ms`).
@@ -41,6 +55,12 @@ pub fn worth_rerun(verdict: &CaseVerdict, time_limit_s: f64) -> bool {
     let ms = whole_ms(verdict.time_s);
     let ended_on_its_own = ms <= whole_ms(hard_cap_s(time_limit_s));
     verdict.status == Status::Tle && ms > whole_ms(time_limit_s) && ended_on_its_own
+}
+
+/// A TLE with its CPU time within the limit: the wall clock ended it (`classify` gives TLE on CPU only past
+/// the limit in whole ms).
+pub fn wall_clock_tle(verdict: &CaseVerdict, time_limit_s: f64) -> bool {
+    verdict.status == Status::Tle && whole_ms(verdict.time_s) <= whole_ms(time_limit_s)
 }
 
 impl TleRerun<'_> {
@@ -58,6 +78,38 @@ impl TleRerun<'_> {
         self.aborted()?;
         self.judge.judge_case(case)
     }
+
+    /// A CPU TLE worth one more run, or a wall-clock TLE while wall re-runs are left; both need budget.
+    fn wants_rerun(&self, first: &CaseVerdict, wall_clock: bool) -> bool {
+        let wanted = if wall_clock { self.wall_reruns > 0 } else { worth_rerun(first, self.time_limit_s) };
+        self.budget > 0 && wanted
+    }
+
+    /// The first run's verdict, or the re-run's when `wants_rerun`.
+    fn final_verdict(&mut self, case: &PlannedCase, first: CaseVerdict) -> Result<CaseVerdict, GradeError> {
+        let wall_clock = wall_clock_tle(&first, self.time_limit_s);
+        if !self.wants_rerun(&first, wall_clock) {
+            return Ok(first);
+        }
+        let alone = self.judge_alone(case)?;
+        let confirmed = alone.status == Status::Tle;
+        if confirmed {
+            self.budget -= 1;
+        }
+        if wall_clock {
+            self.wall_reruns = if confirmed { 0 } else { self.wall_reruns - 1 };
+        }
+        tracing::info!(
+            case = case.position,
+            input = %case.input,
+            first_time_s = first.time_s,
+            first_wall_clock = wall_clock,
+            rerun_time_s = alone.time_s,
+            outcome = ?alone.status,
+            "TLE run again alone"
+        );
+        Ok(alone)
+    }
 }
 
 impl CaseJudge for TleRerun<'_> {
@@ -66,22 +118,11 @@ impl CaseJudge for TleRerun<'_> {
             let _case = self.gate.shared()?;
             self.judge.judge_case(case)?
         };
-        if self.budget == 0 || !worth_rerun(&first, self.time_limit_s) {
-            return Ok(first);
+        let verdict = self.final_verdict(case, first)?;
+        if wall_clock_tle(&verdict, self.time_limit_s) {
+            return Ok(CaseVerdict { feedback: WALL_TIME.into(), ..verdict });
         }
-        let alone = self.judge_alone(case)?;
-        if alone.status == Status::Tle {
-            self.budget -= 1;
-        }
-        tracing::info!(
-            case = case.position,
-            input = %case.input,
-            first_time_s = first.time_s,
-            rerun_time_s = alone.time_s,
-            outcome = ?alone.status,
-            "TLE run again alone"
-        );
-        Ok(alone)
+        Ok(verdict)
     }
 }
 
@@ -147,7 +188,9 @@ mod tests {
         let gate = Arc::new(RunGate::default());
         let mut scripted =
             Scripted { script: script.iter().copied().collect(), gate: gate.clone(), asked: vec![] };
-        let mut judge = TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget, abort: None };
+        let wall_reruns = MAX_WALL_RERUNS;
+        let mut judge =
+            TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget, wall_reruns, abort: None };
         let mut recorder = Recorder::default();
         grade_cases(&plan(yaml), &mut judge, false, &mut recorder).unwrap();
         assert!(scripted.script.is_empty(), "every scripted run happened");
@@ -172,26 +215,75 @@ mod tests {
 
     const ONE_CASE: &str = "- {in: x, out: y, points: 1}\n";
 
+    /// (status, time, feedback) of each report, and how many runs held the host alone.
+    fn outcome(yaml: &str, script: &[(Status, f64)], budget: u32) -> (Vec<(Status, f64, String)>, usize) {
+        let (reports, asked) = grade(yaml, script, budget);
+        let shape = reports.iter().map(|r| (r.status, r.time_s, r.feedback.clone())).collect();
+        (shape, asked.iter().filter(|(_, held)| *held == "alone").count())
+    }
+
+    fn cases(n: usize) -> String {
+        "test_cases:\n".to_string() + &ONE_CASE.repeat(n)
+    }
+
     #[test]
-    fn only_confirmed_tles_spend_the_budget_and_hopeless_or_wall_clock_tles_are_not_run_again() {
-        let cases = "test_cases:\n".to_string() + &ONE_CASE.repeat(6);
+    fn only_confirmed_tles_spend_the_budget_and_tles_killed_at_the_hard_cap_are_not_run_again() {
         let script = [
             (Status::Tle, 1.2),
             (Status::Tle, 1.1), // confirmed: 1 left
             (Status::Tle, 1.2),
             (Status::Ac, 0.8),    // flipped: free
             (Status::Tle, 2.001), // killed at the hard cap (2 s)
-            (Status::Tle, 0.2),   // the wall clock: a sleeping program
             (Status::Tle, 1.2),
             (Status::Tle, 1.3), // confirmed: none left
             (Status::Tle, 1.2), // no budget: stands
         ];
-        let (reports, asked) = grade(&cases, &script, 2);
-        let times: Vec<_> = reports.iter().map(|r| r.time_s).collect();
-        assert_eq!(times, [1.1, 0.8, 2.001, 0.2, 1.3, 1.2]);
-        assert_eq!(asked.iter().filter(|(_, held)| *held == "alone").count(), 3);
-        let (_, asked) = grade(&format!("test_cases:\n{ONE_CASE}"), &[(Status::Tle, 1.2)], 0);
-        assert_eq!(asked.len(), 1, "a budget of 0 turns re-runs off");
+        let (reports, alone) = outcome(&cases(5), &script, 2);
+        let times: Vec<_> = reports.iter().map(|(_, time_s, _)| *time_s).collect();
+        assert_eq!(times, [1.1, 0.8, 2.001, 1.3, 1.2]);
+        assert!(reports.iter().all(|(_, _, feedback)| feedback.is_empty()), "CPU TLEs: {reports:?}");
+        assert_eq!(alone, 3);
+        let (_, alone) = outcome(&cases(1), &[(Status::Tle, 1.2)], 0);
+        assert_eq!(alone, 0, "a budget of 0 turns re-runs off");
+    }
+
+    #[test]
+    fn a_wall_clock_tle_is_run_again_alone_and_flips_are_free_up_to_two_wall_reruns() {
+        let script = [
+            (Status::Tle, 0.2),
+            (Status::Ac, 0.4), // flipped: the budget of 1 is left
+            (Status::Tle, 0.1),
+            (Status::Ac, 0.3), // flipped: no wall re-run left
+            (Status::Tle, 0.2),
+        ];
+        let (reports, alone) = outcome(&cases(3), &script, 1);
+        let ac = |time_s| (Status::Ac, time_s, String::new());
+        let wall = (Status::Tle, 0.2, WALL_TIME.to_string());
+        assert_eq!(reports, [ac(0.4), ac(0.3), wall], "a stall on the host is not the program's");
+        assert_eq!(alone, 2);
+    }
+
+    #[test]
+    fn once_a_wall_clock_tle_is_confirmed_no_other_is_run_again() {
+        let sleeper = [(Status::Tle, 0.0); 6]; // one re-run, then 4 more cases
+        let (reports, alone) = outcome(&cases(5), &sleeper, 2);
+        assert!(reports.iter().all(|(status, _, feedback)| *status == Status::Tle && feedback == WALL_TIME));
+        assert_eq!(alone, 1, "the budget of 2 is not spent on a program that blocks by itself");
+    }
+
+    #[test]
+    fn a_wall_clock_tle_stays_tle_after_one_run_alone_and_says_wall_time() {
+        let script = [
+            (Status::Tle, 1.2),
+            (Status::Tle, 0.5), // a CPU TLE whose re-run the wall clock ended: 1 left, no third run
+            (Status::Tle, 0.0),
+            (Status::Tle, 0.01), // a program that sleeps: none left
+            (Status::Tle, 0.0),  // no budget: stands
+        ];
+        let (reports, alone) = outcome(&cases(3), &script, 2);
+        let wall = |time_s| (Status::Tle, time_s, WALL_TIME.to_string());
+        assert_eq!(reports, [wall(0.5), wall(0.01), wall(0.0)]);
+        assert_eq!(alone, 2);
     }
 
     #[test]
@@ -201,6 +293,7 @@ mod tests {
         assert!(worth_rerun(&tle(2.36), 1.18) && !worth_rerun(&tle(2.361), 1.18));
         // TL 2.01 s: isolate's TO starts at 2.011; 2.010 is under the limit (a wall-clock TLE)
         assert!(worth_rerun(&tle(2.011), 2.01) && !worth_rerun(&tle(2.01), 2.01));
+        assert!(wall_clock_tle(&tle(2.01), 2.01) && !wall_clock_tle(&tle(2.011), 2.01));
     }
 
     #[test]
@@ -209,7 +302,9 @@ mod tests {
         let script = [(Status::Tle, 1.3)].into_iter().collect();
         let mut scripted = Scripted { script, gate: gate.clone(), asked: vec![] };
         let abort = Some(Arc::new(AtomicBool::new(true)));
-        let mut judge = TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget: 2, abort };
+        let wall_reruns = MAX_WALL_RERUNS;
+        let mut judge =
+            TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget: 2, wall_reruns, abort };
         let case = &plan(&format!("test_cases:\n{ONE_CASE}")).cases[0];
         assert_eq!(judge.judge_case(case), Err(GradeError::Aborted));
         assert_eq!(scripted.asked.len(), 1, "no re-run");

@@ -39,16 +39,24 @@ A run killed by the wall clock under its CPU limit is TLE, not MLE, unless the c
 
 Time is the CPU time from the meta file; wall time only stops sleeping or blocked programs. A contestant run is
 killed at the hard cap, max(TL + 0.5 s, 2 x TL) of CPU (`spec::hard_cap_s`, isolate `--extra-time`, which counts
-CPU time from the start), so a TLE reports its real time up to the cap.
+CPU time from the start), so a TLE reports its real time up to the cap. A TLE with its CPU time within the limit is
+one the wall clock ended (3 x TL + 1 s); its case feedback is `wall time`.
 
 ### TLE re-run
 
 CPU time under load is not the program's alone: the slots share the cache and memory bandwidth (on production with
 4 slots busy, cache-bound code took x1.46 the CPU time, COR-48). So a case that ends TLE on its own, over the TL and
-at most the hard cap (not killed at the cap, not a wall-clock TLE), is judged again whole (every box of an interactive
-or split case, then its checker) while it holds the host alone, and the re-run's result (verdict, time, memory,
-output, checker result) replaces the first one before short-circuiting sees it (`grader/src/rerun.rs`).
+at most the hard cap (not killed at the cap), is judged again whole (every box of an interactive or split case, then
+its checker) while it holds the host alone, and the re-run's result (verdict, time, memory, output, checker result)
+replaces the first one before short-circuiting sees it (`grader/src/rerun.rs`).
 
+- **Wall clock:** a TLE the wall clock ended (CPU within the TL) is re-run alone the same way (#95): a program
+  blocked on a busy shared disk accrues wall time but no CPU. A program that sleeps or blocks on its own times out
+  again and stays TLE, labelled `wall time`; this rule never makes it IE (the interactive and split jury-stall
+  rules stand). A case is re-run at most once, so a first CPU TLE whose re-run the wall clock ends is not run a
+  third time. Any signal from inside the box can be forged, so a count caps these re-runs: at most 2 per
+  submission (`MAX_WALL_RERUNS`), flips counted, and none after one confirmed the TLE. A later wall-clock TLE
+  then stands, labelled `wall time`. A disk stall that hits more cases is a host incident: rejudge.
 - **The host alone** is the run gate (`sandbox/src/run_gate.rs`): every isolate run and every whole case (staging,
   runs, a built-in checker, the output read) takes it shared, a re-run takes it exclusive. A re-run waits for the
   cases and runs in flight on the other slots; no slot starts a run or a case (compile, case or helper) until it
@@ -62,8 +70,8 @@ output, checker result) replaces the first one before short-circuiting sees it (
   ended under it, and a TO one ms past the TL is past it.
 - **Budget:** at most `limits.tle_reruns` (default 2) re-runs per submission may confirm a TLE; after that a TLE
   stands. A re-run that turns the TLE into something else is not counted. 0 turns re-runs off.
-- Each re-run is logged at info with the case, both times and the outcome. Load from other tenants of a cloud
-  host is not removed: a near-limit case may still flip between rejudges.
+- Each re-run is logged at info with the case, both times, whether the first was a wall-clock TLE, and the outcome.
+  Load from other tenants of a cloud host is not removed: a near-limit case may still flip between rejudges.
 
 ### Memory
 
