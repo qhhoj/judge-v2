@@ -284,8 +284,11 @@ fn reported_memory_is_the_program_not_the_page_cache_of_its_output() {
 }
 
 fn go_limited(f: &mut Fixture, io: &CaseIo, memory_kib: u64) -> CaseRun {
-    let limits = CaseLimits { memory_kib, ..LIMITS };
-    let runnable = Runnable { program: &f.program, limits: &limits };
+    go_within(f, io, &CaseLimits { memory_kib, ..LIMITS })
+}
+
+fn go_within(f: &mut Fixture, io: &CaseIo, limits: &CaseLimits) -> CaseRun {
+    let runnable = Runnable { program: &f.program, limits };
     run_case(&mut f.sandbox, &runnable, io, &f.scratch.join("out")).unwrap()
 }
 
@@ -370,6 +373,11 @@ fn file_pages_the_program_holds_unmapped_count_against_the_memory_limit() {
     assert_eq!(std::fs::read_to_string(f.scratch.join("out")).unwrap(), "refused\n", "/dev/shm is writable");
 }
 
+/// Time limit of the evicted-input test, which tests memory only: its own `fdatasync` of the 40 MiB input
+/// waits behind the host's writeback (7.7 s, and a 16 s wall-clock TLE at TL 1 s, under IO load: #92).
+/// Honest-write tests stay at TL 1 s, so a stalled write still fails them at the production wall.
+const EVICTED_INPUT_TIME_LIMIT_S: f64 = 20.0;
+
 /// Drops its stdin's page cache, then reads it all: the input's pages are charged to the run.
 const READ_EVICTED: &str = "#include <cstdio>\n#include <fcntl.h>\n#include <unistd.h>\n\
 static char block[1 << 16];\n\
@@ -380,7 +388,8 @@ while ((r = read(0, block, sizeof block)) > 0) n += r; printf(\"%ld\", n); }\n";
 fn the_page_cache_of_an_input_the_program_reads_is_not_its_memory() {
     let Some(mut f) = fixture(48, "CPP17", READ_EVICTED) else { return };
     let file = input(&f, &"x".repeat(40 << 20));
-    let run = go_limited(&mut f, &plain(&file, 1 << 20), 32_768);
+    let limits = CaseLimits { memory_kib: 32_768, time_limit_s: EVICTED_INPUT_TIME_LIMIT_S, ..LIMITS };
+    let run = go_within(&mut f, &plain(&file, 1 << 20), &limits);
     assert_eq!(run.verdict, RunVerdict::Ok, "40 MiB of input read under a 32 MiB limit");
     assert!(run.memory_kib < 8192, "memory {} KiB", run.memory_kib);
 }
