@@ -122,8 +122,17 @@ const HIDDEN_PROC_FILES: [&str; 2] = ["proc/keys", "proc/key-users"];
 /// cgroup like any other memory, so it counts against the memory limit.
 pub const TMP_IN_MEMORY: &str = "tmp=tmpfs:fs:rw";
 
-/// The isolate command line of one run in box `box_id`, with `box_dev` as the box's `/dev` (`box_dev`).
-pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path, box_dev: &Path) -> Vec<String> {
+/// Where a box sees its read-only judge files (`IsolateBox::put_read_only`).
+pub const READ_ONLY_DIR: &str = "staged";
+
+/// The isolate command line of one run in box `box_id`, with `box_dev` as the box's `/dev` (`box_dev`) and
+/// `read_only` (when the judge put files there) as its `/staged`.
+pub fn isolate_args(
+    box_id: u32,
+    spec: &RunSpec,
+    meta: &Path,
+    (box_dev, read_only): (&Path, Option<&Path>),
+) -> Vec<String> {
     let mut args =
         vec!["--cg".to_string(), format!("-b{box_id}"), "-s".into(), format!("--meta={}", meta.display())];
     args.extend(limit_args(&spec.limits));
@@ -138,6 +147,12 @@ pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path, box_dev: &Path) ->
     // The host's /dev/null bound without device access: opening these files fails.
     args.extend(HIDDEN_PROC_FILES.iter().map(|file| format!("--dir={file}=/dev/null")));
     args.extend(spec.dirs.iter().map(|d| format!("--dir={d}")));
+    if let Some(dir) = read_only {
+        // Mounted read-only and reached through the box's symlinks into it, which isolate keeps only with
+        // `--special-files` (it otherwise unlinks every non-regular file in the box when the run starts).
+        args.push(format!("--dir={READ_ONLY_DIR}={}:noexec", dir.display()));
+        args.push("--special-files".into());
+    }
     if spec.inherit_fds {
         args.push("--inherit-fds".into());
     }
@@ -175,7 +190,7 @@ mod tests {
     fn the_network_is_never_shared_stdio_can_be_inherited_and_the_command_is_last() {
         let mut s = spec();
         s.stdio = Stdio::default();
-        let args = isolate_args(0, &s, Path::new("/m"), Path::new("/d"));
+        let args = isolate_args(0, &s, Path::new("/m"), (Path::new("/d"), None));
         assert!(!has(&args, "--share-net"));
         assert!(!args.iter().any(|a| a.starts_with("--stdin") || a.starts_with("--stdout")));
         let run = args.iter().position(|a| a == "--run").unwrap();
@@ -185,8 +200,12 @@ mod tests {
     #[test]
     fn the_cgroup_gets_page_cache_room_of_one_fsize_up_to_a_cap() {
         let small = Limits::for_solution(1.0, 8192, 1, 4 << 20);
-        let args =
-            isolate_args(0, &RunSpec { limits: small.clone(), ..spec() }, Path::new("/m"), Path::new("/d"));
+        let args = isolate_args(
+            0,
+            &RunSpec { limits: small.clone(), ..spec() },
+            Path::new("/m"),
+            (Path::new("/d"), None),
+        );
         assert!(has(&args, &format!("--cg-mem={}", 8192 + small.fsize_kib)), "{args:?}");
         let huge = Limits::for_solution(1.0, 8192, 1, 1 << 30);
         assert_eq!(cgroup_memory_kib(&huge), 8192 + PAGE_CACHE_ROOM_MAX_KIB);
@@ -206,7 +225,7 @@ mod tests {
                 0,
                 &RunSpec { limits: limits.clone(), ..spec() },
                 Path::new("/m"),
-                Path::new("/d"),
+                (Path::new("/d"), None),
             );
             assert_eq!(isolate_ms(&args, "--time="), ms, "TL {ms} ms");
             assert_eq!(isolate_ms(&args, "--extra-time="), whole_ms(hard_cap_s(limits.time_s)), "TL {ms} ms");
@@ -224,7 +243,7 @@ mod tests {
         let wall_ms = |tl: f64| {
             let limits = Limits::for_solution(tl, 1, 1, 1);
             isolate_ms(
-                &isolate_args(0, &RunSpec { limits, ..spec() }, Path::new("/m"), Path::new("/d")),
+                &isolate_args(0, &RunSpec { limits, ..spec() }, Path::new("/m"), (Path::new("/d"), None)),
                 "--wall-time=",
             )
         };
@@ -233,10 +252,14 @@ mod tests {
 
     #[test]
     fn inherited_fds_are_asked_for_only_by_a_channel_run() {
-        let plain = isolate_args(0, &spec(), Path::new("/m"), Path::new("/d"));
+        let plain = isolate_args(0, &spec(), Path::new("/m"), (Path::new("/d"), None));
         assert!(!has(&plain, "--inherit-fds"));
-        let channel =
-            isolate_args(0, &RunSpec { inherit_fds: true, ..spec() }, Path::new("/m"), Path::new("/d"));
+        let channel = isolate_args(
+            0,
+            &RunSpec { inherit_fds: true, ..spec() },
+            Path::new("/m"),
+            (Path::new("/d"), None),
+        );
         let run = channel.iter().position(|a| a == "--run").unwrap();
         assert_eq!(channel[run - 1], "--inherit-fds", "an isolate option, before --run");
     }

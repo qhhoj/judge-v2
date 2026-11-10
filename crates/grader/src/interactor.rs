@@ -2,7 +2,7 @@
 //!
 //! The solution runs in its box and the interactor, which is problem-author code, in the helper box.
 //! The daemon only creates the pipes and hands one end of each to a child as its stdio; it never reads or
-//! writes them. The parent's copies are closed as soon as both children are spawned, so a side that exits
+//! writes them (it only drains a kept stderr of the solution, `session::run::ChannelPlan::StdioPipes`). The parent's copies are closed as soon as both children are spawned, so a side that exits
 //! gives the other EOF. A pair that blocks on each other is ended by the sandbox wall-time limits; a host
 //! deadline on top of that kills both isolate processes if a limit does not fire.
 //!
@@ -17,8 +17,8 @@ use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
 use crate::run_case::{
-    Runnable, STDERR_FILE, contestant_dirs, contestant_room, keeps_stderr, own_files_kib, refine,
-    reported_memory, solution_limits,
+    Runnable, STDERR_KEEP, contestant_dirs, contestant_room, keeps_stderr, refine, reported_memory,
+    solution_limits,
 };
 use crate::session::files::save_box_file;
 use crate::session::run::{
@@ -27,7 +27,9 @@ use crate::session::run::{
 use crate::session::score::{MANAGER_STDERR, testlib_score};
 use crate::session::verdict::{MemberRun, interactor_failed, solution_wins, stalled_by_jury};
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
+use judge_sandbox::drain::Drained;
 use judge_sandbox::error::SandboxError;
+use judge_sandbox::meta::MemoryCount;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
 use judge_sandbox::{IsolateBox, Room};
 use std::path::Path;
@@ -71,11 +73,12 @@ pub fn interactor_limits(solution: &Limits) -> Limits {
 
 fn solution_spec(x: &Interaction) -> RunSpec {
     let (program, limits) = (x.solution.program, x.solution.limits);
-    let stderr = if keeps_stderr(program) { STDERR_FILE } else { "/dev/null" };
+    // A kept stderr is drained (`session::run::ChannelPlan::StdioPipes`)
+    let stderr = (!keeps_stderr(program)).then(|| "/dev/null".to_string());
     RunSpec {
         argv: expand(&program.run, &Placeholders { memory_kib: limits.memory_kib, class: None }),
         limits: solution_limits(x.solution, SOLUTION_FILE_CAP),
-        stdio: Stdio { stdin: None, stdout: None, stderr: Some(stderr.into()) },
+        stdio: Stdio { stdin: None, stdout: None, stderr },
         env: program.env.clone(),
         dirs: contestant_dirs(program),
         preload: program.preload.clone(),
@@ -117,21 +120,28 @@ pub fn interact(mut boxes: Boxes, x: &Interaction) -> Result<Interactive, GradeE
     let interactor = interactor_spec(x, &solution.limits);
     let manager = MemberSpec { sandbox: &*boxes.helper, run: &interactor };
     let contestant = MemberSpec { sandbox: &*boxes.solution, run: &solution };
-    let mut session = spawn_session(&manager, &contestant, ChannelPlan::StdioPipes)?;
+    let contestant_stderr = keeps_stderr(x.solution.program).then_some(STDERR_KEEP);
+    let mut session = spawn_session(&manager, &contestant, ChannelPlan::StdioPipes { contestant_stderr })?;
     wait_all(&mut session, host_deadline(&interactor.limits))?;
-    decide(&boxes, x, &solution.limits, &interactor.limits)
+    let stderr = session.contestant_stderr()?;
+    decide(&boxes, x, &stderr, (&solution.limits, &interactor.limits))
 }
 
-fn solution_result(boxes: &Boxes, x: &Interaction, limits: &Limits) -> Result<MemberRun, GradeError> {
+/// The solution's stdin, stdout and kept stderr are all pipes: its memory is its cgroup peak.
+fn solution_result(
+    boxes: &Boxes,
+    x: &Interaction,
+    stderr: &Drained,
+    limits: &Limits,
+) -> Result<MemberRun, GradeError> {
     let meta = boxes.solution.read_meta()?;
-    // The solution's stdin and stdout are pipes: its own files are its kept stderr alone.
-    let own_files = Some(own_files_kib(boxes.solution, x.solution.program, 0, None));
-    let verdict = classify(&meta, OutputUse { own_files_kib: own_files, ..OutputUse::UNMEASURED }, limits);
+    let usage = OutputUse { cut: stderr.cut, memory: MemoryCount::CgroupPeak, ..OutputUse::UNMEASURED };
+    let verdict = classify(&meta, usage, limits);
     if let RunVerdict::Internal(message) = &verdict {
         return Err(SandboxError::Isolate(message.clone()).into());
     }
-    let verdict = refine(verdict, x.solution.program, boxes.solution);
-    let memory_kib = reported_memory(&meta, own_files, &verdict);
+    let verdict = refine(verdict, x.solution.program, stderr);
+    let memory_kib = reported_memory(&meta, &verdict);
     Ok(MemberRun { verdict, time_s: meta.time_s, memory_kib })
 }
 
@@ -147,10 +157,10 @@ pub fn save_tout(helper: &IsolateBox, into: &Path) -> Result<(), GradeError> {
 fn decide(
     boxes: &Boxes,
     x: &Interaction,
-    limits: &Limits,
-    interactor_limits: &Limits,
+    stderr: &Drained,
+    (limits, interactor_limits): (&Limits, &Limits),
 ) -> Result<Interactive, GradeError> {
-    let result = solution_result(boxes, x, limits)?;
+    let result = solution_result(boxes, x, stderr, limits)?;
     let interactor = boxes.helper.read_meta()?;
     if stalled_by_jury(&result, interactor.time_s, limits) {
         let used = interactor.time_s;

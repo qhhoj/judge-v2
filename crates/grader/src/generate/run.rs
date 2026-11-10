@@ -125,7 +125,7 @@ pub fn run_program(sandbox: &mut IsolateBox, run: &ProgramRun) -> Result<Program
         None => 0,
     };
     let verdict =
-        classify(&meta, OutputUse { written, cap: run.output_cap, own_files_kib: None }, &spec.limits);
+        classify(&meta, OutputUse { written, cap: run.output_cap, ..OutputUse::UNMEASURED }, &spec.limits);
     Ok(ProgramExit { verdict, stderr: collect_stderr(sandbox) })
 }
 

@@ -2,13 +2,17 @@
 
 use crate::error::GradeError;
 use crate::file_io::SolutionFileIo;
+use crate::file_io_memory;
 use crate::languages::{ExceptionStyle, Placeholders, expand};
 use crate::program::Program;
 use judge_problem::init::is_plain_box_name;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
-use judge_sandbox::meta::Meta;
+use judge_sandbox::drain::{Drained, Keep};
+use judge_sandbox::meta::{MemoryCount, Meta};
+use judge_sandbox::pinned_input::PinnedInput;
+use judge_sandbox::sealed_input::sealed_copy;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio, TMP_IN_MEMORY};
-use judge_sandbox::{IsolateBox, Room};
+use judge_sandbox::{Drains, IsolateBox, Room};
 use std::fs::File;
 use std::io::Read;
 use std::os::fd::AsRawFd;
@@ -20,8 +24,9 @@ const MAX_REASON_BYTES: usize = 50;
 /// Extra file size a run with a kept stderr may write beyond the output cap, and how much of the end of
 /// that stderr is searched for the exception.
 const STDERR_ALLOWANCE: u64 = 16 << 20;
-const MAX_STDERR_TAIL: usize = 64 << 10;
-pub(crate) const STDERR_FILE: &str = ".stderr";
+const MAX_STDERR_TAIL: u64 = 64 << 10;
+/// What the judge keeps of a kept stderr: the end of its first `STDERR_ALLOWANCE` bytes.
+pub(crate) const STDERR_KEEP: Keep = Keep { first: STDERR_ALLOWANCE, last: MAX_STDERR_TAIL };
 
 #[derive(Debug, Clone)]
 pub struct CaseLimits {
@@ -65,34 +70,42 @@ pub fn read_prefix(path: &Path, bytes: u64) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
-/// Box names of the case input (and its aliases) and output, the stdio that connects them, and whether the
-/// output may be in any letter case.
+/// Box names of the case input (and its aliases), the box file the output is read from with file I/O (in any
+/// letter case), and the stdio that connects them. Without file I/O the program's stdin is a sealed copy of
+/// the input (`judge_sandbox::sealed_input`; the read-only box file `input` is still there) and its output the
+/// drained stdout.
 struct Layout {
     input: String,
     aliases: Vec<String>,
-    output: String,
-    output_any_case: bool,
+    output_file: Option<String>,
     stdio: Stdio,
 }
 
+/// A kept stderr is drained (`drains`); any other goes to /dev/null.
 fn layout(program: &Program, file_io: Option<&SolutionFileIo>) -> Layout {
-    let keeps_stderr = program.jvm || program.exception_marker.is_some();
-    let stderr = Some(if keeps_stderr { STDERR_FILE } else { "/dev/null" }.to_string());
+    let stderr = (!keeps_stderr(program)).then(|| "/dev/null".to_string());
     match file_io {
         Some(io) => Layout {
             input: io.input.clone(),
             aliases: io.aliases.clone(),
-            output: io.output.clone(),
-            output_any_case: true,
+            output_file: Some(io.output.clone()),
             stdio: Stdio { stdin: Some("/dev/null".into()), stdout: Some("/dev/null".into()), stderr },
         },
         None => Layout {
             input: "input".into(),
             aliases: Vec::new(),
-            output: "output".into(),
-            output_any_case: false,
-            stdio: Stdio { stdin: Some("input".into()), stdout: Some("output".into()), stderr },
+            output_file: None,
+            stdio: Stdio { stdin: None, stdout: None, stderr },
         },
+    }
+}
+
+/// The streams the judge reads: stdout without file I/O (one byte past the cap tells "exactly the cap" from
+/// "over it"), and a kept stderr.
+fn drains(program: &Program, layout: &Layout, output_cap: u64) -> Drains {
+    Drains {
+        stdout: layout.output_file.is_none().then(|| Keep::first(output_cap + 1)),
+        stderr: keeps_stderr(program).then_some(STDERR_KEEP),
     }
 }
 
@@ -112,9 +125,10 @@ pub(crate) fn keeps_stderr(program: &Program) -> bool {
 
 pub(crate) fn solution_limits(runnable: &Runnable, output_cap: u64) -> Limits {
     let (program, limits) = (runnable.program, runnable.limits);
-    // isolate has one --fsize for every file the run writes. A kept stderr gets its own allowance on top of
-    // the output cap, so a chatty correct program is not killed or failed; stdout is still held to the cap
-    // by the `written > cap` check, and stderr never decides the verdict.
+    // One file size limit holds every file the run writes (isolate's --fsize) and its drained stdout and
+    // stderr (`IsolateBox::run_drained`). A kept stderr gets its own allowance on top of the output cap, so a
+    // chatty correct program is not killed or failed; stdout is still held to the cap by the `written > cap`
+    // check, and stderr decides the verdict only when writing past the limit kills the run.
     let fsize = output_cap + if keeps_stderr(program) { STDERR_ALLOWANCE } else { 0 };
     Limits::for_solution(limits.time_limit_s, memory_limit_kib(limits, program.jvm), program.processes, fsize)
 }
@@ -148,13 +162,15 @@ fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
 }
 
 /// Resets the box and puts the program and the case input in it, the input also under each alias that
-/// names no program file. The box's disk quota also holds both and the run's own files (`contestant_room`).
+/// names no program file; returns the input's host path. The input is read-only to the run
+/// (`IsolateBox::put_read_only`). The box's disk quota holds the program, the input's room (kept as when the
+/// input was a box file) and the run's own files (`contestant_room`).
 fn stage(
     sandbox: &mut IsolateBox,
     runnable: &Runnable,
     (input, output_cap): (&File, u64),
     layout: &Layout,
-) -> Result<(), GradeError> {
+) -> Result<PathBuf, GradeError> {
     let program = runnable.program;
     let staged = Room::default().plus_file(input.metadata()?.len());
     sandbox.reset_for_contestant(contestant_room(
@@ -165,17 +181,22 @@ fn stage(
     sandbox.put_tree(&program.dir)?;
     // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.
     let handle = format!("/proc/self/fd/{}", input.as_raw_fd());
-    sandbox.put(&layout.input, Path::new(&handle), false)?;
+    let staged = sandbox.put_read_only(&layout.input, Path::new(&handle))?;
     for alias in &layout.aliases {
         sandbox.link(&layout.input, alias)?;
     }
-    Ok(())
+    Ok(staged)
 }
 
-/// The box name the output is read from: with file I/O, the program may have spelled it in any letter case.
-fn output_name(sandbox: &IsolateBox, layout_output: &str, any_case: bool) -> String {
-    let found = any_case.then(|| sandbox.find_ignoring_case(layout_output).ok().flatten()).flatten();
-    found.unwrap_or_else(|| layout_output.to_string())
+/// The file I/O output's box file: the one of that name in any letter case.
+fn found_output(sandbox: &IsolateBox, name: &str) -> String {
+    sandbox.find_ignoring_case(name).ok().flatten().unwrap_or_else(|| name.to_string())
+}
+
+/// The output: the drained stdout, or with file I/O the box file of that name in any letter case.
+fn output_bytes(sandbox: &IsolateBox, output_file: Option<&str>, stdout: Drained, cap: u64) -> Vec<u8> {
+    let Some(name) = output_file else { return stdout.kept };
+    sandbox.read_output(&found_output(sandbox, name), cap + 1).unwrap_or_default()
 }
 
 pub fn run_case(
@@ -188,71 +209,56 @@ pub fn run_case(
     if let Some(file_io) = io.file_io {
         check_file_io(file_io)?;
     }
-    stage(sandbox, runnable, (io.input, io.output_cap), &layout)?;
-    let (box_output, any_case) = (layout.output.clone(), layout.output_any_case);
+    let staged = stage(sandbox, runnable, (io.input, io.output_cap), &layout)?;
+    let (drains, output_file) =
+        (drains(runnable.program, &layout, io.output_cap), layout.output_file.clone());
+    let stdin = match output_file {
+        None => Some(sealed_copy(Path::new(&format!("/proc/self/fd/{}", io.input.as_raw_fd())))?),
+        Some(_) => None,
+    };
+    // With file I/O the judge holds the input's pages and samples the box's memory (`file_io_memory`).
+    let pin = output_file.as_ref().and_then(|_| PinnedInput::new(&staged));
     let spec = run_spec(runnable, layout, io.output_cap);
-    let meta = sandbox.run(&spec)?;
-    let output_name = output_name(sandbox, &box_output, any_case);
-    // One byte past the cap tells "exactly the cap" (fine) from "over it" (OLE).
-    let written = sandbox.read_output(&output_name, io.output_cap + 1).unwrap_or_default();
+    let mut run = sandbox.run_drained(&spec, stdin, (drains, output_file.is_some()))?;
+    drop(pin);
+    if let (Some(name), Some(sample)) = (output_file.as_deref(), run.memory) {
+        let out_kib = file_io_memory::output_kib(sandbox, &found_output(sandbox, name));
+        file_io_memory::apply(&mut run.meta, sample, out_kib);
+    }
+    let cut = run.stdout.cut || run.stderr.cut;
+    let written = output_bytes(sandbox, output_file.as_deref(), run.stdout, io.output_cap);
     std::fs::write(output, &written)?;
     let output_len = written.len() as u64;
-    let own_files = own_files_kib(sandbox, runnable.program, io.input.metadata()?.len(), Some(&output_name));
-    let usage = OutputUse { written: output_len, cap: io.output_cap, own_files_kib: Some(own_files) };
-    let verdict = refine(classify(&meta, usage, &spec.limits), runnable.program, sandbox);
+    let usage = OutputUse { written: output_len, cap: io.output_cap, cut, memory: MemoryCount::CgroupPeak };
+    let verdict = refine(classify(&run.meta, usage, &spec.limits), runnable.program, &run.stderr);
     Ok(CaseRun {
-        memory_kib: reported_memory(&meta, usage.own_files_kib, &verdict),
+        memory_kib: reported_memory(&run.meta, &verdict),
         verdict,
-        time_s: meta.time_s,
+        time_s: run.meta.time_s,
         output: output.to_path_buf(),
         output_len,
     })
 }
 
-/// The memory shown for a run: the program's own (`Meta::memory_kib`), but for an MLE the larger of the
-/// cgroup peak and the peak RSS, so an MLE is never shown under the limit: one `refine` found on stderr (a
-/// JVM OutOfMemoryError, cgroup peak) or one by the program's own memory over the limit, no OOM kill.
-pub(crate) fn reported_memory(meta: &Meta, own_files_kib: Option<u64>, verdict: &RunVerdict) -> u64 {
+/// The memory shown for a contestant's run: its cgroup peak (`Meta::memory_kib`), but for an MLE the larger
+/// of the cgroup peak and the peak RSS, so an MLE is never shown under the limit: one `refine` found on
+/// stderr (a JVM OutOfMemoryError) or one by the peak RSS over the limit, no OOM kill.
+pub(crate) fn reported_memory(meta: &Meta, verdict: &RunVerdict) -> u64 {
     if *verdict == RunVerdict::Mle {
         meta.cg_mem_kib.max(meta.max_rss_kib)
     } else {
-        meta.memory_kib(own_files_kib)
+        meta.memory_kib(MemoryCount::CgroupPeak)
     }
-}
-
-/// KiB of page cache `bytes` of a file take, in whole 4 KiB pages.
-fn page_cache_kib(bytes: u64) -> u64 {
-    bytes.div_ceil(4096) * 4
-}
-
-/// The page cache the run's own files may have charged to its cgroup (`Meta::memory_kib`): the
-/// `input_bytes` of case input it read, its `output` file and its kept stderr. The box files count by their
-/// allocated blocks, so a sparse file the program made adds nothing.
-pub(crate) fn own_files_kib(
-    sandbox: &IsolateBox,
-    program: &Program,
-    input_bytes: u64,
-    output: Option<&str>,
-) -> u64 {
-    let stderr = keeps_stderr(program).then_some(STDERR_FILE);
-    let written = [output, stderr].into_iter().flatten().map(|name| sandbox.allocated_bytes(name)).sum();
-    page_cache_kib(input_bytes) + page_cache_kib(written)
-}
-
-/// The last 64 KiB of the kept stderr (where the final exception is), lossy UTF-8.
-fn stderr_tail(sandbox: &IsolateBox) -> String {
-    let bytes = sandbox.read_output(STDERR_FILE, STDERR_ALLOWANCE).unwrap_or_default();
-    let tail = &bytes[bytes.len().saturating_sub(MAX_STDERR_TAIL)..];
-    String::from_utf8_lossy(tail).into_owned()
 }
 
 /// JVM OutOfMemoryError → MLE; an uncaught exception (the language's marker on stderr) → RTE named by
-/// the exception (DMOJ reports these as RTE, not IR; docs/grading.md#uncaught-exceptions).
-pub(crate) fn refine(verdict: RunVerdict, program: &Program, sandbox: &IsolateBox) -> RunVerdict {
+/// the exception (DMOJ reports these as RTE, not IR; docs/grading.md#uncaught-exceptions). `stderr` is what
+/// was kept of the run's stderr (`STDERR_KEEP`): the last 64 KiB of its first 16 MiB.
+pub(crate) fn refine(verdict: RunVerdict, program: &Program, stderr: &Drained) -> RunVerdict {
     if !matches!(verdict, RunVerdict::Rte { .. } | RunVerdict::Ir { .. }) || !keeps_stderr(program) {
         return verdict;
     }
-    let stderr = stderr_tail(sandbox);
+    let stderr = String::from_utf8_lossy(&stderr.kept);
     if program.jvm && stderr.contains("java.lang.OutOfMemoryError") {
         return RunVerdict::Mle;
     }
@@ -358,18 +364,13 @@ mod tests {
     }
 
     #[test]
-    fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_program_memory() {
+    fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_cgroup_peak() {
         let meta = Meta { cg_mem_kib: 200_000, max_rss_kib: 180_000, ..Meta::default() };
-        assert_eq!(reported_memory(&meta, Some(0), &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
-        assert_eq!(reported_memory(&meta, Some(20 << 10), &RunVerdict::Ok), 180_000, "20 MiB of output");
-        assert_eq!(reported_memory(&meta, Some(0), &RunVerdict::Ok), 200_000, "unmapped memory counts");
+        assert_eq!(reported_memory(&meta, &RunVerdict::Mle), 200_000, "JVM OutOfMemoryError");
+        assert_eq!(reported_memory(&meta, &RunVerdict::Ok), 200_000, "unmapped memory counts");
         let rss_only = Meta { cg_mem_kib: 8_500, max_rss_kib: 9_000, ..Meta::default() };
-        assert_eq!(
-            reported_memory(&rss_only, Some(0), &RunVerdict::Mle),
-            9_000,
-            "an MLE by peak RSS shows the RSS"
-        );
-        assert_eq!(reported_memory(&rss_only, Some(0), &RunVerdict::Ok), 8_500);
+        assert_eq!(reported_memory(&rss_only, &RunVerdict::Mle), 9_000, "an MLE by peak RSS shows the RSS");
+        assert_eq!(reported_memory(&rss_only, &RunVerdict::Ok), 8_500);
     }
 
     #[test]

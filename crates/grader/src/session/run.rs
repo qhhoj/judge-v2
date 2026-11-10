@@ -6,6 +6,7 @@
 use crate::error::GradeError;
 use crate::session::channel::{PipeChannel, RingChannel};
 use judge_sandbox::ChannelFds;
+use judge_sandbox::drain::{Drain, Drained, Keep};
 use judge_sandbox::error::SandboxError;
 use judge_sandbox::spec::{Limits, RunSpec};
 use judge_sandbox::{IsolateBox, RunPass};
@@ -27,8 +28,10 @@ const IGNORE_SIGPIPE: [&str; 3] = ["/bin/sh", "-c", "trap '' PIPE; exec \"$0\" \
 
 /// How the manager and the contestant are joined.
 pub enum ChannelPlan {
-    /// Two pipes, each side's stdin reads what the other writes to its stdout (interactive problems).
-    StdioPipes,
+    /// Two pipes, each side's stdin reads what the other writes to its stdout (interactive problems). The
+    /// contestant's stderr is drained when `contestant_stderr` says what to keep of it (`drain`); its run's
+    /// stdio must then not name stderr.
+    StdioPipes { contestant_stderr: Option<Keep> },
     /// Two pipes on fds 3/4 of each box (`channel::PipeChannel`, split signature). Both runs must set
     /// `inherit_fds`. Every daemon copy is dropped when the spawn returns.
     Pipes(PipeChannel),
@@ -42,11 +45,26 @@ pub struct MemberSpec<'a> {
     pub run: &'a RunSpec,
 }
 
-/// The running isolate processes of one session, and the run gate pass both hold (`judge_sandbox::run_gate`).
+/// The running isolate processes of one session, the contestant's drained stderr, and the run gate pass both
+/// hold (`judge_sandbox::run_gate`).
 pub struct Session {
     manager: Child,
     contestant: Child,
+    contestant_stderr: Option<Drain>,
     _pass: RunPass,
+}
+
+/// How long the contestant's drained stderr may stay open after both members exited.
+const DRAIN_GRACE: Duration = Duration::from_secs(5);
+
+impl Session {
+    /// What was kept of the contestant's stderr (empty when it was not drained). Call it after `wait_all`.
+    pub fn contestant_stderr(&mut self) -> Result<Drained, GradeError> {
+        match self.contestant_stderr.take() {
+            Some(drain) => Ok(drain.finish(DRAIN_GRACE)?),
+            None => Ok(Drained::default()),
+        }
+    }
 }
 
 /// The manager's wall limit plus the host slack: past it the session is killed and the job retried.
@@ -66,19 +84,42 @@ pub fn spawn_session(
     channel: ChannelPlan,
 ) -> Result<Session, GradeError> {
     let pass = contestant.sandbox.run_pass()?;
-    let (manager, contestant) = match channel {
-        ChannelPlan::StdioPipes => spawn_piped(manager, contestant),
-        ChannelPlan::Pipes(pipes) => spawn_on_fds(manager, contestant, (pipes.jury, pipes.contestant)),
-        ChannelPlan::Ring(ring) => spawn_on_fds(manager, contestant, (ring.jury, ring.contestant)),
-    }?;
-    Ok(Session { manager, contestant, _pass: pass })
+    let (manager, contestant, contestant_stderr) = match channel {
+        ChannelPlan::StdioPipes { contestant_stderr } => spawn_piped(manager, contestant, contestant_stderr)?,
+        ChannelPlan::Pipes(pipes) => {
+            with_no_drain(spawn_on_fds(manager, contestant, (pipes.jury, pipes.contestant))?)
+        }
+        ChannelPlan::Ring(ring) => {
+            with_no_drain(spawn_on_fds(manager, contestant, (ring.jury, ring.contestant))?)
+        }
+    };
+    Ok(Session { manager, contestant, contestant_stderr, _pass: pass })
+}
+
+fn with_no_drain((manager, contestant): (Child, Child)) -> (Child, Child, Option<Drain>) {
+    (manager, contestant, None)
+}
+
+/// The contestant's stderr: a pipe drained up to its run's file size limit, or /dev/null.
+fn contestant_stderr(keep: Option<Keep>, run: &RunSpec) -> Result<(Option<Drain>, ProcessStdio), GradeError> {
+    let Some(keep) = keep else { return Ok((None, ProcessStdio::null())) };
+    if run.stdio.stderr.is_some() {
+        return Err(SandboxError::Isolate("a drained stderr is also redirected to a file".into()).into());
+    }
+    let (drain, pipe) = Drain::start(keep, run.limits.fsize_kib.saturating_mul(1024))?;
+    Ok((Some(drain), ProcessStdio::from(pipe)))
 }
 
 /// Two `std::io::pipe()`s; every pipe end is moved into a `Command` and is gone when this returns. Both command
 /// lines are built before either is spawned, so a refused one leaves no isolate running.
-fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<(Child, Child), GradeError> {
+fn spawn_piped(
+    manager: &MemberSpec,
+    contestant: &MemberSpec,
+    keep_stderr: Option<Keep>,
+) -> Result<(Child, Child, Option<Drain>), GradeError> {
     let (mut manager_command, mut contestant_command) =
         (manager.sandbox.command(manager.run)?, contestant.sandbox.command(contestant.run)?);
+    let (drain, stderr) = contestant_stderr(keep_stderr, contestant.run)?;
     let (to_manager_read, to_manager_write) = std::io::pipe()?;
     let (to_contestant_read, to_contestant_write) = std::io::pipe()?;
     let mut manager_child = manager_command
@@ -89,10 +130,10 @@ fn spawn_piped(manager: &MemberSpec, contestant: &MemberSpec) -> Result<(Child, 
     let contestant_child = contestant_command
         .stdin(ProcessStdio::from(to_contestant_read))
         .stdout(ProcessStdio::from(to_manager_write))
-        .stderr(ProcessStdio::null())
+        .stderr(stderr)
         .spawn();
     match contestant_child {
-        Ok(child) => Ok((manager_child, child)),
+        Ok(child) => Ok((manager_child, child, drain)),
         Err(error) => {
             let _ = manager_child.kill();
             let _ = manager_child.wait();

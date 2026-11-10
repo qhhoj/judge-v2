@@ -115,6 +115,7 @@ fn plan_with_config(
         isolate_bin: config.isolate.bin.clone(),
         taskset_bin: config.isolate.taskset.clone(),
         gate: Arc::new(RunGate::new(Some(config.run_lock()))),
+        isolate_config: config.isolate.config.clone(),
         ..SandboxConfig::default()
     };
     let core = Some(spare_core(args.core, &slot_cores, sysfs)?);
