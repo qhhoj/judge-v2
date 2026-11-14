@@ -19,7 +19,7 @@ use crate::languages::{Language, LanguageKind};
 use crate::output_only::OutputSource;
 use crate::program::Program;
 use crate::report::Reporter;
-use crate::rerun::{MAX_WALL_RERUNS, TleRerun};
+use crate::rerun::{MAX_RERUNS, MAX_WALL_RERUNS, TleRerun};
 use crate::run_case::CaseLimits;
 use crate::session::Boxes;
 use crate::signature::{SIGNATURE_LANGUAGES, signature_job};
@@ -386,8 +386,8 @@ fn grade_rerunning(
     run: Run,
 ) -> Result<(), GradeError> {
     let (time_limit_s, abort) = (run.submission.time_limit_s, run.reporter.abort_signal());
-    let wall_reruns = MAX_WALL_RERUNS;
-    let mut judge = TleRerun { judge, gate, time_limit_s, budget, wall_reruns, abort };
+    let (wall_reruns, reruns) = (MAX_WALL_RERUNS, MAX_RERUNS);
+    let mut judge = TleRerun { judge, gate, time_limit_s, budget, wall_reruns, reruns, abort };
     grade_cases(&run.plan, &mut judge, run.submission.short_circuit, run.reporter)
 }
 

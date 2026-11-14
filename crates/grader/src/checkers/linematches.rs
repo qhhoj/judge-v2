@@ -1,4 +1,4 @@
-use super::text::split_lines;
+use super::text::lines;
 use super::{CheckError, CheckInput, CheckOutcome, Checker, read_file};
 
 /// Partial points per line: `point_distribution` weights the answer's non-empty lines.
@@ -7,31 +7,29 @@ pub struct LineMatches {
     pub filler_lines_required: bool,
 }
 
-fn non_empty_lines(data: &[u8]) -> Vec<&[u8]> {
-    split_lines(data).into_iter().filter(|l| !l.is_empty()).collect()
+fn non_empty_lines(data: &[u8]) -> impl Iterator<Item = &[u8]> {
+    lines(data).filter(|l| !l.is_empty())
 }
 
 impl Checker for LineMatches {
     fn check(&self, io: &CheckInput) -> Result<CheckOutcome, CheckError> {
         let (got, want) = (read_file(io.output)?, read_file(io.answer)?);
-        let (got, want) = (non_empty_lines(&got), non_empty_lines(&want));
+        let want_count = non_empty_lines(&want).count();
         let total: u64 = self.point_distribution.iter().sum();
-        if want.len() != self.point_distribution.len() {
+        if want_count != self.point_distribution.len() {
             return Err(CheckError(format!(
-                "answer has {} lines but point_distribution has {} entries",
-                want.len(),
+                "answer has {want_count} lines but point_distribution has {} entries",
                 self.point_distribution.len()
             )));
         }
         if total == 0 {
             return Err(CheckError("point_distribution sums to 0".into()));
         }
-        if self.filler_lines_required && got.len() != want.len() {
+        if self.filler_lines_required && non_empty_lines(&got).count() != want_count {
             return Ok(CheckOutcome::fail("wrong number of lines"));
         }
-        let earned: u64 = got
-            .iter()
-            .zip(&want)
+        let earned: u64 = non_empty_lines(&got)
+            .zip(non_empty_lines(&want))
             .zip(&self.point_distribution)
             .filter(|((g, w), _)| g == w)
             .map(|(_, weight)| weight)

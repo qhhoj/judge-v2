@@ -9,7 +9,7 @@ Setting a judge host up from nothing is [DEPLOY.md](../DEPLOY.md). This page is 
 `problem_data_root`, `cache_dir`, `cache_max_bytes` (default 20 GiB, at least 4 GiB: half must hold the backend's largest archive), `languages_file`, `testlib_dir`, `metrics_listen`
 (default `127.0.0.1:9464`), `box_base`, `drain_timeout_s` (120), `data_wait_ms` (10000), `[limits]`
 (`default_output_limit`, `default_output_prefix`, `jvm_reserve_kib`, `tle_reruns`: re-runs alone that may confirm a
-TLE per submission, default 2, 0 turns them off, see [grading.md](grading.md#tle-re-run)), `[reconnect]` and `[isolate]`. A non-loopback
+TLE per submission, default 2, 0 turns them off; at most 20 re-runs of any kind per submission, see [grading.md](grading.md#tle-re-run)), `[reconnect]` and `[isolate]`. A non-loopback
 bridge needs `https://` and `[tls]`.
 
 Worker *i* is pinned to core *c_i* (isolate runs under `taskset -c c_i`); pinned cores and no SMT siblings keep CPU

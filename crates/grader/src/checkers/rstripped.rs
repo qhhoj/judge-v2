@@ -1,4 +1,4 @@
-use super::text::{split_lines, trim_space_end};
+use super::text::{lines, trim_space_end};
 use super::{CheckError, CheckInput, CheckOutcome, Checker, read_file};
 
 /// Same lines once trailing whitespace is removed from each; empty lines are kept unless filtered.
@@ -7,16 +7,17 @@ pub struct RStripped {
 }
 
 impl RStripped {
-    fn lines<'a>(&self, data: &'a [u8]) -> Vec<&'a [u8]> {
-        let lines = split_lines(data).into_iter().map(trim_space_end);
-        if self.filter_new_line { lines.filter(|l| !l.is_empty()).collect() } else { lines.collect() }
+    /// Each line without trailing whitespace, lazily, the empty ones dropped when `filter_new_line`.
+    fn lines<'a>(&self, data: &'a [u8]) -> impl Iterator<Item = &'a [u8]> {
+        let filter = self.filter_new_line;
+        lines(data).map(trim_space_end).filter(move |line| !(filter && line.is_empty()))
     }
 }
 
 impl Checker for RStripped {
     fn check(&self, io: &CheckInput) -> Result<CheckOutcome, CheckError> {
         let (got, want) = (read_file(io.output)?, read_file(io.answer)?);
-        let same = self.lines(&got) == self.lines(&want);
+        let same = self.lines(&got).eq(self.lines(&want));
         Ok(if same { CheckOutcome::pass() } else { CheckOutcome::fail("") })
     }
 }
