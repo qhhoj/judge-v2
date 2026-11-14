@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.1 (2026-11-14)
+
+### Fixes
+
+- A run whose case forwarder task ended with a panic or a cancel before the Final now ends INTERNAL_ERROR instead of GRADED (a RETRY or compile error is kept and logged), so the bridge never grades it from the cases forwarded so far.
+
 ## 2.7.0 (2026-11-10)
 
 ### Features
