@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.3 (2026-11-14)
+
+### Fixes
+
+- Security update (GHSA-5vp4-ff46-g83m).
+
 ## 2.7.2 (2026-11-14)
 
 ### Fixes
