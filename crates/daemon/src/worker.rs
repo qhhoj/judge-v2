@@ -279,8 +279,24 @@ async fn grade(
         (runner, ran.unwrap_or_else(|_| Outcome::InternalError("the grader panicked".into())))
     });
     let (runner, outcome) = blocking.await.expect("the grading thread is joined");
-    let _ = forward.await;
-    (runner, outcome)
+    (runner, after_forwarding(&deps.judge, &a.r.submission_id, outcome, forward.await))
+}
+
+/// The runner's outcome once the forwarder has ended. A forwarder that panicked or was cancelled may have
+/// dropped cases before they got a seq, so the bridge would grade the run from the ones it got: a Graded run
+/// becomes INTERNAL_ERROR. Any other outcome is not built from forwarded cases and is kept.
+fn after_forwarding(
+    judge: &str,
+    submission_id: &str,
+    outcome: Outcome,
+    forwarded: Result<(), tokio::task::JoinError>,
+) -> Outcome {
+    let Err(error) = forwarded else { return outcome };
+    tracing::error!(%judge, %submission_id, %error, outcome = outcome_label(&outcome), "the case forwarder died before the Final");
+    match outcome {
+        Outcome::Graded => Outcome::InternalError(format!("the case forwarder died: {error}")),
+        other => other,
+    }
 }
 
 /// Turns grading events into outbox messages, coalescing cases (docs/protocol.md#flow-control).
@@ -410,6 +426,18 @@ mod tests {
         std::iter::from_fn(|| rx.try_recv().ok())
             .filter_map(|event| if let Event::Cases(c) = event { Some(c.len()) } else { None })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn a_forwarder_that_died_turns_a_graded_run_into_internal_error_and_keeps_other_outcomes() {
+        let died = || async { tokio::spawn(async { panic!("the forwarder panics") }).await };
+        let graded = after_forwarding("j1", "s1", Outcome::Graded, died().await);
+        assert!(matches!(graded, Outcome::InternalError(_)), "{graded:?}");
+        let retry = Outcome::Retry(RetryReason::DataUnavailable);
+        assert_eq!(after_forwarding("j1", "s1", retry.clone(), died().await), retry);
+        let compile_error = Outcome::CompileError("log".into());
+        assert_eq!(after_forwarding("j1", "s1", compile_error.clone(), died().await), compile_error);
+        assert_eq!(after_forwarding("j1", "s1", Outcome::Graded, Ok(())), Outcome::Graded);
     }
 
     #[test]
