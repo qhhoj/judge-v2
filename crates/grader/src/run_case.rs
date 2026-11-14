@@ -7,7 +7,7 @@ use crate::program::Program;
 use judge_problem::init::is_plain_box_name;
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::meta::Meta;
-use judge_sandbox::spec::{Limits, RunSpec, Stdio};
+use judge_sandbox::spec::{Limits, RunSpec, Stdio, TMP_IN_MEMORY};
 use judge_sandbox::{IsolateBox, Room};
 use std::fs::File;
 use std::io::Read;
@@ -119,6 +119,20 @@ pub(crate) fn solution_limits(runnable: &Runnable, output_cap: u64) -> Limits {
     Limits::for_solution(limits.time_limit_s, memory_limit_kib(limits, program.jvm), program.processes, fsize)
 }
 
+/// The disk room of a contestant run's box (`IsolateBox::reset_for_contestant`): the program, `staged` (what
+/// the judge puts in), an output file of the run's whole `--fsize` (stdout or a `file_io` output) and a kept
+/// stderr of as much, so that `--fsize` and the output cap, not the disk quota, end a run that writes too much.
+pub(crate) fn contestant_room(program: &Program, staged: Room, limits: &Limits) -> std::io::Result<Room> {
+    let fsize = limits.fsize_kib * 1024;
+    let room = Room::for_files(&[&program.dir])?.plus(staged).plus_file(fsize);
+    Ok(if keeps_stderr(program) { room.plus_file(fsize) } else { room })
+}
+
+/// The `--dir` rules of a contestant run: the language's, and `/tmp` in memory (`TMP_IN_MEMORY`).
+pub(crate) fn contestant_dirs(program: &Program) -> Vec<String> {
+    program.dirs.iter().cloned().chain([TMP_IN_MEMORY.to_string()]).collect()
+}
+
 fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
     let program = runnable.program;
     let memory = Placeholders { memory_kib: runnable.limits.memory_kib, class: None };
@@ -127,22 +141,27 @@ fn run_spec(runnable: &Runnable, layout: Layout, output_cap: u64) -> RunSpec {
         limits: solution_limits(runnable, output_cap),
         stdio: layout.stdio,
         env: program.env.clone(),
-        dirs: program.dirs.clone(),
+        dirs: contestant_dirs(program),
         preload: program.preload.clone(),
         inherit_fds: false,
     }
 }
 
 /// Resets the box and puts the program and the case input in it, the input also under each alias that
-/// names no program file. The box's disk quota also holds both and an output of `output_cap` bytes.
+/// names no program file. The box's disk quota also holds both and the run's own files (`contestant_room`).
 fn stage(
     sandbox: &mut IsolateBox,
-    program: &Program,
+    runnable: &Runnable,
     (input, output_cap): (&File, u64),
     layout: &Layout,
 ) -> Result<(), GradeError> {
-    let room = Room::for_files(&[&program.dir])?.plus_file(input.metadata()?.len()).plus_file(output_cap);
-    sandbox.reset_with_room(room)?;
+    let program = runnable.program;
+    let staged = Room::default().plus_file(input.metadata()?.len());
+    sandbox.reset_for_contestant(contestant_room(
+        program,
+        staged,
+        &solution_limits(runnable, output_cap),
+    )?)?;
     sandbox.put_tree(&program.dir)?;
     // The handle's own inode, reached through the kernel's fd link; nothing is looked up by path.
     let handle = format!("/proc/self/fd/{}", input.as_raw_fd());
@@ -169,7 +188,7 @@ pub fn run_case(
     if let Some(file_io) = io.file_io {
         check_file_io(file_io)?;
     }
-    stage(sandbox, runnable.program, (io.input, io.output_cap), &layout)?;
+    stage(sandbox, runnable, (io.input, io.output_cap), &layout)?;
     let (box_output, any_case) = (layout.output.clone(), layout.output_any_case);
     let spec = run_spec(runnable, layout, io.output_cap);
     let meta = sandbox.run(&spec)?;
@@ -309,6 +328,34 @@ mod tests {
     use super::*;
 
     const PYTHON: &str = "Traceback (most recent call last)";
+
+    /// What a case may write without breaking a limit (an output file and a kept stderr, each at `--fsize`) fits
+    /// in the box's quota, so only `--fsize` and the output cap can end a run that writes too much.
+    #[test]
+    fn a_contestant_box_holds_an_output_and_a_kept_stderr_at_their_fsize() {
+        let dir = tempfile::tempdir().unwrap();
+        let case = CaseLimits { time_limit_s: 1.0, memory_kib: 65_536, jvm_reserve_kib: 0 };
+        for jvm in [false, true] {
+            let program = Program {
+                dir: dir.path().into(),
+                run: vec!["./main".into()],
+                processes: 1,
+                jvm,
+                dirs: vec![],
+                preload: vec![],
+                env: vec![],
+                exception_marker: None,
+                exception_style: Default::default(),
+                lease: None,
+            };
+            let runnable = Runnable { program: &program, limits: &case };
+            let limits = solution_limits(&runnable, 24 << 20);
+            let room = contestant_room(&program, Room::default(), &limits).unwrap();
+            let fsize = limits.fsize_kib * 1024;
+            let stderr = if jvm { fsize } else { 0 };
+            assert!(room.kib * 1024 >= fsize + stderr, "jvm {jvm}: {room:?}");
+        }
+    }
 
     #[test]
     fn an_mle_shows_the_larger_of_cgroup_peak_and_rss_and_other_runs_the_program_memory() {

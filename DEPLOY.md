@@ -68,6 +68,8 @@ EOF
 sysctl --system
 ```
 
+The judge refuses to start while `kernel.core_pattern` starts with `|` (a program that takes the cores).
+
 If `/sys/devices/system/cpu/smt/control` says `notsupported`, the CPU (or the VM) has no SMT: skip that line.
 Check cgroups v2: `test -f /sys/fs/cgroup/cgroup.controllers && echo ok`.
 
@@ -101,6 +103,7 @@ apt install -y build-essential libcap-dev libseccomp-dev libsystemd-dev pkg-conf
 git clone https://github.com/ioi/isolate /usr/local/src/isolate
 cd /usr/local/src/isolate
 git checkout --detach 19ec4bd3fac386ae4cb95a7d43d8188710154661   # tag v2.6, pinned
+git apply /path/to/isolate-2.6-keys.patch   # packaging/ of the judge release (or the repository)
 make isolate isolate-cg-keeper && make install
 cp systemd/isolate.service systemd/isolate.slice /etc/systemd/system/
 useradd --system isolate
@@ -120,6 +123,48 @@ isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
 
 `isolate-check-environment` reports address-space randomisation (ASLR) as a problem: that one is expected
 (we require ASLR on). Every other `FAIL`, `CAUTION` or `WARNING` must be fixed (it means step 1 is incomplete).
+
+The patch makes the box's syscall filter refuse `add_key` and `request_key` as well as `keyctl`.
+
+**Rebuilding isolate on an installed host** (one whose isolate was built without the patch). Install the binary
+only: `make install` would overwrite `/usr/local/etc/isolate` and drop its `box<id>.cpus` lines. As root, in a
+quiet window, with `VER` a release that carries the patch:
+
+```sh
+set -euo pipefail
+P=/opt/qhhoj-judge/releases/$VER/packaging/isolate-2.6-keys.patch
+cd /usr/local/src/isolate
+git rev-parse HEAD                      # 19ec4bd3fac386ae4cb95a7d43d8188710154661
+git status --short                      # empty
+B=/root/isolate-backup-$(date +%F-%H%M); mkdir -p "$B"
+cp -a /usr/local/bin/isolate "$B/isolate.bin"; cp -a /usr/local/etc/isolate "$B/isolate.conf"
+probe() {  # a spare box, never one of a slot's
+  isolate --cg -b 900 --init >/dev/null
+  isolate --cg -b 900 --processes=1 --run -- /usr/bin/python3 -I -c "import ctypes, os
+l = ctypes.CDLL(None, use_errno=True); r = l.syscall(248, b'user', b'probe', b'x', 1, -2)
+print('add_key:', r if r > 0 else os.strerror(ctypes.get_errno()))"
+  isolate --cg -b 900 --cleanup
+}
+git apply --check "$P" && git apply "$P"
+make isolate                            # the binary only, never `make install`
+systemctl stop qhhoj-judge
+install -o root -g root -m 4755 isolate /usr/local/bin/isolate
+diff "$B/isolate.conf" /usr/local/etc/isolate && echo "config unchanged"
+probe                                   # add_key: Function not implemented
+DAY_ONE_LANGUAGES=$(sed -n 's/^| Day-one languages | `\(.*\)` |$/\1/p' /opt/qhhoj-judge/current/DEPLOY.md)
+sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
+  --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # last line ends in ok
+systemctl start qhhoj-judge             # only after the probe line above and a selftest without MISMATCH
+```
+
+Rollback (a failed probe or selftest, or later): restore the saved binary; nothing else changed.
+
+```sh
+systemctl stop qhhoj-judge
+install -o root -g root -m 4755 "$B/isolate.bin" /usr/local/bin/isolate
+(cd /usr/local/src/isolate && git checkout -- isolate.c)
+systemctl start qhhoj-judge
+```
 
 ### 3. Compilers and runtimes
 
@@ -390,7 +435,8 @@ isolate charges every file in a box to its quota, the judge's own too. So each t
 it sets the quota to the headroom plus what it is about to put in (program, input, answer, contestant
 output) and the most the run may write (its output limit; a compile's snapshot limit). The headroom only
 covers the rest: `headroom_kib` must be at least 131072 (a stderr or other file at the 64 MiB output cap,
-plus 64 MiB for a compiler's temporary files), `headroom_inodes` at least 256.
+plus 64 MiB for a compiler's temporary files), `headroom_inodes` at least 256. A contestant run's box gets at most
+4 MiB and 64 inodes of headroom instead: its room already holds its output and kept stderr, and its `/tmp` is in memory.
 
 `systemctl start qhhoj-judge`; the journal says `every box has a disk quota`. At start the judge refuses to run
 when nothing bounds the box root:

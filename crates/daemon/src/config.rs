@@ -61,7 +61,8 @@ impl Default for Reconnect {
 }
 
 /// A per-box disk quota (isolate `--quota`, `kib` in 1 KiB blocks), as headroom: each box's quota is this
-/// plus the files the judge puts in it and the output the run may write.
+/// plus the files the judge puts in it and the output the run may write (a contestant run's box: at most
+/// 4 MiB and 64 inodes of headroom, `IsolateBox::reset_for_contestant`).
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiskQuotaConfig {
@@ -89,6 +90,9 @@ pub struct IsolatePaths {
     /// Dev and test stacks only (loopback bridge): start with no `disk_quota` on a box root that shares the
     /// cache's or `/`'s filesystem, where one run can fill the disk.
     pub allow_unbounded_disk: bool,
+    /// Dev and test stacks only (loopback bridge): start on a host whose `kernel.core_pattern` hands cores to a
+    /// program (`|...`).
+    pub allow_piped_core_pattern: bool,
 }
 
 impl Default for IsolatePaths {
@@ -99,6 +103,7 @@ impl Default for IsolatePaths {
             config: "/usr/local/etc/isolate".into(),
             disk_quota: None,
             allow_unbounded_disk: false,
+            allow_piped_core_pattern: false,
         }
     }
 }
@@ -183,6 +188,9 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
     }
     if config.isolate.allow_unbounded_disk && !is_loopback_url(&config.bridge_url) {
         return Err(invalid("isolate.allow_unbounded_disk is for local test stacks only"));
+    }
+    if config.isolate.allow_piped_core_pattern && !is_loopback_url(&config.bridge_url) {
+        return Err(invalid("isolate.allow_piped_core_pattern is for local test stacks only"));
     }
     validate_disk_quota(config.isolate.disk_quota)
 }

@@ -66,6 +66,28 @@ fn file_io_reads_and_writes_named_files() {
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "9");
 }
 
+/// Keeps 256 MiB in `/tmp` files of 1 MiB (the output cap), opened with `O_DIRECT` where the file system takes it.
+const STASH_IN_TMP: &str = "import mmap, os
+block = mmap.mmap(-1, 1 << 20)
+block.write(b'x' * (1 << 20))
+for i in range(256):
+    try:
+        fd = os.open(f'/tmp/{i}', os.O_WRONLY | os.O_CREAT | os.O_DIRECT)
+    except OSError:
+        fd = os.open(f'/tmp/{i}', os.O_WRONLY | os.O_CREAT)
+    os.write(fd, block)
+    os.close(fd)
+print(9)
+";
+
+#[test]
+fn what_a_run_keeps_in_tmp_counts_as_its_memory() {
+    let Some(mut f) = fixture(106, "PY3", STASH_IN_TMP) else { return };
+    let file = input(&f, "");
+    let (run, _) = go(&mut f, &plain(&file, 1 << 20), "out");
+    assert_eq!(run.verdict, RunVerdict::Mle, "{} KiB", run.memory_kib);
+}
+
 /// The old judge matched file I/O names ignoring letter case (teachers and contestants use Windows).
 fn file_io_case(
     offset: u32,
@@ -405,6 +427,29 @@ fn quota_box(offset: u32, meta: &std::path::Path, headroom_kib: u32) -> Option<(
     }
     let sandbox = IsolateBox::open(&config, box_id(offset), None).unwrap();
     Some((config, sandbox))
+}
+
+/// A `file_io` output of 22 MiB under a 24 MiB cap, and one exactly at a 22 MiB cap, are judged in full with a
+/// small disk quota headroom: the box's quota holds an output of the run's `--fsize`.
+#[test]
+fn a_file_io_output_up_to_the_cap_is_judged_in_full_over_a_small_disk_quota_headroom() {
+    let src = "open('big.out', 'w').write('7' * (22 << 20))\n";
+    let Some(mut f) = fixture(108, "PY3", src) else { return };
+    let meta = tempfile::tempdir().unwrap();
+    let Some((config, quota_sandbox)) = quota_box(109, meta.path(), 1024) else { return };
+    f.sandbox = quota_sandbox;
+    let file_io = SolutionFileIo::new(&FileIo { input: "big.inp".into(), output: "big.out".into() }, b"");
+    let file = input(&f, "");
+    let mut outputs = Vec::new();
+    for cap in [24 << 20, 22 << 20] {
+        let io = CaseIo { input: &file, output_cap: cap, file_io: Some(&file_io) };
+        let (run, out) = go(&mut f, &io, "out");
+        outputs.push((run.verdict, std::fs::metadata(&out).unwrap().len()));
+    }
+    drop(f);
+    let no_limit = DiskQuota { headroom_kib: i32::MAX as u32, headroom_inodes: i32::MAX as u32 };
+    disk_quota_works(&SandboxConfig { disk_quota: Some(no_limit), ..config }, box_id(109)).unwrap();
+    assert_eq!(outputs, [(RunVerdict::Ok, 22 << 20), (RunVerdict::Ok, 22 << 20)]);
 }
 
 /// isolate charges the staged input to the box's disk quota: an input over the headroom still gives the

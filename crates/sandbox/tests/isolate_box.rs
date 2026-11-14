@@ -134,6 +134,65 @@ fn the_command_line_of_a_used_box_is_refused() {
     assert!(matches!(b.command(&spec(&["/bin/true"], 65_536)), Err(SandboxError::Dirty)));
 }
 
+/// A shell run in box `b` with the case input `stdin`; its output.
+fn shell(b: &mut IsolateBox, script: &str, stdin: &str) -> String {
+    b.reset().unwrap();
+    b.put_bytes("input", stdin.as_bytes()).unwrap();
+    let mut run = spec(&["/bin/sh", "-c", script], 65_536);
+    (run.limits.processes, run.stdio.stdin) = (8, Some("input".into()));
+    b.run(&run).unwrap();
+    std::fs::read_to_string(b.dir().join("output")).unwrap()
+}
+
+#[test]
+fn a_box_sees_only_the_null_zero_full_and_random_devices_and_the_stream_links() {
+    let meta = tempfile::tempdir().unwrap();
+    let mut b = IsolateBox::open(&config(meta.path()), box_id(102), None).unwrap();
+    let script =
+        "ls -A /dev | tr '\\n' ' '; head -c4 /dev/zero | wc -c; cat /dev/stdin; echo >/dev/null && echo ok";
+    assert_eq!(
+        shell(&mut b, script, "5\n"),
+        "fd full null random stderr stdin stdout urandom zero 4\n5\nok\n"
+    );
+}
+
+/// Adds a key to the run's session keyring; looks a key up by `request_key` and in `/proc/keys`.
+const ADD_KEY: &str = "python3 -c \"import ctypes, os; l = ctypes.CDLL(None, use_errno=True)
+added = l.syscall(248, b'user', b'qhhoj-test', b'x', 1, -3) > 0
+print('added' if added else os.strerror(ctypes.get_errno()))\"";
+const FIND_KEY: &str = "python3 -c \"import ctypes; l = ctypes.CDLL(None)
+found = l.syscall(249, b'user', b'qhhoj-test', None, 0) > 0
+try: found = found or 'qhhoj-test' in open('/proc/keys').read()
+except OSError: pass
+print('found' if found else 'none')\"";
+
+#[test]
+fn a_key_one_run_adds_is_found_by_no_later_run() {
+    // As systemd gives the daemon: a session keyring of the process's own, which isolate inherits.
+    assert!(
+        unsafe { libc::syscall(libc::SYS_keyctl, 1 as libc::c_long, std::ptr::null::<libc::c_char>()) } > 0
+    );
+    let meta = tempfile::tempdir().unwrap();
+    let mut first = IsolateBox::open(&config(meta.path()), box_id(103), None).unwrap();
+    let mut second = IsolateBox::open(&config(meta.path()), box_id(104), None).unwrap();
+    shell(&mut first, ADD_KEY, "");
+    assert_eq!(shell(&mut second, FIND_KEY, ""), "none\n", "another box");
+    assert_eq!(shell(&mut first, FIND_KEY, ""), "none\n", "the same box");
+}
+
+/// isolate built with `packaging/isolate-2.6-keys.patch` refuses `add_key` in a box. Skipped on an isolate
+/// built without it, unless `JUDGE_TEST_ISOLATE_PATCHED` is set (CI builds the patched isolate).
+#[test]
+fn a_box_cannot_add_a_key() {
+    let meta = tempfile::tempdir().unwrap();
+    let mut b = IsolateBox::open(&config(meta.path()), box_id(105), None).unwrap();
+    let added = shell(&mut b, ADD_KEY, "");
+    if added == "added\n" && std::env::var_os("JUDGE_TEST_ISOLATE_PATCHED").is_none() {
+        return eprintln!("skip: the installed isolate is built without packaging/isolate-2.6-keys.patch");
+    }
+    assert_eq!(added, "Function not implemented\n");
+}
+
 /// Bytes of the files in `dir`.
 fn bytes_in(dir: &std::path::Path) -> u64 {
     std::fs::read_dir(dir).unwrap().flatten().map(|e| e.metadata().unwrap().len()).sum()

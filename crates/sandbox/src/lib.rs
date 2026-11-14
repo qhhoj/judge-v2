@@ -1,5 +1,6 @@
 //! isolate wrapper.
 
+pub mod box_dev;
 pub mod boxes;
 pub mod classify;
 pub mod error;

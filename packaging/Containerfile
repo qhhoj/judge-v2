@@ -23,16 +23,18 @@ COPY . .
 ARG REVISION=unknown
 RUN QHHOJ_JUDGE_REVISION="$REVISION" cargo build -j2 --release --locked --target x86_64-unknown-linux-musl -p judge-cli
 
-# ---- isolate 2.6, pinned to the commit of tag v2.6
+# ---- isolate 2.6, pinned to the commit of tag v2.6, with packaging/isolate-2.6-keys.patch
 FROM ubuntu:24.04 AS isolate
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential libcap-dev libseccomp-dev libsystemd-dev \
         pkg-config git ca-certificates asciidoc-base \
     && rm -rf /var/lib/apt/lists/*
+COPY packaging/isolate-2.6-keys.patch /tmp/
 RUN git clone https://github.com/ioi/isolate /usr/local/src/isolate \
     && cd /usr/local/src/isolate \
     && git checkout --detach 19ec4bd3fac386ae4cb95a7d43d8188710154661 \
     && test "$(git rev-parse HEAD)" = 19ec4bd3fac386ae4cb95a7d43d8188710154661 \
+    && git apply /tmp/isolate-2.6-keys.patch \
     && make isolate isolate-cg-keeper && make DESTDIR=/out install
 
 # ---- Kotlin 2.1.21, pinned by checksum

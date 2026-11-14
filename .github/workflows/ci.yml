@@ -74,6 +74,7 @@ jobs:
     needs: rust
     timeout-minutes: 60
     env:
+      JUDGE_TEST_ISOLATE_PATCHED: "1" # isolate is built below with packaging/isolate-2.6-keys.patch
       JUDGE_SUITE_REQUIRE: C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -103,6 +104,7 @@ jobs:
           cd "$RUNNER_TEMP/isolate"
           git checkout --detach 19ec4bd3fac386ae4cb95a7d43d8188710154661
           test "$(git rev-parse HEAD)" = 19ec4bd3fac386ae4cb95a7d43d8188710154661
+          git apply "$GITHUB_WORKSPACE/packaging/isolate-2.6-keys.patch"
           make isolate isolate-cg-keeper
           sudo make install
           sudo cp systemd/isolate.service systemd/isolate.slice /etc/systemd/system/

@@ -13,9 +13,10 @@ use support::fake_bridge::{Shared, eventually, start};
 
 const SUM: &str = "#include <cstdio>\nint main(){long long a,b;std::scanf(\"%lld %lld\",&a,&b);std::printf(\"%lld\\n\",a+b);}\n";
 
+/// The daemon's two boxes (`box_base`, `box_base + 1`): offsets no other isolate test uses.
 fn box_base() -> u32 {
     let base: u32 = std::env::var("JUDGE_TEST_BOX_BASE").ok().and_then(|v| v.parse().ok()).unwrap_or(500);
-    base + 30
+    base + 100
 }
 
 fn problem(root: &Path) {
@@ -33,7 +34,8 @@ fn config_text(url: &str, dirs: &[tempfile::TempDir]) -> String {
     format!(
         "name = 'j1'\nbridge_url = '{url}'\nkey_file = '{}'\nproblem_data_root = '{}'\ncache_dir = '{}'\n\
          languages_file = '{}'\ntestlib_dir = '{}'\nslots = 1\ncores = [0]\nbox_base = {}\n\
-         metrics_listen = '127.0.0.1:0'\ndrain_timeout_s = 5\n[isolate]\nallow_unbounded_disk = true\n",
+         metrics_listen = '127.0.0.1:0'\ndrain_timeout_s = 5\n[isolate]\nallow_unbounded_disk = true\n\
+         allow_piped_core_pattern = true\n",
         dirs[0].path().join("key").display(),
         dirs[1].path().display(),
         dirs[2].path().display(),
@@ -81,6 +83,21 @@ async fn graded(bridge: &Shared, id: &str) -> v1::Final {
     panic!("no Final for {id}: {:?}", bridge.messages(0));
 }
 
+/// Waits up to 5 s for the daemon's first message; a daemon that ends first (a refused start) fails the test
+/// with its error.
+async fn first_message<T: std::fmt::Debug>(bridge: &Shared, daemon: &mut tokio::task::JoinHandle<T>) {
+    for _ in 0..500 {
+        if !bridge.messages(0).is_empty() {
+            return;
+        }
+        if daemon.is_finished() {
+            panic!("the daemon ended before its Hello: {:?}", daemon.await);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("no Hello in 5 s");
+}
+
 fn hello(bridge: &Shared) -> v1::Hello {
     match &bridge.messages(0)[0].body {
         Some(judge_message::Body::Hello(h)) => h.clone(),
@@ -95,8 +112,8 @@ async fn the_daemon_grades_refuses_unknown_languages_and_drains() {
     problem(dirs[1].path());
     let config = Arc::new(parse(&config_text(&url, &dirs)).unwrap());
     let (shutdown, stopped) = tokio::sync::oneshot::channel::<()>();
-    let daemon = tokio::spawn(run_until(config, async { stopped.await.unwrap_or(()) }));
-    eventually(|| !bridge.messages(0).is_empty()).await;
+    let mut daemon = tokio::spawn(run_until(config, async { stopped.await.unwrap_or(()) }));
+    first_message(&bridge, &mut daemon).await;
     let hello = hello(&bridge);
     assert_eq!((hello.slots, hello.protocol_minor), (1, judge_proto::PROTOCOL_MINOR));
     assert!(hello.runtimes.iter().any(|r| r.language_key == "CPP17" && !r.version.is_empty()), "{hello:?}");

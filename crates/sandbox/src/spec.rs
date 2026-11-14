@@ -115,7 +115,15 @@ fn stdio_args(stdio: &Stdio) -> Vec<String> {
         .collect()
 }
 
-pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path) -> Vec<String> {
+/// Kernel key listings: not readable in a box.
+const HIDDEN_PROC_FILES: [&str; 2] = ["proc/keys", "proc/key-users"];
+
+/// isolate's `--dir` rule for a box `/tmp` in memory (contestant runs): what a run keeps there is charged to its
+/// cgroup like any other memory, so it counts against the memory limit.
+pub const TMP_IN_MEMORY: &str = "tmp=tmpfs:fs:rw";
+
+/// The isolate command line of one run in box `box_id`, with `box_dev` as the box's `/dev` (`box_dev`).
+pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path, box_dev: &Path) -> Vec<String> {
     let mut args =
         vec!["--cg".to_string(), format!("-b{box_id}"), "-s".into(), format!("--meta={}", meta.display())];
     args.extend(limit_args(&spec.limits));
@@ -126,6 +134,9 @@ pub fn isolate_args(box_id: u32, spec: &RunSpec, meta: &Path) -> Vec<String> {
     // No tmpfs on /dev/shm (isolate's default rule): /dev stays read-only. Pages the program keeps in a
     // file it does not map are still counted (`Meta::memory_kib`); this only takes away the easy place.
     args.push("--dir=dev/shm=".into());
+    args.extend(crate::box_dev::dir_rules(box_dev).into_iter().map(|rule| format!("--dir={rule}")));
+    // The host's /dev/null bound without device access: opening these files fails.
+    args.extend(HIDDEN_PROC_FILES.iter().map(|file| format!("--dir={file}=/dev/null")));
     args.extend(spec.dirs.iter().map(|d| format!("--dir={d}")));
     if spec.inherit_fds {
         args.push("--inherit-fds".into());
@@ -164,7 +175,7 @@ mod tests {
     fn the_network_is_never_shared_stdio_can_be_inherited_and_the_command_is_last() {
         let mut s = spec();
         s.stdio = Stdio::default();
-        let args = isolate_args(0, &s, Path::new("/m"));
+        let args = isolate_args(0, &s, Path::new("/m"), Path::new("/d"));
         assert!(!has(&args, "--share-net"));
         assert!(!args.iter().any(|a| a.starts_with("--stdin") || a.starts_with("--stdout")));
         let run = args.iter().position(|a| a == "--run").unwrap();
@@ -174,7 +185,8 @@ mod tests {
     #[test]
     fn the_cgroup_gets_page_cache_room_of_one_fsize_up_to_a_cap() {
         let small = Limits::for_solution(1.0, 8192, 1, 4 << 20);
-        let args = isolate_args(0, &RunSpec { limits: small.clone(), ..spec() }, Path::new("/m"));
+        let args =
+            isolate_args(0, &RunSpec { limits: small.clone(), ..spec() }, Path::new("/m"), Path::new("/d"));
         assert!(has(&args, &format!("--cg-mem={}", 8192 + small.fsize_kib)), "{args:?}");
         let huge = Limits::for_solution(1.0, 8192, 1, 1 << 30);
         assert_eq!(cgroup_memory_kib(&huge), 8192 + PAGE_CACHE_ROOM_MAX_KIB);
@@ -190,7 +202,12 @@ mod tests {
     fn isolate_reads_every_limit_as_its_whole_milliseconds_and_kills_past_the_hard_cap() {
         for ms in 1..=60_000 {
             let limits = Limits::for_solution(ms as f64 / 1000.0, 1, 1, 1);
-            let args = isolate_args(0, &RunSpec { limits: limits.clone(), ..spec() }, Path::new("/m"));
+            let args = isolate_args(
+                0,
+                &RunSpec { limits: limits.clone(), ..spec() },
+                Path::new("/m"),
+                Path::new("/d"),
+            );
             assert_eq!(isolate_ms(&args, "--time="), ms, "TL {ms} ms");
             assert_eq!(isolate_ms(&args, "--extra-time="), whole_ms(hard_cap_s(limits.time_s)), "TL {ms} ms");
             assert_eq!(isolate_ms(&args, "--wall-time="), whole_ms(limits.wall_s), "TL {ms} ms");
@@ -206,16 +223,20 @@ mod tests {
     fn the_wall_clock_limit_is_three_times_the_time_limit_plus_one_second() {
         let wall_ms = |tl: f64| {
             let limits = Limits::for_solution(tl, 1, 1, 1);
-            isolate_ms(&isolate_args(0, &RunSpec { limits, ..spec() }, Path::new("/m")), "--wall-time=")
+            isolate_ms(
+                &isolate_args(0, &RunSpec { limits, ..spec() }, Path::new("/m"), Path::new("/d")),
+                "--wall-time=",
+            )
         };
         assert_eq!([wall_ms(0.5), wall_ms(1.0), wall_ms(2.0)], [2500, 4000, 7000]);
     }
 
     #[test]
     fn inherited_fds_are_asked_for_only_by_a_channel_run() {
-        let plain = isolate_args(0, &spec(), Path::new("/m"));
+        let plain = isolate_args(0, &spec(), Path::new("/m"), Path::new("/d"));
         assert!(!has(&plain, "--inherit-fds"));
-        let channel = isolate_args(0, &RunSpec { inherit_fds: true, ..spec() }, Path::new("/m"));
+        let channel =
+            isolate_args(0, &RunSpec { inherit_fds: true, ..spec() }, Path::new("/m"), Path::new("/d"));
         let run = channel.iter().position(|a| a == "--run").unwrap();
         assert_eq!(channel[run - 1], "--inherit-fds", "an isolate option, before --run");
     }
