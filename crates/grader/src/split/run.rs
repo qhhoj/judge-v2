@@ -9,7 +9,8 @@ use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
 use crate::run_case::{
-    Runnable, STDERR_FILE, keeps_stderr, own_files_kib, refine, reported_memory, solution_limits,
+    Runnable, STDERR_FILE, contestant_dirs, contestant_room, keeps_stderr, own_files_kib, refine,
+    reported_memory, solution_limits,
 };
 use crate::session::Boxes;
 use crate::session::channel::PipeChannel;
@@ -72,7 +73,7 @@ fn contestant_spec(case: &SplitCase) -> RunSpec {
             stderr: Some(stderr.into()),
         },
         env: program.env.clone(),
-        dirs: program.dirs.clone(),
+        dirs: contestant_dirs(program),
         preload: program.preload.clone(),
         inherit_fds: true,
     }
@@ -100,7 +101,9 @@ fn jury_spec(case: &SplitCase, contestant: &Limits) -> RunSpec {
 /// Fresh boxes: the contestant program alone, and the jury program with the case input.
 fn prepare(boxes: &mut Boxes, case: &SplitCase) -> Result<(), GradeError> {
     let program = case.contestant.program;
-    boxes.solution.reset_with_room(Room::for_files(&[&program.dir])?.plus_file(case.output_cap))?;
+    let limits = solution_limits(case.contestant, case.output_cap);
+    let room = contestant_room(program, Room::default(), &limits)?;
+    boxes.solution.reset_for_contestant(room)?;
     boxes.solution.put_tree(&program.dir)?;
     let input_bytes = case.input.metadata()?.len();
     let records = Room::default().plus_file(CHARGE_BYTES).plus_file(FAULT_BYTES);

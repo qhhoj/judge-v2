@@ -139,6 +139,12 @@ Per run: no network (an empty namespace), default directories read-only, the onl
 except for languages that need it (see above). The solution box sees only its own input: answers and other cases never
 enter it.
 
+Every box's `/dev` holds `null`, `zero`, `full`, `random`, `urandom` (the host's devices) and the links `fd`, `stdin`,
+`stdout`, `stderr`, nothing else (`crates/sandbox/src/box_dev.rs`); `/proc/keys` and `/proc/key-users` cannot be read.
+isolate starts in a new session keyring of its own for every run. A contestant run (solution, split contestant,
+interactive solution) has `/tmp` in memory, so what it keeps there counts as its memory, and with a disk quota its
+box gets the room for its own files (program, input, an output file and a kept stderr of the run's `--fsize` each) plus 4 MiB, not the configured headroom.
+
 ## Checkers
 
 - **Built-in** (`standard`, `floats`, `floatsabs`, `floatsrel`, `identical`, `linecount`): native Rust over the solution

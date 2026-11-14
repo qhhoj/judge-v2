@@ -1,0 +1,29 @@
+isolate 2.6 (commit 19ec4bd): the box syscall filter refuses add_key() and request_key() along with keyctl().
+Applied by DEPLOY.md step 2, packaging/Containerfile and the ci.yml isolate suite. GPL-2.0-or-later, as isolate.
+
+--- a/isolate.c
++++ b/isolate.c
+@@ -852,14 +852,18 @@
+     }
+ 
+   /*
+-   * Disable keyctl(), because it can be used to establish system-wide
+-   * persistent memory.
++   * Disable keyctl(), add_key() and request_key(), because they can be used
++   * to establish system-wide persistent memory.
+    */
+   if (cf_syscall_flags & CF_SYSCALL_KEYCTL)
+     {
+-      err = seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(keyctl), 0);
+-      if (err < 0)
+-	die("seccomp_rule_add: %s", strerror(-err));
++      int key_syscalls[] = { SCMP_SYS(keyctl), SCMP_SYS(add_key), SCMP_SYS(request_key) };
++      for (int i = 0; i < ARRAY_SIZE(key_syscalls); i++)
++	{
++	  err = seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), key_syscalls[i], 0);
++	  if (err < 0)
++	    die("seccomp_rule_add: %s", strerror(-err));
++	}
+     }
+ 
+   /*

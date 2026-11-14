@@ -237,7 +237,7 @@ mod tests {
     fn etc_symlinked_runtimes_bind_only_the_etc_dirs_they_need() {
         use judge_sandbox::spec::isolate_args;
         let r = registry();
-        let flags = |dirs: Vec<String>| {
+        let args = |dirs: Vec<String>| {
             let spec = RunSpec {
                 argv: vec!["x".into()],
                 limits: Limits::compile(),
@@ -247,9 +247,14 @@ mod tests {
                 preload: vec![],
                 inherit_fds: false,
             };
-            isolate_args(0, &spec, Path::new("/m"))
+            isolate_args(0, &spec, Path::new("/m"), Path::new("/d"))
+        };
+        // the language's host dirs only: the --dir rules every run has are left out
+        let flags = |dirs: Vec<String>| {
+            let every_run = args(vec![]);
+            args(dirs)
                 .into_iter()
-                .filter(|a| a.starts_with("--dir=") && a != "--dir=dev/shm=") // host dirs only
+                .filter(|a| a.starts_with("--dir=") && !every_run.contains(a))
                 .collect::<Vec<_>>()
         };
         let pas = CompileJob::for_language(r.get("PAS").unwrap(), b"begin end.");

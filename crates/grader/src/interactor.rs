@@ -17,7 +17,8 @@ use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
 use crate::run_case::{
-    Runnable, STDERR_FILE, keeps_stderr, own_files_kib, refine, reported_memory, solution_limits,
+    Runnable, STDERR_FILE, contestant_dirs, contestant_room, keeps_stderr, own_files_kib, refine,
+    reported_memory, solution_limits,
 };
 use crate::session::files::save_box_file;
 use crate::session::run::{
@@ -76,7 +77,7 @@ fn solution_spec(x: &Interaction) -> RunSpec {
         limits: solution_limits(x.solution, SOLUTION_FILE_CAP),
         stdio: Stdio { stdin: None, stdout: None, stderr: Some(stderr.into()) },
         env: program.env.clone(),
-        dirs: program.dirs.clone(),
+        dirs: contestant_dirs(program),
         preload: program.preload.clone(),
         inherit_fds: false,
     }
@@ -99,7 +100,8 @@ fn interactor_spec(x: &Interaction, solution: &Limits) -> RunSpec {
 }
 
 fn prepare(boxes: &mut Boxes, x: &Interaction) -> Result<(), GradeError> {
-    boxes.solution.reset_with_room(Room::for_files(&[&x.solution.program.dir])?)?;
+    let limits = solution_limits(x.solution, SOLUTION_FILE_CAP);
+    boxes.solution.reset_for_contestant(contestant_room(x.solution.program, Room::default(), &limits)?)?;
     boxes.solution.put_tree(&x.solution.program.dir)?;
     let room = Room::for_files(&[&x.interactor.dir, x.input, x.answer])?.plus_file(REPORT_WINDOW);
     boxes.helper.reset_with_room(room)?;

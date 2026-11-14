@@ -27,11 +27,22 @@ pub struct DiskQuota {
 /// isolate refuses numbers above a C `int`.
 const ISOLATE_MAX_NUMBER: u64 = i32::MAX as u64;
 
+/// The headroom of a contestant run's box (`IsolateBox::reset_for_contestant`), or the configured one when that
+/// is smaller: the run's own files are all in its `Room`, so this only covers file system overhead.
+const CONTESTANT_HEADROOM: DiskQuota = DiskQuota { headroom_kib: 4096, headroom_inodes: 64 };
+
 impl DiskQuota {
     /// isolate's `--quota` for a box that also holds `room`.
     fn arg(&self, room: Room) -> String {
         let total = |headroom: u32, more: u64| more.saturating_add(headroom.into()).min(ISOLATE_MAX_NUMBER);
         format!("--quota={},{}", total(self.headroom_kib, room.kib), total(self.headroom_inodes, room.inodes))
+    }
+
+    fn for_contestant(&self) -> DiskQuota {
+        DiskQuota {
+            headroom_kib: self.headroom_kib.min(CONTESTANT_HEADROOM.headroom_kib),
+            headroom_inodes: self.headroom_inodes.min(CONTESTANT_HEADROOM.headroom_inodes),
+        }
     }
 }
 
@@ -39,6 +50,7 @@ impl DiskQuota {
 pub struct SandboxConfig {
     pub isolate_bin: PathBuf,
     pub taskset_bin: PathBuf,
+    /// isolate's meta files, and `dev/`: the `/dev` every box gets (`box_dev`).
     pub meta_dir: PathBuf,
     /// `None`: no quota (isolate's box root needs user quotas for one).
     pub disk_quota: Option<DiskQuota>,
@@ -100,9 +112,14 @@ pub fn cleanup_box(config: &SandboxConfig, id: u32) -> Result<(), SandboxError> 
     isolate(config, id, &["--cleanup".into()]).map(|_| ())
 }
 
-/// A fresh box, with a disk quota of the config's headroom plus `room`. Returns the box's `/box` directory.
-fn init_box(config: &SandboxConfig, id: u32, room: Room) -> Result<PathBuf, SandboxError> {
-    let mut args: Vec<String> = config.disk_quota.iter().map(|q| q.arg(room)).collect();
+/// A fresh box, with a disk quota of `headroom` plus `room`. Returns the box's `/box` directory.
+fn init_box(
+    config: &SandboxConfig,
+    id: u32,
+    headroom: Option<DiskQuota>,
+    room: Room,
+) -> Result<PathBuf, SandboxError> {
+    let mut args: Vec<String> = headroom.iter().map(|q| q.arg(room)).collect();
     args.push("--init".into());
     Ok(Path::new(&isolate(config, id, &args)?).join("box"))
 }
@@ -123,8 +140,9 @@ pub fn disk_quota_works(config: &SandboxConfig, id: u32) -> Result<bool, Sandbox
 impl IsolateBox {
     pub fn open(config: &SandboxConfig, id: u32, core: Option<u32>) -> Result<Self, SandboxError> {
         std::fs::create_dir_all(&config.meta_dir)?;
+        crate::box_dev::prepare(&box_dev_dir(config))?;
         cleanup_box(config, id)?;
-        let dir = init_box(config, id, Room::default())?;
+        let dir = init_box(config, id, config.disk_quota, Room::default())?;
         Ok(IsolateBox { config: config.clone(), id, core, dir, dirty: false })
     }
 
@@ -134,8 +152,18 @@ impl IsolateBox {
 
     /// A fresh box whose disk quota also holds `room`: the files about to be put in and what the run may write.
     pub fn reset_with_room(&mut self, room: Room) -> Result<(), SandboxError> {
+        self.reset_to(self.config.disk_quota, room)
+    }
+
+    /// A fresh box for a contestant run: its disk quota is `room` (every file the run is meant to keep on disk)
+    /// and a few MiB, not the configured headroom.
+    pub fn reset_for_contestant(&mut self, room: Room) -> Result<(), SandboxError> {
+        self.reset_to(self.config.disk_quota.map(|q| q.for_contestant()), room)
+    }
+
+    fn reset_to(&mut self, headroom: Option<DiskQuota>, room: Room) -> Result<(), SandboxError> {
         cleanup_box(&self.config, self.id)?;
-        self.dir = init_box(&self.config, self.id, room)?;
+        self.dir = init_box(&self.config, self.id, headroom, room)?;
         self.dirty = false;
         Ok(())
     }
@@ -265,7 +293,8 @@ impl IsolateBox {
             line.extend([self.config.taskset_bin.clone().into(), "-c".into(), core.to_string().into()]);
         }
         line.push(self.config.isolate_bin.clone().into());
-        line.extend(isolate_args(self.id, spec, &self.meta_path()).into_iter().map(OsString::from));
+        let args = isolate_args(self.id, spec, &self.meta_path(), &box_dev_dir(&self.config));
+        line.extend(args.into_iter().map(OsString::from));
         Ok(line)
     }
 
@@ -278,6 +307,7 @@ impl IsolateBox {
         let line = self.isolate_command_line(spec)?;
         let mut command = Command::new(&line[0]);
         command.args(&line[1..]);
+        own_session_keyring(&mut command);
         Ok(command)
     }
 
@@ -298,6 +328,7 @@ impl IsolateBox {
             .stdin(Stdio::from(fds.from_peer))
             .stdout(Stdio::from(fds.to_peer))
             .stderr(Stdio::from(fds.shared));
+        own_session_keyring(&mut command);
         Ok(command)
     }
 
@@ -374,6 +405,33 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), SandboxError> {
         }
     }
     Ok(())
+}
+
+/// The `/dev` directory of the boxes of `config` (`box_dev`).
+fn box_dev_dir(config: &SandboxConfig) -> PathBuf {
+    config.meta_dir.join("dev")
+}
+
+/// Starts `command` in a new session keyring of its own (`keyctl(KEYCTL_JOIN_SESSION_KEYRING, NULL)`), so a run
+/// shares no keyring with the daemon or another run. A kernel without keys (ENOSYS), or a container whose
+/// syscall filter refuses `keyctl` (EPERM: container runtimes refuse it with `add_key` and `request_key`, and
+/// the filter holds for the box too), has no keyring to share.
+fn own_session_keyring(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: the closure runs between fork and exec; it makes one raw syscall and reads errno, both
+    // async-signal-safe, and allocates nothing.
+    unsafe {
+        command.pre_exec(|| {
+            let join = libc::KEYCTL_JOIN_SESSION_KEYRING as libc::c_long;
+            if libc::syscall(libc::SYS_keyctl, join, std::ptr::null::<libc::c_char>()) < 0 {
+                let error = std::io::Error::last_os_error();
+                if !matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EPERM)) {
+                    return Err(error);
+                }
+            }
+            Ok(())
+        });
+    }
 }
 
 /// Creates a directory, or accepts an existing real one; a symlink there is refused, never followed.
@@ -453,6 +511,16 @@ if [ -e "$d/empty-meta" ]; then for a in "$@"; do case "$a" in --meta=*) : > "${
         let inits: Vec<_> = calls(dir.path()).into_iter().filter(|c| c.ends_with("--init")).collect();
         assert_eq!(inits[1], "--cg -b7 --quota=350208,1027 --init");
         assert_eq!(inits[2], "--cg -b7 --quota=196608,1024 --init", "the room is for one reset only");
+    }
+
+    #[test]
+    fn a_contestant_reset_gets_its_room_and_four_mib_not_the_headroom() {
+        let _serial = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = IsolateBox::open(&fake_isolate(dir.path(), Some(HEADROOM)), 7, None).unwrap();
+        b.reset_for_contestant(Room { kib: 153_600, inodes: 3 }).unwrap();
+        let last_init = calls(dir.path()).into_iter().rfind(|c| c.ends_with("--init")).unwrap();
+        assert_eq!(last_init, "--cg -b7 --quota=157696,67 --init");
     }
 
     #[test]

@@ -93,8 +93,31 @@ fn checked_sandbox(config: &Config, probe_box: u32) -> anyhow::Result<(SandboxCo
     Ok((sandbox, bound))
 }
 
-/// The checks that make the daemon refuse to start: the cache size, how the boxes are pinned, and the disk bound (probed on
-/// `probe_box`). `check-config` runs them before an install switches to a release.
+/// The kernel's pattern for core files; one starting with `|` hands every core to a host program instead.
+const CORE_PATTERN: &str = "/proc/sys/kernel/core_pattern";
+
+/// Refuses a `pattern` that hands cores to a host program, unless `allowed` (dev and test stacks): a program
+/// that crashes in a box must start nothing outside it (DEPLOY.md step 1 sets `kernel.core_pattern = core`).
+fn check_core_pattern(pattern: &str, allowed: bool) -> anyhow::Result<()> {
+    let pattern = pattern.trim();
+    match (pattern.starts_with('|'), allowed) {
+        (false, _) => Ok(()),
+        (true, true) => {
+            tracing::warn!(
+                pattern,
+                "kernel.core_pattern hands cores to a program (allow_piped_core_pattern)"
+            );
+            Ok(())
+        }
+        (true, false) => anyhow::bail!(
+            "kernel.core_pattern is {pattern:?}: it hands the core of every crash in a box to a host program. \
+             Set kernel.core_pattern = core (DEPLOY.md step 1)"
+        ),
+    }
+}
+
+/// The checks that make the daemon refuse to start: the cache size, the core pattern, how the boxes are pinned,
+/// and the disk bound (probed on `probe_box`). `check-config` runs them before an install switches to a release.
 pub fn start_checks(
     config: &Config,
     cores: &[u32],
@@ -103,6 +126,8 @@ pub fn start_checks(
     crate::config::check_cache_size(config)?;
     crate::config::check_output_limit(config)?;
     crate::config::cache_dir_access(config)?;
+    let pattern = std::fs::read_to_string(CORE_PATTERN).with_context(|| CORE_PATTERN.to_string())?;
+    check_core_pattern(&pattern, config.isolate.allow_piped_core_pattern)?;
     check_pinning(config, cores)?;
     checked_sandbox(config, probe_box)
 }
@@ -346,6 +371,15 @@ mod tests {
         };
         std::fs::write(dir.path().join("isolate"), format!("box_root = {}\n", own.path().display())).unwrap();
         assert!(checked_sandbox(&config, 0).is_ok(), "a box root on a filesystem of its own (tmpfs)");
+    }
+
+    #[test]
+    fn a_core_pattern_that_hands_cores_to_a_program_is_refused_but_by_the_dev_hatch() {
+        let apport = "|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -F%F -- %E\n";
+        let refused = check_core_pattern(apport, false).expect_err("a piped core pattern");
+        assert!(refused.to_string().contains("kernel.core_pattern = core"), "{refused}");
+        assert!(check_core_pattern(apport, true).is_ok(), "the dev hatch");
+        assert!(check_core_pattern("core\n", false).is_ok());
     }
 
     /// An isolate that answers an `--init` with a quota as one on a box root without user quotas does.
