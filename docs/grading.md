@@ -69,7 +69,9 @@ replaces the first one before short-circuiting sees it (`grader/src/rerun.rs`).
   exactly, and compares times in whole ms (`spec::whole_ms`): a run killed at the cap is never taken for one that
   ended under it, and a TO one ms past the TL is past it.
 - **Budget:** at most `limits.tle_reruns` (default 2) re-runs per submission may confirm a TLE; after that a TLE
-  stands. A re-run that turns the TLE into something else is not counted. 0 turns re-runs off.
+  stands. A re-run that turns the TLE into something else does not spend that budget. 0 turns re-runs off.
+- **Cap:** at most 20 re-runs per submission of any kind (`MAX_RERUNS`), the ones that flip the verdict and the
+  wall-clock ones counted, so one submission holds the host alone a bounded number of times. Past it a TLE stands.
 - Each re-run is logged at info with the case, both times, whether the first was a wall-clock TLE, and the outcome.
   Load from other tenants of a cloud host is not removed: a near-limit case may still flip between rejudges.
 

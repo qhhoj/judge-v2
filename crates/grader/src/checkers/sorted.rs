@@ -1,5 +1,6 @@
-use super::text::{split_lines, tokens};
+use super::text::{lines, tokens};
 use super::{CheckError, CheckInput, CheckOutcome, Checker, read_file};
+use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitOn {
@@ -12,25 +13,52 @@ pub struct Sorted {
     pub split_on: SplitOn,
 }
 
-fn sorted_lines(data: &[u8]) -> Vec<Vec<&[u8]>> {
-    let mut lines: Vec<_> =
-        split_lines(data).into_iter().map(tokens).filter(|line| !line.is_empty()).collect();
-    lines.sort_unstable();
-    lines
+/// The lines that hold a token, each kept whole: it is compared by its tokens.
+fn token_lines(data: &[u8]) -> impl Iterator<Item = &[u8]> {
+    lines(data).filter(|line| tokens(line).next().is_some())
 }
 
-fn sorted_tokens(data: &[u8]) -> Vec<&[u8]> {
-    let mut all = tokens(data);
-    all.sort_unstable();
+/// `units` sorted with `order`, in a vector of exactly `count`, the number the caller counted beforehand.
+fn sorted_units<'a>(
+    units: impl Iterator<Item = &'a [u8]>,
+    count: usize,
+    order: impl Fn(&&[u8], &&[u8]) -> Ordering,
+) -> Vec<&'a [u8]> {
+    let mut all = Vec::with_capacity(count);
+    all.extend(units);
+    all.sort_unstable_by(order);
     all
+}
+
+/// Same lines, as token lists, in any order; lines without a token are ignored. The counts are compared first,
+/// so an output with more lines than the answer is never collected.
+fn same_lines(got: &[u8], want: &[u8]) -> bool {
+    let count = token_lines(want).count();
+    if token_lines(got).count() != count {
+        return false;
+    }
+    let by_tokens = |a: &&[u8], b: &&[u8]| tokens(a).cmp(tokens(b));
+    let got = sorted_units(token_lines(got), count, by_tokens);
+    let want = sorted_units(token_lines(want), count, by_tokens);
+    got.iter().zip(&want).all(|(g, w)| tokens(g).eq(tokens(w)))
+}
+
+/// Same tokens in any order; the counts are compared first, as for lines.
+fn same_tokens(got: &[u8], want: &[u8]) -> bool {
+    let count = tokens(want).count();
+    if tokens(got).count() != count {
+        return false;
+    }
+    let by_bytes = |a: &&[u8], b: &&[u8]| a.cmp(b);
+    sorted_units(tokens(got), count, by_bytes) == sorted_units(tokens(want), count, by_bytes)
 }
 
 impl Checker for Sorted {
     fn check(&self, io: &CheckInput) -> Result<CheckOutcome, CheckError> {
         let (got, want) = (read_file(io.output)?, read_file(io.answer)?);
         let same = match self.split_on {
-            SplitOn::Lines => sorted_lines(&got) == sorted_lines(&want),
-            SplitOn::Whitespace => sorted_tokens(&got) == sorted_tokens(&want),
+            SplitOn::Lines => same_lines(&got, &want),
+            SplitOn::Whitespace => same_tokens(&got, &want),
         };
         Ok(if same { CheckOutcome::pass() } else { CheckOutcome::fail("") })
     }

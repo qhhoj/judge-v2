@@ -11,8 +11,10 @@
 //!
 //! The re-run sits inside `grade_cases`'s judge, so short-circuiting sees only the re-run's verdict. Only
 //! re-runs that confirm the TLE spend the submission's budget (`GraderDefaults::tle_reruns`); one that flips
-//! the verdict is free. A case is re-run at most once. A run killed at the hard cap (`spec::hard_cap_s`) is
-//! never re-run: it is not a near miss, and re-running it would only stall the host.
+//! the verdict does not. Every re-run, a flip too, counts against `MAX_RERUNS` per submission, so the time one
+//! submission holds the host alone is bounded; past it a TLE stands. A case is re-run at most once. A run killed
+//! at the hard cap (`spec::hard_cap_s`) is never re-run: it is not a near miss, and re-running it would only stall
+//! the host.
 //!
 //! Every case holds a shared pass of the gate for all of its work (staging, runs, a built-in checker in the
 //! daemon, reading the output), so a re-run on another slot waits for whole cases, not only isolate runs. An
@@ -33,6 +35,9 @@ pub const DEFAULT_TLE_RERUNS: u32 = 2;
 /// Wall-clock TLE re-runs per submission, flips counted; a confirmed one ends them (`TleRerun::wall_reruns`).
 pub const MAX_WALL_RERUNS: u32 = 2;
 
+/// Re-runs per submission of any kind, flips and wall-clock ones counted (`TleRerun::reruns`).
+pub const MAX_RERUNS: u32 = 20;
+
 /// Wraps a submission's case judge; one per submission, so the budget is per submission.
 pub struct TleRerun<'a> {
     pub judge: &'a mut dyn CaseJudge,
@@ -42,6 +47,8 @@ pub struct TleRerun<'a> {
     pub budget: u32,
     /// Wall-clock TLE re-runs left, `MAX_WALL_RERUNS` at the start: a flip spends one, a confirmation all.
     pub wall_reruns: u32,
+    /// Re-runs of any kind left, `MAX_RERUNS` at the start: every re-run spends one.
+    pub reruns: u32,
     /// The job's abort flag (`Reporter::abort_signal`).
     pub abort: Option<Arc<AtomicBool>>,
 }
@@ -85,12 +92,18 @@ impl TleRerun<'_> {
         self.budget > 0 && wanted
     }
 
-    /// The first run's verdict, or the re-run's when `wants_rerun`.
+    /// The first run's verdict, or the re-run's when `wants_rerun` and re-runs are left. A TLE that stands
+    /// only because `MAX_RERUNS` is spent is logged, so it can be found and rejudged.
     fn final_verdict(&mut self, case: &PlannedCase, first: CaseVerdict) -> Result<CaseVerdict, GradeError> {
         let wall_clock = wall_clock_tle(&first, self.time_limit_s);
         if !self.wants_rerun(&first, wall_clock) {
             return Ok(first);
         }
+        if self.reruns == 0 {
+            tracing::info!(case = case.position, input = %case.input, first_time_s = first.time_s, "re-run cap reached");
+            return Ok(first);
+        }
+        self.reruns -= 1;
         let alone = self.judge_alone(case)?;
         let confirmed = alone.status == Status::Tle;
         if confirmed {
@@ -188,9 +201,16 @@ mod tests {
         let gate = Arc::new(RunGate::default());
         let mut scripted =
             Scripted { script: script.iter().copied().collect(), gate: gate.clone(), asked: vec![] };
-        let wall_reruns = MAX_WALL_RERUNS;
-        let mut judge =
-            TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget, wall_reruns, abort: None };
+        let (wall_reruns, reruns) = (MAX_WALL_RERUNS, MAX_RERUNS);
+        let mut judge = TleRerun {
+            judge: &mut scripted,
+            gate,
+            time_limit_s: 1.0,
+            budget,
+            wall_reruns,
+            reruns,
+            abort: None,
+        };
         let mut recorder = Recorder::default();
         grade_cases(&plan(yaml), &mut judge, false, &mut recorder).unwrap();
         assert!(scripted.script.is_empty(), "every scripted run happened");
@@ -232,7 +252,7 @@ mod tests {
             (Status::Tle, 1.2),
             (Status::Tle, 1.1), // confirmed: 1 left
             (Status::Tle, 1.2),
-            (Status::Ac, 0.8),    // flipped: free
+            (Status::Ac, 0.8),    // flipped: the budget is not spent
             (Status::Tle, 2.001), // killed at the hard cap (2 s)
             (Status::Tle, 1.2),
             (Status::Tle, 1.3), // confirmed: none left
@@ -248,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wall_clock_tle_is_run_again_alone_and_flips_are_free_up_to_two_wall_reruns() {
+    fn a_wall_clock_tle_is_run_again_alone_and_a_flip_keeps_the_budget_up_to_two_wall_reruns() {
         let script = [
             (Status::Tle, 0.2),
             (Status::Ac, 0.4), // flipped: the budget of 1 is left
@@ -261,6 +281,16 @@ mod tests {
         let wall = (Status::Tle, 0.2, WALL_TIME.to_string());
         assert_eq!(reports, [ac(0.4), ac(0.3), wall], "a stall on the host is not the program's");
         assert_eq!(alone, 2);
+    }
+
+    #[test]
+    fn flips_count_too_so_a_submission_holds_the_host_alone_at_most_max_reruns_times() {
+        let n = MAX_RERUNS as usize;
+        let mut script = [(Status::Tle, 1.2), (Status::Ac, 0.8)].repeat(n);
+        script.push((Status::Tle, 1.2)); // past the cap: stands
+        let (reports, alone) = outcome(&cases(n + 1), &script, 2);
+        assert_eq!(alone, n);
+        assert_eq!(reports.last().map(|(status, time_s, _)| (*status, *time_s)), Some((Status::Tle, 1.2)));
     }
 
     #[test]
@@ -302,9 +332,9 @@ mod tests {
         let script = [(Status::Tle, 1.3)].into_iter().collect();
         let mut scripted = Scripted { script, gate: gate.clone(), asked: vec![] };
         let abort = Some(Arc::new(AtomicBool::new(true)));
-        let wall_reruns = MAX_WALL_RERUNS;
+        let (wall_reruns, reruns) = (MAX_WALL_RERUNS, MAX_RERUNS);
         let mut judge =
-            TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget: 2, wall_reruns, abort };
+            TleRerun { judge: &mut scripted, gate, time_limit_s: 1.0, budget: 2, wall_reruns, reruns, abort };
         let case = &plan(&format!("test_cases:\n{ONE_CASE}")).cases[0];
         assert_eq!(judge.judge_case(case), Err(GradeError::Aborted));
         assert_eq!(scripted.asked.len(), 1, "no re-run");
