@@ -279,8 +279,24 @@ async fn grade(
         (runner, ran.unwrap_or_else(|_| Outcome::InternalError("the grader panicked".into())))
     });
     let (runner, outcome) = blocking.await.expect("the grading thread is joined");
-    let _ = forward.await;
-    (runner, outcome)
+    (runner, after_forwarding(&deps.judge, &a.r.submission_id, outcome, forward.await))
+}
+
+/// The runner's outcome once the forwarder has ended. A forwarder that panicked or was cancelled may have
+/// dropped cases before they got a seq, so the bridge would grade the run from the ones it got: INTERNAL_ERROR.
+fn after_forwarding(
+    judge: &str,
+    submission_id: &str,
+    outcome: Outcome,
+    forwarded: Result<(), tokio::task::JoinError>,
+) -> Outcome {
+    match forwarded {
+        Ok(()) => outcome,
+        Err(error) => {
+            tracing::error!(%judge, %submission_id, %error, "the case forwarder died before the Final; the run ends INTERNAL_ERROR");
+            Outcome::InternalError(format!("the case forwarder died: {error}"))
+        }
+    }
 }
 
 /// Turns grading events into outbox messages, coalescing cases (docs/protocol.md#flow-control).
@@ -410,6 +426,15 @@ mod tests {
         std::iter::from_fn(|| rx.try_recv().ok())
             .filter_map(|event| if let Event::Cases(c) = event { Some(c.len()) } else { None })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn a_forwarder_that_died_turns_any_outcome_into_internal_error() {
+        let died = tokio::spawn(async { panic!("the forwarder panics") }).await;
+        assert!(died.is_err());
+        let outcome = after_forwarding("j1", "s1", Outcome::Graded, died);
+        assert!(matches!(outcome, Outcome::InternalError(_)), "{outcome:?}");
+        assert_eq!(after_forwarding("j1", "s1", Outcome::Graded, Ok(())), Outcome::Graded);
     }
 
     #[test]
