@@ -683,6 +683,7 @@ dependencies = [
  "judge-problem",
  "judge-proto",
  "judge-sandbox",
+ "libc",
  "prometheus",
  "prost",
  "rand",

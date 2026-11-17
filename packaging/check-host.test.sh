@@ -27,6 +27,9 @@ good_host() {
   # isolate's cg keeper writes its cgroup to /run/isolate/cgroup; memory.peak exists from kernel 5.19
   echo /sys/fs/cgroup/isolate.slice/isolate.service > "$root/run/isolate/cgroup"
   echo 0 > "$root/sys/fs/cgroup/isolate.slice/isolate.service/memory.peak"
+  echo "cpuset memory pids" > "$root/sys/fs/cgroup/isolate.slice/isolate.service/cgroup.subtree_control"
+  # `qhhoj-judge isolate-cpus` for 7 workers on cores 1-7 from box 0
+  for w in 1 2 3 4 5 6 7; do printf 'box%d.cpus = %d\nbox%d.cpus = %d\n' $(( 2*w-2 )) "$w" $(( 2*w-1 )) "$w"; done >> "$root/usr/local/etc/isolate"
   # isolate 2.6's real wording and colours on a tuned host: only the ASLR check fails.
   printf 'Checking for cgroup support for memory.max ... \e[32mPASS\e[m\nChecking for kernel address space randomisation ... \e[31mFAIL\e[m\n\e[33mWARNING:\e[m address space randomisation is enabled.\necho 0 > /proc/sys/kernel/randomize_va_space\n' > "$fixtures/isolate-check-environment"
   printf 'table inet filter {\n\tchain output {\n\t\ttype filter hook output priority filter; policy drop;\n\t}\n}\n' > "$fixtures/nft-output"
@@ -76,6 +79,9 @@ expect_fail "subid_user without a subuid block" 'subid_host 65536 65536; rm "$ro
 expect_fail "isolate env problem besides ASLR" 'echo "WARNING: transparent hugepages are enabled" >> "$fixtures/isolate-check-environment"'
 expect_fail "coloured FAIL besides ASLR" 'printf "Checking for simultaneous multithreading ... \\e[31mFAIL\\e[m\n" >> "$fixtures/isolate-check-environment"'
 expect_fail "coloured CAUTION (swap)" 'printf "Checking for swap ... \\e[33mCAUTION\\e[m\n" >> "$fixtures/isolate-check-environment"'
+expect_fail "no cpuset controller for isolate's cgroup" 'echo "memory pids" > "$root/sys/fs/cgroup/isolate.slice/isolate.service/cgroup.subtree_control"'
+expect_fail "boxes pinned by taskset only (no cpus lines)" 'sed -i "/\.cpus/d" "$root/usr/local/etc/isolate"'
+expect_fail "the last box has no cpus line" 'sed -i "/^box13\.cpus/d" "$root/usr/local/etc/isolate"'
 expect_fail "egress policy accept" 'sed -i "s/policy drop/policy accept/" "$fixtures/nft-output"'
 # The real commands (stubs on PATH): isolate-check-environment exits 1 on the waived ASLR check, as on a real host.
 stubs="$(mktemp -d)"; trap 'rm -rf "$root" "$fixtures" "$stubs"' EXIT
@@ -103,6 +109,7 @@ expect_pass "num_boxes = box_base + 2*slots" 'sed -i "s/num_boxes = 1000/num_box
 # An explicit slots value wins over the CPU count.
 expect_pass "slots = 2 needs only 4 boxes" 'printf "slots = 2\n" >> "$root/etc/qhhoj-judge/config.toml"; sed -i "s/num_boxes = 1000/num_boxes = 4/" "$root/usr/local/etc/isolate"'
 expect_pass "subid_user with 14 subuids and subgids" 'subid_host 14 14'
+expect_pass "cores = [2, 3] needs cpus lines for boxes 0-3 only" 'printf "cores = [2, 3]\n" >> "$root/etc/qhhoj-judge/config.toml"; sed -i "/^box\([4-9]\|1[0-3]\)\.cpus/d" "$root/usr/local/etc/isolate"'
 expect_pass "a fixed cg_root with memory.peak" \
   'sed -i "s|auto:/run/isolate/cgroup|/sys/fs/cgroup/isolate.slice/isolate.service|" "$root/usr/local/etc/isolate"; rm "$root/run/isolate/cgroup"'
 echo "check-host tests ok"

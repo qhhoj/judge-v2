@@ -16,12 +16,13 @@
 //! `flock` wait past 30 s is logged.
 
 use crate::error::SandboxError;
-use rustix::fs::{FlockOperation, flock};
+use rustix::fs::{FlockOperation, OFlags, flock, openat};
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::marker::PhantomData;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -177,25 +178,64 @@ fn turn_path(host_lock: &Path) -> PathBuf {
     name.into()
 }
 
-/// Opens (creating, mode 0600) a lock file. None when the directory does not exist.
+/// Opens a lock file in its directory, creating it 0600. None when the directory does not exist. A symlink or
+/// anything but a regular file there is refused, never followed.
 fn open_lock(path: &Path) -> Result<Option<File>, SandboxError> {
-    let opened =
-        OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600).open(path);
-    let file = match opened {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        file => file?,
+    let refused =
+        |error: rustix::io::Errno| SandboxError::Io(format!("run lock {}: {error}", path.display()));
+    let (Some(dir_path), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(SandboxError::Io(format!("run lock {}: not a file path", path.display())));
     };
-    give_to_directory_owner(&file, path);
+    let dir_path = if dir_path.as_os_str().is_empty() { Path::new(".") } else { dir_path };
+    let dir = match rustix::fs::open(dir_path, OFlags::DIRECTORY | OFlags::CLOEXEC, rustix::fs::Mode::empty())
+    {
+        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        dir => dir.map_err(refused)?,
+    };
+    let (file, created) = open_in(&dir, name).map_err(|error| match error {
+        rustix::io::Errno::LOOP => SandboxError::Io(format!(
+            "run lock {} is a symlink: remove it (only the judge user writes this directory)",
+            path.display()
+        )),
+        error => refused(error),
+    })?;
+    if !file.metadata()?.is_file() {
+        return Err(SandboxError::Io(format!(
+            "run lock {} is not a regular file: remove it",
+            path.display()
+        )));
+    }
+    if created {
+        give_to_directory_owner(&file, &dir);
+    }
     Ok(Some(file))
 }
 
-/// A lock file another user made (`selftest` run as root) goes to the owner of its directory, the judge user,
-/// who could not open it otherwise. Only root may, so for anyone else this changes nothing.
-fn give_to_directory_owner(file: &File, path: &Path) {
-    let dir = path.parent().and_then(|dir| std::fs::metadata(dir).ok());
-    let (Some(dir), Ok(own)) = (dir, file.metadata()) else { return };
-    if own.uid() != dir.uid() {
-        let _ = std::os::unix::fs::fchown(file, Some(dir.uid()), Some(dir.gid()));
+/// `name` in `dir`, never through a symlink; true when this call created it.
+fn open_in(dir: &OwnedFd, name: &std::ffi::OsStr) -> Result<(File, bool), rustix::io::Errno> {
+    let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    loop {
+        match openat(dir, name, flags | OFlags::CREATE | OFlags::EXCL, rustix::fs::Mode::from_raw_mode(0o600))
+        {
+            Ok(fd) => return Ok((File::from(fd), true)),
+            Err(rustix::io::Errno::EXIST) => {}
+            Err(error) => return Err(error),
+        }
+        match openat(dir, name, flags, rustix::fs::Mode::empty()) {
+            Ok(fd) => return Ok((File::from(fd), false)),
+            Err(rustix::io::Errno::NOENT) => continue, // removed in between: create it again
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// A lock file this process just made as another user than its directory's owner (root) goes to that
+/// owner, the judge user, who could not open it otherwise. Only root may chown, so for anyone else this
+/// changes nothing.
+fn give_to_directory_owner(file: &File, dir: &OwnedFd) {
+    let (Ok(dir), Ok(own)) = (rustix::fs::fstat(dir), file.metadata()) else { return };
+    if own.uid() != dir.st_uid {
+        let _ = std::os::unix::fs::fchown(file, Some(dir.st_uid), Some(dir.st_gid));
     }
 }
 
@@ -319,5 +359,17 @@ mod tests {
         }
         let missing = Arc::new(RunGate::new(Some(dir.path().join("none/run.lock"))));
         assert!(missing.shared().is_ok(), "no lock directory: no daemon on this host");
+    }
+
+    #[test]
+    fn a_symlink_at_the_lock_path_is_refused_and_its_target_left_alone() {
+        let (dir, elsewhere) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (path, target) = (dir.path().join("run.lock"), elsewhere.path().join("target"));
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let gate = Arc::new(RunGate::new(Some(path)));
+        let Err(refused) = gate.shared() else { panic!("a pass through a symlinked lock file") };
+        assert!(refused.to_string().contains("is a symlink"), "{refused}");
+        assert!(!target.exists(), "nothing is created through the link");
+        assert!(!gate.is_shared(), "the refused pass left the queue");
     }
 }

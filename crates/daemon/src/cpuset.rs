@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 pub enum Pinning {
     /// Every owned box has `box<id>.cpus` = its core and isolate's cgroup has the cpuset controller.
     Cpuset,
-    /// These boxes have no `cpus` line: taskset only.
+    /// These boxes have no `cpus` line: taskset only, refused at start but by `allow_taskset_pinning`.
     TasksetOnly(Vec<u32>),
     /// isolate would fail or misplace runs; the message says why.
     Broken(String),

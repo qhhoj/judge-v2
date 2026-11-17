@@ -93,6 +93,12 @@ pub struct IsolatePaths {
     /// Dev and test stacks only (loopback bridge): start on a host whose `kernel.core_pattern` hands cores to a
     /// program (`|...`).
     pub allow_piped_core_pattern: bool,
+    /// Dev and test stacks only (loopback bridge): start with boxes pinned by taskset alone (no
+    /// `box<id>.cpus` lines in isolate's config).
+    pub allow_taskset_pinning: bool,
+    /// Dev and test stacks only (loopback bridge): start with an isolate built without
+    /// `packaging/isolate-2.6-keys.patch`, and skip the start-up probe that checks it.
+    pub allow_unpatched_isolate: bool,
 }
 
 impl Default for IsolatePaths {
@@ -104,6 +110,8 @@ impl Default for IsolatePaths {
             disk_quota: None,
             allow_unbounded_disk: false,
             allow_piped_core_pattern: false,
+            allow_taskset_pinning: false,
+            allow_unpatched_isolate: false,
         }
     }
 }
@@ -192,7 +200,24 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
     if config.isolate.allow_piped_core_pattern && !is_loopback_url(&config.bridge_url) {
         return Err(invalid("isolate.allow_piped_core_pattern is for local test stacks only"));
     }
+    if config.isolate.allow_taskset_pinning && !is_loopback_url(&config.bridge_url) {
+        return Err(invalid("isolate.allow_taskset_pinning is for local test stacks only"));
+    }
+    if config.isolate.allow_unpatched_isolate && !is_loopback_url(&config.bridge_url) {
+        return Err(invalid("isolate.allow_unpatched_isolate is for local test stacks only"));
+    }
+    validate_cores(config.cores.as_deref())?;
     validate_disk_quota(config.isolate.disk_quota)
+}
+
+/// Each core runs one worker: a core listed twice would put two workers, and their runs, on one core.
+fn validate_cores(cores: Option<&[u32]>) -> Result<(), ConfigError> {
+    let cores = cores.unwrap_or_default();
+    let mut seen = std::collections::BTreeSet::new();
+    match cores.iter().find(|core| !seen.insert(**core)) {
+        Some(core) => Err(invalid(format!("cores lists core {core} twice: list each core once"))),
+        None => Ok(()),
+    }
 }
 
 fn validate_disk_quota(quota: Option<DiskQuotaConfig>) -> Result<(), ConfigError> {
@@ -387,11 +412,22 @@ mod tests {
     }
 
     #[test]
-    fn the_unbounded_disk_hatch_only_on_loopback() {
-        let hatch = "[isolate]\nallow_unbounded_disk = true\n";
-        assert!(parse(&format!("{MIN}{hatch}")).is_ok());
-        let remote = MIN.replace("http://127.0.0.1:9990", "https://b:1") + "[tls]\nca_file = '/ca'\n" + hatch;
-        assert!(parse(&remote).is_err(), "a production-shaped bridge with the hatch");
+    fn the_dev_hatches_only_on_loopback() {
+        for name in ["allow_unbounded_disk", "allow_taskset_pinning", "allow_unpatched_isolate"] {
+            let hatch = format!("[isolate]\n{name} = true\n");
+            assert!(parse(&format!("{MIN}{hatch}")).is_ok(), "{name}");
+            let remote =
+                MIN.replace("http://127.0.0.1:9990", "https://b:1") + "[tls]\nca_file = '/ca'\n" + &hatch;
+            let refused = parse(&remote).expect_err("a production-shaped bridge with the hatch").to_string();
+            assert!(refused.contains(name), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_core_listed_twice_is_refused() {
+        let refused = parse(&format!("{MIN}cores = [2, 2, 3]\n")).expect_err("two workers on core 2");
+        assert!(refused.to_string().contains("core 2 twice"), "{refused}");
+        assert_eq!(parse(&format!("{MIN}cores = [2, 3]\n")).unwrap().cores, Some(vec![2, 3]));
     }
 
     #[test]

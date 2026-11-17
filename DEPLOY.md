@@ -124,7 +124,10 @@ isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
 `isolate-check-environment` reports address-space randomisation (ASLR) as a problem: that one is expected
 (we require ASLR on). Every other `FAIL`, `CAUTION` or `WARNING` must be fixed (it means step 1 is incomplete).
 
-The patch makes the box's syscall filter refuse `add_key` and `request_key` as well as `keyctl`.
+The patch makes the box's syscall filter refuse `add_key` and `request_key` as well as `keyctl`. The judge and
+`check-config` check it at start with one probe run in a box, and refuse to start when the box may add a key.
+`[isolate] allow_unpatched_isolate = true` skips the probe; it is accepted only with a loopback `bridge_url`, for dev
+and test stacks. `selftest` runs as the owner of `cache_dir` (the judge user, `sudo -u qhhoj-judge`), never as root.
 
 **Rebuilding isolate on an installed host** (one whose isolate was built without the patch). Install the binary
 only: `make install` would overwrite `/usr/local/etc/isolate` and drop its `box<id>.cpus` lines. As root, in a
@@ -373,7 +376,7 @@ bound or a `disk_quota` (section "Disk quota on the box root").
 ## Box isolation (cpuset and disk quota)
 
 Do both on a new host in Phase A after step 8, and on a running host in an agreed deploy window. Without the
-cpuset lines the judge runs with a warning. Without a disk bound it refuses to start (see below).
+cpuset lines, or without a disk bound, the judge refuses to start (see below).
 
 ### CPU pinning by cpuset
 
@@ -393,11 +396,15 @@ Add the lines only when `cpuset` is listed: isolate fails every run of a box wit
 controller is missing. Run the two middle commands again whenever `cores`, `slots` or `box_base` change.
 At start the judge checks the lines against its cores:
 
-- no lines: warning `boxes pinned by taskset only`, the judge runs;
-- a line on another core, or lines without the cpuset controller: the judge refuses to start and says why.
+- a box without a line (taskset only), a line on another core, or lines without the cpuset controller: the judge
+  and `check-config` refuse to start and say why; `check-host.sh` fails the same host;
+- `cores` listing one core twice is refused.
+
+`[isolate] allow_taskset_pinning = true` starts without the lines; it is accepted only with a loopback `bridge_url`,
+for dev and test stacks.
 
 In the container image, mount an isolate config with the lines over `/usr/local/etc/isolate`; `cg-setup.sh`
-enables cpuset when the host delegates it to the container.
+enables cpuset when the host delegates it to the container, and the judge does not start without it.
 
 ### Disk quota on the box root
 

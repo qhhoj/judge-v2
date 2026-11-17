@@ -9,6 +9,7 @@ pub mod disk_bound;
 pub mod drain;
 pub mod gates;
 pub mod generation;
+pub mod key_probe;
 pub mod link;
 pub mod logging;
 pub mod metrics;

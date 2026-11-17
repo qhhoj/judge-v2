@@ -32,6 +32,9 @@ enum Command {
     CheckConfig(check_config::CheckConfigArgs),
     /// Print the isolate config lines that pin every box to its worker's core (DEPLOY.md).
     IsolateCpus,
+    /// The start check's probe, run in a box: print what the kernel answers to `add_key`.
+    #[command(name = judge_daemon::key_probe::COMMAND, hide = true)]
+    KeyProbe,
 }
 
 /// `run` exits 1 for anything but a graded submission, a failure to judge included.
@@ -75,6 +78,10 @@ fn main() -> ExitCode {
         }
         Some(Command::CheckConfig(args)) => check_config::check_config(&cli.config, &args),
         Some(Command::IsolateCpus) => isolate_cpus(&cli.config),
+        Some(Command::KeyProbe) => {
+            println!("{}", judge_daemon::key_probe::add_key_answer());
+            Ok(true)
+        }
         None => daemon(&cli.config),
     })
 }
