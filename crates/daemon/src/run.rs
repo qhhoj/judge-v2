@@ -117,7 +117,8 @@ fn check_core_pattern(pattern: &str, allowed: bool) -> anyhow::Result<()> {
 }
 
 /// The checks that make the daemon refuse to start: the cache size, the core pattern, how the boxes are pinned,
-/// and the disk bound (probed on `probe_box`). `check-config` runs them before an install switches to a release.
+/// the disk bound and isolate's key syscalls (both probed on `probe_box`). `check-config` runs them before an
+/// install switches to a release.
 pub fn start_checks(
     config: &Config,
     cores: &[u32],
@@ -129,16 +130,29 @@ pub fn start_checks(
     let pattern = std::fs::read_to_string(CORE_PATTERN).with_context(|| CORE_PATTERN.to_string())?;
     check_core_pattern(&pattern, config.isolate.allow_piped_core_pattern)?;
     check_pinning(config, cores)?;
-    checked_sandbox(config, probe_box)
+    let (sandbox, bound) = checked_sandbox(config, probe_box)?;
+    crate::key_probe::check(config, &sandbox, probe_box)?;
+    Ok((sandbox, bound))
 }
 
-/// Logs how the boxes are kept on their cores; refuses to start when isolate would fail every run.
+/// Refuses to start unless every box is pinned to its core by isolate's cpuset (taskset alone can be undone
+/// from inside a box); `allow_taskset_pinning` lets a dev stack start with taskset only.
 fn check_pinning(config: &Config, cores: &[u32]) -> anyhow::Result<()> {
-    match host_pinning(&config.isolate.config, config.box_base, cores) {
+    let pinning = host_pinning(&config.isolate.config, config.box_base, cores);
+    pinning_allowed(pinning, &config.isolate.config, config.isolate.allow_taskset_pinning)
+}
+
+fn pinning_allowed(pinning: Pinning, isolate_config: &Path, allow_taskset: bool) -> anyhow::Result<()> {
+    match pinning {
         Pinning::Cpuset => tracing::info!("boxes pinned to their cores by cpuset"),
-        Pinning::TasksetOnly(boxes) => tracing::warn!(
-            ?boxes,
-            "boxes pinned by taskset only: a run can move to another core (DEPLOY.md, `qhhoj-judge isolate-cpus`)"
+        Pinning::TasksetOnly(boxes) if allow_taskset => {
+            tracing::warn!(?boxes, "boxes pinned by taskset only (allow_taskset_pinning)")
+        }
+        Pinning::TasksetOnly(boxes) => anyhow::bail!(
+            "boxes {boxes:?} have no cpus line in {}: append the output of `qhhoj-judge isolate-cpus` to \
+             it, with cpuset listed in the cgroup.subtree_control of isolate's cgroup (DEPLOY.md \"CPU \
+             pinning by cpuset\")",
+            isolate_config.display()
         ),
         Pinning::Broken(reason) => anyhow::bail!("{reason}"),
     }
@@ -380,6 +394,22 @@ mod tests {
         assert!(refused.to_string().contains("kernel.core_pattern = core"), "{refused}");
         assert!(check_core_pattern(apport, true).is_ok(), "the dev hatch");
         assert!(check_core_pattern("core\n", false).is_ok());
+    }
+
+    #[test]
+    fn boxes_pinned_by_taskset_only_are_refused_but_by_the_dev_hatch() {
+        let isolate = Path::new("/usr/local/etc/isolate");
+        let refused =
+            pinning_allowed(Pinning::TasksetOnly(vec![2, 3]), isolate, false).expect_err("taskset only");
+        let message = refused.to_string();
+        assert!(message.contains("[2, 3]") && message.contains("qhhoj-judge isolate-cpus"), "{message}");
+        assert!(message.contains("/usr/local/etc/isolate"), "{message}");
+        assert!(pinning_allowed(Pinning::TasksetOnly(vec![2, 3]), isolate, true).is_ok(), "the dev hatch");
+        assert!(pinning_allowed(Pinning::Cpuset, isolate, false).is_ok());
+        assert!(
+            pinning_allowed(Pinning::Broken("x".into()), isolate, true).is_err(),
+            "no hatch for a broken one"
+        );
     }
 
     /// An isolate that answers an `--init` with a quota as one on a box root without user quotas does.

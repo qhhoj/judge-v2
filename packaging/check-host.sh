@@ -67,12 +67,28 @@ isolate_boxes() {
   uids="$(subid_count /etc/subuid "$user")"; gids="$(subid_count /etc/subgid "$user")"
   [ -n "$uids" ] && [ -n "$gids" ] && echo $(( uids < gids ? uids : gids ))
 }
+# The judge's worker count: the `cores` list or the CPUs but the first, cut to `slots`; at least 1.
+workers() {
+  local slots cores count
+  slots="$(setting "$CONFIG" slots)"
+  cores="$(sed -n 's/^[[:space:]]*cores[[:space:]]*=[[:space:]]*\[\([^]#]*\)\].*/\1/p' "$R$CONFIG" | head -n 1)"
+  if [ -n "$cores" ]; then count="$(echo "$cores" | tr ',' '\n' | grep -c '[0-9]')"; else count=$(( $(online_cpus) - 1 )); fi
+  [ -n "$slots" ] && [ "$slots" -lt "$count" ] && count="$slots"
+  [ "$count" -ge 1 ] && echo "$count" || echo 1
+}
 enough_boxes() {
-  local num base slots
-  num="$(isolate_boxes)"; base="$(setting "$CONFIG" box_base)"; slots="$(setting "$CONFIG" slots)"
+  local num base
+  num="$(isolate_boxes)"; base="$(setting "$CONFIG" box_base)"
   [ -n "$num" ] || return 1
-  [ -n "$slots" ] || slots=$(( $(online_cpus) - 1 )); [ "$slots" -ge 1 ] || slots=1
-  [ "$num" -ge $(( ${base:-0} + 2 * slots )) ]
+  [ "$num" -ge $(( ${base:-0} + 2 * $(workers) )) ]
+}
+# The judge refuses to start unless every box it owns has a `box<id>.cpus` line and isolate's cgroup has cpuset.
+boxes_cpuset_pinned() {
+  local cg base id; cg="$(isolate_cgroup)"; base="$(setting "$CONFIG" box_base)"; base="${base:-0}"
+  [ -n "$cg" ] && grep -qw cpuset "$R$cg/cgroup.subtree_control" 2>/dev/null || return 1
+  for (( id = base; id < base + 2 * $(workers); id++ )); do
+    grep -qE "^[[:space:]]*box$id\.cpus[[:space:]]*=" "$R$ISOLATE_CONF" || return 1
+  done
 }
 # Saved output under CHECK_FIXTURES, else the real command.
 output_of() { # <fixture name> <command...>
@@ -113,6 +129,7 @@ check "/usr/local/bin/isolate is setuid root" isolate_setuid_root
 check "isolate box_root is on a local filesystem" box_root_local
 check "isolate cgroup has memory.peak (kernel 5.19+; without it runs report no cg-mem)" memory_peak_readable
 check "isolate num_boxes >= box_base + 2*slots" enough_boxes
+check "every judge box has a box<id>.cpus line and isolate's cgroup has cpuset (qhhoj-judge isolate-cpus)" boxes_cpuset_pinned
 if [ "${CHECK_SKIP_COMMANDS:-0}" != 1 ] || [ -n "${CHECK_FIXTURES:-}" ]; then
   check "isolate-check-environment clean except the ASLR waiver" isolate_env_clean
   check "egress chain inet filter output has policy drop" egress_dropped

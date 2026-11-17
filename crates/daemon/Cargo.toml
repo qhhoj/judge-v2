@@ -17,6 +17,7 @@ judge-problem.workspace = true
 judge-sandbox.workspace = true
 judge-grader.workspace = true
 rustix = { workspace = true, features = ["process"] }
+libc.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

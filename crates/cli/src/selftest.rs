@@ -86,12 +86,28 @@ fn check_boxes(base: u32, live: &[u32]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The selftest takes the daemon's run lock in `cache_dir`, so it runs as that directory's owner (the judge
+/// user, or root in the container image), never as another user such as root on a host.
+fn check_user(cache_dir: &Path, euid: u32) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(owner) = std::fs::metadata(cache_dir).map(|meta| meta.uid()) else { return Ok(()) };
+    anyhow::ensure!(
+        owner == euid,
+        "selftest runs as uid {euid}, but cache_dir {} belongs to uid {owner}: run it as the judge user \
+         (sudo -u qhhoj-judge qhhoj-judge selftest ..., DEPLOY.md)",
+        cache_dir.display()
+    );
+    Ok(())
+}
+
 fn plan_with_config(
     config: &Config,
     args: &SelftestArgs,
     programs: PathBuf,
     sysfs: &Path,
 ) -> anyhow::Result<Plan> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    check_user(&config.cache_dir, unsafe { libc::geteuid() })?;
     let slot_cores = worker_cores(config, sysfs);
     let live_boxes = owned_box_ids(config.box_base, slot_cores.len() as u32);
     check_boxes(args.box_base, &live_boxes)?;
@@ -321,5 +337,16 @@ mod tests {
             plan_for(0, &["--box-base", &u32::MAX.to_string()]).is_err(),
             "the helper box would wrap to 0"
         );
+    }
+
+    #[test]
+    fn only_the_owner_of_the_cache_dir_runs_the_selftest() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let owner = std::fs::metadata(dir.path()).unwrap().uid();
+        assert!(check_user(dir.path(), owner).is_ok());
+        let refused = check_user(dir.path(), owner + 1).expect_err("another user, root on a host included");
+        assert!(refused.to_string().contains("sudo -u qhhoj-judge"), "{refused}");
+        assert!(check_user(&dir.path().join("none"), owner + 1).is_ok(), "no cache dir: no run lock to take");
     }
 }
