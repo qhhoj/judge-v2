@@ -1,7 +1,7 @@
 //! One case of a split problem: the jury in the helper box (stdin `input`, stdout `output`, as the one-process
 //! program had them) and the contestant in the solution box (no input, stdin and stdout `/dev/null`), joined by
 //! two pipes on fds 3/4. Each side is measured in its own box: the contestant is charged its own CPU and
-//! memory plus the jury CPU its calls used (the jury records it in `CHARGE_FILE`), the jury is held to its own
+//! memory plus the jury CPU spent for it (the jury records it in `CHARGE_FILE`), the jury is held to its own
 //! limits.
 
 use crate::checkers::custom::checker_limits;
@@ -46,7 +46,7 @@ pub struct SplitRun {
     pub contestant_limits: Limits,
     pub jury: RunVerdict,
     pub jury_time_s: f64,
-    /// Jury CPU spent serving the contestant's calls.
+    /// Jury CPU spent for the contestant (`SplitFacts::served_s`).
     pub served_s: f64,
     pub protocol_fault: bool,
 }

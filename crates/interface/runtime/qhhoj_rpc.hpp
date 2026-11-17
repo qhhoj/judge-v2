@@ -156,11 +156,14 @@ Bytes& start_payload();
 const void* cached_result(uint16_t fn, Reader& in, Decoder decoder, Factory factory);
 
 // One call to the other side. The contestant's proxies use the one-argument form (calls the jury makes while
-// one is pending are served by the dispatcher `contestant_main` was given); the jury passes its dispatcher.
+// one is pending are served by the dispatcher `contestant_main` was given); the jury passes its dispatcher. On the
+// jury, the CPU from each frame the contestant sends (once its header is read) until it is handled, and for the
+// RETURN until its result is decoded, is charged to the contestant.
 class Call {
  public:
   explicit Call(uint16_t fn);
   Call(uint16_t fn, Dispatch serve);
+  ~Call();
   template <class T> void put(const T& value) { encode(arguments_, value); }
   void done();
   template <class T> T result() {
@@ -176,10 +179,13 @@ class Call {
   }
 
  private:
+  Call(const Call&);
+  Call& operator=(const Call&);
   const Bytes& wait();
   uint16_t fn_;
   Dispatch serve_;
   Writer arguments_;
+  bool charged_;
 };
 
 // A call the other side made, being served. Its arguments are decoded before the call runs.
@@ -212,8 +218,9 @@ template <class T> void reply(uint16_t fn, const T& value) {
 // (CACHE), so every reference the contestant holds sees its own object's live value, as in one process.
 template <class T> void reply_cached(uint16_t fn, const T* value) { send_cached(fn, value, &encode_object<T>); }
 
-// The jury's guard around one callback: the CPU the jury spends running the contestant's calls is recorded
-// for the judge, which charges it to the contestant, as one process would have.
+// The jury's guard around work it does for the contestant (a callback the contestant called, the `const&`
+// re-check before a frame the jury sends): the CPU is recorded for the judge, which charges it to the contestant,
+// as one process would have. Guards and frame charges nest; the outermost one records.
 class Serving {
  public:
   explicit Serving(uint16_t fn);
