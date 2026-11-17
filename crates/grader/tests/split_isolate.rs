@@ -372,6 +372,54 @@ fn a_jury_build_that_fails_is_an_internal_error_and_never_cached() {
     }
 }
 
+/// Writes one CALL frame to the jury (fd 4): `len u32 | kind u16 | fn u16`, then `prefix` and `zeros` zero bytes.
+const RAW_CALL: &str = "#include <cstring>\n#include <unistd.h>\nstatic unsigned char qz[1 << 16];\n\
+static void qput(const void* p, size_t n){ const char* c=(const char*)p; while(n){ ssize_t w=write(4,c,n); if(w<=0) _exit(0); c+=w; n-=(size_t)w; } }\n\
+static void raw_call(unsigned short fn, unsigned prefix, size_t zeros){\n\
+  unsigned len=(unsigned)(4+zeros); unsigned short kind=1; unsigned char h[12];\n\
+  memcpy(h,&len,4); memcpy(h+4,&kind,2); memcpy(h+6,&fn,2); memcpy(h+8,&prefix,4); qput(h,12);\n\
+  while(zeros){ size_t s=zeros<sizeof qz?zeros:sizeof qz; qput(qz,s); zeros-=s; }\n\
+  unsigned char r[8]; size_t got=0; while(got<8){ ssize_t n=read(3,r+got,8-got); if(n<=0) _exit(0); got+=(size_t)n; }\n}\n";
+
+/// A frame from the contestant over 64 MiB is refused before the grader reads it: the case is WA. The frame is a
+/// well-formed call of `report` with a 64 MiB string, after which the solution plays honestly.
+#[test]
+fn a_frame_over_the_contestant_frame_cap_is_wa() {
+    let mut b = bench(4);
+    let source = format!(
+        "{RAW_CALL}#include \"sol.h\"\nlong long play(int n, const std::vector<long long>&){{\n\
+  raw_call(1, 64u << 20, 64u << 20);\n  long long s=0;\n  for(int i=0;i<n;i++) s+=ask(i);\n\
+  (void)peek(); (void)part(0); (void)part(1); (void)more();\n  report(\"ok\");\n  return s;\n}}\n"
+    );
+    let Some((split, rec)) = judge(&mut b, "p", ("CPP17", true), &source) else { return };
+    assert_eq!(split, Outcome::Graded);
+    assert_eq!(shape(&rec), [(Status::Wa, 0.0), (Status::Wa, 0.0)], "{:?}", rec.cases);
+    assert!(rec.cases.iter().all(|c| c.feedback == "protocol violation"), "{:?}", rec.cases);
+}
+
+/// The grader's CPU for each frame from the contestant, from its header until handled, is the contestant's:
+/// reading and decoding the payload, running the callback, writing the reply. A solution that sends calls whose
+/// arguments are slow to decode (16 MiB of empty strings each, cheap to write) runs out of time: TLE, never an
+/// internal error.
+#[test]
+fn the_grader_cpu_spent_on_contestant_frames_is_charged_to_the_contestant() {
+    let mut b = bench(6);
+    if language_or_skip(&registry(), "CPP17").is_none() {
+        return;
+    }
+    let header = "#include <string>\n#include <vector>\nlong long play(int n);\nvoid note(const std::vector<std::string>& words);\n";
+    let grader = "#include <cstdio>\n#include <string>\n#include <vector>\n#include \"sol.h\"\n\
+void note(const std::vector<std::string>&){}\n\
+int main(){ int n; if(scanf(\"%d\", &n)!=1) return 2; printf(\"%d\\n\", play(n)==n ? 1 : 0); }\n";
+    let words = "long long play(int n){\n  const unsigned count=(16u<<20)/4-1;\n  for(;;) raw_call(1, count, (size_t)count*4);\n  return n;\n}\n";
+    write_grader(&b, "words", grader, true);
+    std::fs::write(b.root.join("words").join("sol.h"), header).unwrap();
+    let source = format!("{RAW_CALL}#include \"sol.h\"\n{words}");
+    let (outcome, rec) = judge_written(&mut b, "words", &source, 262_144);
+    assert_eq!(outcome, Outcome::Graded, "{outcome:?}");
+    assert!(rec.cases.iter().all(|c| c.status == Status::Tle && c.time_s > 1.0), "{:?}", rec.cases);
+}
+
 fn judge_written(b: &mut Bench, code: &str, source: &str, memory_kib: u64) -> (Outcome, Recorder) {
     let problem = b.resolver.resolve(code, 0).unwrap();
     let mut rec = Recorder::default();

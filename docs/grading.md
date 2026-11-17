@@ -181,8 +181,10 @@ callback the contestant calls, one it references is a function the contestant im
 once per language key (compiler parity with the submission) and cached; a failed build is never cached (a
 missing tool is RETRY, a grader that does not build is IE). C submissions are CE (the interface is C++).
 
-Time is CPU, as one process counted it: the contestant is charged its own box's CPU plus the jury CPU spent in
-the callbacks it called. Memory is the contestant box's own. The jury runs under its own limits (CPU
+Time is CPU, as one process counted it: the contestant is charged its own box's CPU plus the jury CPU spent for
+it: from each frame it sends (once the frame's header is read) until the jury has handled it (the payload read and
+decoded, the callback run, the reply written; for a result, until it is decoded), and the `const&` re-check.
+Memory is the contestant box's own; a jury that runs out of memory decoding the contestant's frames is MLE. The jury runs under its own limits (CPU
 max(10 s, 2 x TL), memory max(1 GiB, ML)). Verdict, first match: the contestant over its memory or output limit
 -> MLE/OLE; charged time over the TL -> TLE; its wall clock ran out -> IE when the jury's own CPU used the
 waiting time, else TLE; a protocol violation the grader's glue recorded -> WA; the contestant crashed or exited
@@ -190,7 +192,10 @@ non-zero (any code) -> RTE/IR; the jury over its time limit -> IE; the jury over
 -> that verdict; otherwise the problem checker on the jury's output.
 
 Differences from one process, by design: each value-returning call costs one pipe round trip of contestant CPU
-(about 3 us on an idle host, more under load; a problem switches only after the gate in `docs/decisions.md`);
+plus the jury's handling of the frame, reply write included (on a host at load 34 on 16 cores: 17-19 us per
+callback call, 1.8 times the contestant side alone; a problem switches only after the gate in `docs/decisions.md`);
+a frame from the contestant is at most 64 MiB (a longer one is a protocol violation, WA; the glue aborts before
+sending one, RTE), frames from the jury up to 256 MiB;
 a `const&` result is the jury object's live value, one copy per object, compared and re-sent when changed, so
 the object must stay alive for the whole run (one the grader frees or moves later, e.g. a row of a vector that
 grows, gives RTE or garbage even if the contestant no longer uses it); a

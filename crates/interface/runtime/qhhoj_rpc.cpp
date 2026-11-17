@@ -35,10 +35,14 @@ const int BAD_FRAME_EXIT = 117;
 const int PROTOCOL_EXIT = 118;
 const char FAULT_FILE[] = "/box/.qhhoj-fault";
 // The jury's charge record (two native u64: nanoseconds of jury CPU charged so far, and the jury's process CPU
-// clock when the callback now running began, 0 when none). The judge reads it after the run.
+// clock when the charge now open began, 0 when none). The judge reads it after the run.
 const char CHARGE_FILE[] = "/box/.qhhoj-charge";
-// A quarter of the jury's 1 GiB floor: a hostile length is refused before anything is allocated for it.
-const uint32_t MAX_MESSAGE = 256u << 20;
+// Largest payload each side reads; a longer length is refused before anything is allocated for it. A decoded
+// value can take several times its wire bytes (an empty std::vector<bool>: 4 bytes on the wire, 40 in memory); a
+// jury that runs out of memory decoding the contestant's frames is that verdict (MLE) for the contestant. Frames
+// from the jury may be larger (the grader's own arguments to the contestant).
+const uint32_t MAX_FROM_CONTESTANT = 64u << 20;
+const uint32_t MAX_FROM_JURY = 256u << 20;
 const Size HEADER_BYTES = 8;
 
 enum Side { JURY, CONTESTANT };
@@ -77,7 +81,7 @@ struct ChargePage {
 };
 volatile ChargePage* charge_page = 0;
 bool charge_opened = false;
-int serving_depth = 0;
+int charge_depth = 0;
 
 // Buffered reads of fd 3: one read() usually brings a whole frame.
 unsigned char in_buffer[1 << 16];
@@ -119,22 +123,27 @@ bool write_all(const unsigned char* data, Size size) {
   return true;
 }
 
-// Reads one frame into `in_payload`. False at EOF, also in the middle of a frame (the peer is gone).
+void charge_open();
+
+// Reads one frame into `in_payload`. False at EOF, also in the middle of a frame (the peer is gone). On the jury a
+// charge opens once the header is in: reading the payload, decoding it and doing what the frame asks are work for
+// the contestant, and the caller closes the charge when the frame is handled.
 bool read_frame(uint16_t& kind, uint16_t& fn) {
   unsigned char header[HEADER_BYTES];
   if (!read_exact(header, HEADER_BYTES)) return false;
+  charge_open();
   uint32_t length;
   memcpy(&length, header, 4);
   memcpy(&kind, header + 4, 2);
   memcpy(&fn, header + 6, 2);
-  if (length > MAX_MESSAGE) protocol_fault("message too large");
+  if (length > (side == JURY ? MAX_FROM_CONTESTANT : MAX_FROM_JURY)) protocol_fault("message too large");
   in_payload.resize(length);
   return length == 0 || read_exact(&in_payload[0], length);
 }
 
 // A side that would send more than the peer accepts ends itself (SIGABRT: a runtime error).
 void put_header(unsigned char* at, Size payload, uint16_t kind, uint16_t fn) {
-  if (payload > MAX_MESSAGE) abort();
+  if (payload > (side == JURY ? MAX_FROM_JURY : MAX_FROM_CONTESTANT)) abort();
   uint32_t length = static_cast<uint32_t>(payload);
   memcpy(at, &length, 4);
   memcpy(at + 4, &kind, 2);
@@ -148,10 +157,12 @@ void jury_exit() {
   exit(0);
 }
 
-// EOF from the peer, or a write it can no longer read. The jury looks for an EXITING still in the pipe.
+// EOF from the peer, or a write it can no longer read. The jury looks for an EXITING still in the pipe, charged
+// to the contestant until it exits (the contestant may still be writing).
 void peer_gone() __attribute__((noreturn));
 void peer_gone() {
   if (side == CONTESTANT) _exit(0);
+  charge_open();
   uint16_t kind;
   uint16_t fn;
   while (read_frame(kind, fn)) {
@@ -166,7 +177,7 @@ uint64_t cpu_now_ns() {
   return static_cast<uint64_t>(now.tv_sec) * 1000000000u + static_cast<uint64_t>(now.tv_nsec);
 }
 
-// Created by the jury in its own box on the first callback; without it nothing is recorded.
+// Created by the jury in its own box on the first charge; without it nothing is recorded.
 void open_charge_page() {
   charge_opened = true;
   int fd = open(CHARGE_FILE, O_RDWR | O_CREAT | O_TRUNC, 0644);
@@ -176,6 +187,23 @@ void open_charge_page() {
     if (page != MAP_FAILED) charge_page = static_cast<ChargePage*>(page);
   }
   close(fd);
+}
+
+// The jury's charges nest; the outermost one records its CPU span. The contestant side records nothing.
+void charge_open() {
+  if (side != JURY || charge_depth++ != 0) return;
+  if (!charge_opened) open_charge_page();
+  if (charge_page == 0) return;
+  uint64_t now = cpu_now_ns();
+  charge_page->open_since_ns = now != 0 ? now : 1;
+}
+
+void charge_close() {
+  if (side != JURY || --charge_depth != 0 || charge_page == 0) return;
+  uint64_t since = charge_page->open_since_ns;
+  uint64_t now = cpu_now_ns();
+  if (since != 0 && now > since) charge_page->charged_ns += now - since;
+  charge_page->open_since_ns = 0;
 }
 
 // A CACHE frame for object `id` of `fn`, queued to go before the frame being sent.
@@ -376,16 +404,23 @@ const void* cached_result(uint16_t fn, Reader& in, Decoder decoder, Factory fact
   return object;
 }
 
-Call::Call(uint16_t fn) : fn_(fn), serve_(contestant_serve), arguments_(start_payload()) {
+Call::Call(uint16_t fn) : fn_(fn), serve_(contestant_serve), arguments_(start_payload()), charged_(false) {
   if (serve_ == 0) abort();  // a callback called before the contestant's main (in a static constructor)
 }
 
-Call::Call(uint16_t fn, Dispatch serve) : fn_(fn), serve_(serve), arguments_(start_payload()) {
+Call::Call(uint16_t fn, Dispatch serve)
+    : fn_(fn), serve_(serve), arguments_(start_payload()), charged_(false) {
   ignore_sigpipe();
+}
+
+Call::~Call() {
+  if (charged_) charge_close();
 }
 
 void Call::done() { Reader(wait()).end(); }
 
+// Each frame read opens a charge on the jury (`read_frame`): a call is closed once served and replied to, the
+// RETURN once its result is decoded (the destructor).
 const Bytes& Call::wait() {
   send(KIND_CALL, fn_);
   for (;;) {
@@ -394,9 +429,11 @@ const Bytes& Call::wait() {
     receive(kind, fn);
     if (kind == KIND_RETURN) {
       if (fn != fn_) protocol_fault("return for another call");
+      charged_ = true;
       return in_payload;
     }
     handle(kind, fn, serve_);
+    charge_close();
   }
 }
 
@@ -435,21 +472,9 @@ void send_cached(uint16_t fn, const void* object, Encoder encoder) {
   send_return(fn);
 }
 
-Serving::Serving(uint16_t) {
-  if (serving_depth++ != 0) return;
-  if (!charge_opened) open_charge_page();
-  if (charge_page == 0) return;
-  uint64_t now = cpu_now_ns();
-  charge_page->open_since_ns = now != 0 ? now : 1;
-}
+Serving::Serving(uint16_t) { charge_open(); }
 
-Serving::~Serving() {
-  if (--serving_depth != 0 || charge_page == 0) return;
-  uint64_t since = charge_page->open_since_ns;
-  uint64_t now = cpu_now_ns();
-  if (since != 0 && now > since) charge_page->charged_ns += now - since;
-  charge_page->open_since_ns = 0;
-}
+Serving::~Serving() { charge_close(); }
 
 void callback_threw(uint16_t) { abort(); }
 

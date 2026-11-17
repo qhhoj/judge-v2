@@ -59,7 +59,8 @@ pub fn stalled_by_jury(contestant: &MemberRun, jury_work_s: f64, limits: &Limits
 pub struct SplitFacts<'a> {
     /// The contestant box's own verdict and CPU.
     pub contestant: &'a MemberRun,
-    /// Jury CPU spent serving the contestant's calls (its callbacks), which one process would have charged.
+    /// Jury CPU spent for the contestant, which one process would have charged: each frame it sent, from its
+    /// header until handled (payload read and decoded, callback run, reply written), and the `const&` re-check.
     pub served_s: f64,
     pub jury: &'a RunVerdict,
     pub jury_time_s: f64,
@@ -70,7 +71,7 @@ pub struct SplitFacts<'a> {
 }
 
 impl SplitFacts<'_> {
-    /// The contestant's time: its own CPU and the callbacks it called, as one process would have counted.
+    /// The contestant's time: its own CPU and the jury CPU spent for it, as one process would have counted.
     pub fn charged_s(&self) -> f64 {
         self.contestant.time_s + self.served_s
     }
@@ -97,7 +98,7 @@ pub enum SplitDecision {
 /// counted in CPU (never in host load): the side that failed first decides, and the other side then only sees
 /// EOF and exits 0. No contestant exit code, signal or output gives IE; only the jury's own work can.
 /// 1. The contestant over its memory or output limit: MLE, OLE.
-/// 2. Its charged time (own CPU + callbacks served) over the TL: TLE.
+/// 2. Its charged time (own CPU + jury CPU spent for it) over the TL: TLE.
 /// 3. Its wall clock ran out: IE when the jury's own CPU used the waiting time (`stalled_by_jury`), else TLE.
 /// 4. A protocol violation the jury recorded: WA.
 /// 5. The contestant crashed (not SIGPIPE) or exited non-zero (any code): RTE or IR.
@@ -238,6 +239,8 @@ mod tests {
             (ok.clone(), 0.1, 0.1, tle.clone(), 10.0, false, JuryStall),
             (ok.clone(), 0.1, 0.0, mle.clone(), 0.1, false, Failed(mle.clone())), // the jury's memory is the program's
             (ok.clone(), 0.1, 0.0, segv.clone(), 0.1, false, Failed(segv.clone())),
+            (tle.clone(), 0.1, 3.5, ok.clone(), 3.6, false, Failed(tle.clone())), // jury CPU spent for it
+            (ok.clone(), 0.1, 9.9, tle.clone(), 10.0, false, Failed(tle.clone())), // the jury ended mid-charge
         ];
         for (verdict, time_s, served_s, jury, jury_time_s, protocol_fault, decision) in table {
             let contestant = MemberRun { verdict, time_s, memory_kib: 0 };
