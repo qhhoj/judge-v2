@@ -18,6 +18,9 @@ rows = [
   { lang = "CPP03", file = "CPP03/ac.cpp", expect = "AC" },
   { lang = "CPP17", file = "CPP17/ac.cpp", expect = "AC" },
   { lang = "CPP17", file = "C/wa.c", expect = "WA" },
+  { lang = "CPP17", file = "CPP17/split_ac.cpp", problem = "split_signature", expect = "AC" },
+  { lang = "CPP17", file = "CPP17/split_wa.cpp", problem = "split_signature", expect = "WA" },
+  { lang = "CPP17", file = "CPP17/split_calls.cpp", problem = "split_signature", expect = "AC" }, # 20000 callbacks, about TL/4 of CPU
   { lang = "CPP17", file = "C/tle.c", expect = "TLE" },
   { lang = "CPP17", file = "CPP17/mle.cpp", expect = "MLE" },
   { lang = "CPP17", file = "CPP17/rte_exception.cpp", expect = "RTE" },
