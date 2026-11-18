@@ -21,6 +21,16 @@ pub struct ResolvedProblem {
     pub lease: Option<CacheLease>,
 }
 
+/// A missing init.yml is `NoInit` (named in the submission's error); a symlink or other bad entry stays `Io`.
+fn read_init(dir: &Path) -> Result<InitYaml, DataError> {
+    let path = dir.join("init.yml");
+    if matches!(std::fs::symlink_metadata(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Err(DataError::NoInit);
+    }
+    Ok(parse_init(&read_regular_to_string(&path)?)?)
+}
+
 /// A name inside a problem directory: `/`-separated segments, each non-empty, not starting with `.`
 /// (so never `..` or a dotfile), no `\\` (the `archive.rs` rule; legacy zips store `tests/1.in`).
 fn is_relative_name(name: &str) -> bool {
@@ -93,7 +103,7 @@ impl Resolver {
     /// None when the stamp moved while init.yml was read or the archive extracted; the work is discarded.
     fn attempt(&self, code: &str, dir: &Path, assigned: u64) -> Result<Option<ResolvedProblem>, DataError> {
         let version = wait_for_stamp(dir, assigned, &self.wait, self.stamps.as_ref())?;
-        let init = parse_init(&read_regular_to_string(&dir.join("init.yml"))?)?;
+        let init = read_init(dir)?;
         let problem = self.finish(code, dir, (version, init))?;
         // Marker, then stamp: an upload that began since the first read is seen by its marker, and one that
         // ends between the two checks has already written its new stamp (the uploader removes the marker last).
@@ -211,6 +221,15 @@ mod tests {
         std::fs::rename(root.path().join("sum"), root.path().join("moved")).unwrap();
         let error = resolver(root.path(), cache.path()).resolve("sum", 3).unwrap_err();
         assert_eq!(error, DataError::Unavailable { assigned: 3, found: None }, "a retry, never IE");
+    }
+
+    #[test]
+    fn a_stamped_problem_without_init_yml_says_it_has_no_test_cases() {
+        let (root, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write_problem(root.path(), Some("2\n"));
+        std::fs::remove_file(root.path().join("sum/init.yml")).unwrap();
+        let error = resolver(root.path(), cache.path()).resolve("sum", 2).unwrap_err();
+        assert_eq!(error.to_string(), "no init.yml: the problem has no test cases configured");
     }
 
     #[test]
