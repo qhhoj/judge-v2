@@ -1,0 +1,5 @@
+checker: standard
+signature_grader: {entry: grader.cpp, header: sol.h, split: true}
+test_cases:
+- {in: 0.in, out: 0.out, points: 1}
+- {in: 1.in, out: 1.out, points: 1}
