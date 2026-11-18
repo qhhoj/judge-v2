@@ -18,6 +18,9 @@ pub enum DataError {
     Unavailable { assigned: u64, found: Option<u64> },
     #[error("problem data i/o: {0}")]
     Io(String),
+    /// The backend removes init.yml while a problem has no test cases but still stamps the version.
+    #[error("no init.yml: the problem has no test cases configured")]
+    NoInit,
     #[error("bad .data-version: {0:?}")]
     BadStamp(String),
     #[error(transparent)]
