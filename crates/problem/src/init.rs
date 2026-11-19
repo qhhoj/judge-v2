@@ -300,7 +300,9 @@ fn check_signature(spec: &SignatureSpec) -> Result<(), InitError> {
 /// 2026-11-19: 1446 init.yml), and the backend writes at most one.
 fn check_modes(init: &InitYaml) -> Result<(), InitError> {
     match init.mode_keys()[..] {
-        [first, second, ..] => Err(InitError::Unsupported(format!("{} with {}", first.name(), second.name()))),
+        [first, second, ..] => {
+            Err(InitError::Unsupported(format!("{} with {}", first.name(), second.name())))
+        }
         _ => Ok(()),
     }
 }
@@ -341,7 +343,11 @@ mod tests {
     #[test]
     fn unknown_keys_and_capability_gated_features_are_refused() {
         let generator = parse_init("generator: gen.cpp\ntest_cases: []\n").unwrap_err();
-        assert_eq!(generator, InitError::Unsupported("generator".into()), "an unknown key, refused like any other");
+        assert_eq!(
+            generator,
+            InitError::Unsupported("generator".into()),
+            "an unknown key, refused like any other"
+        );
         let cms = parse_init(
             "test_cases: []\nchecker: {name: bridged, args: {type: cms, lang: CPP17, files: c.cpp}}\n",
         )
@@ -515,7 +521,10 @@ mod tests {
             for second in &lines[index + 1..] {
                 let text = format!("test_cases: []\n{first}\n{second}\n");
                 let error = parse_init(&text).expect_err(&format!("{first} + {second}"));
-                assert!(matches!(&error, InitError::Unsupported(keys) if keys.contains(" with ")), "{error:?}");
+                assert!(
+                    matches!(&error, InitError::Unsupported(keys) if keys.contains(" with ")),
+                    "{error:?}"
+                );
             }
         }
     }
