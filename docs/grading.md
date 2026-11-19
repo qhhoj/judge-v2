@@ -145,7 +145,7 @@ written past the limit before that write fails, and stdout cannot be seeked or m
   (`problem/src/short_circuit.rs`). A pretest run grades only `pretest_test_cases`.
 - Each case reports `points` and `total`. A batched case carries the batch total; the bridge scores a batch by its
   weakest case.
-- An init.yml this judge cannot grade (an unknown key, two exclusive modes, generator, `nobigmath`, a checker kind not
+- An init.yml this judge cannot grade (an unknown key such as `generator`, two modes, `nobigmath`, a checker kind not
   graded here, a non-testlib interactor, per-case checker overrides) is `Final{RETRY, UNSUPPORTED}`. A language with no runtime on this judge is `RETRY RUNTIME_MISSING`.
 - A compile error ends the assignment with `Final{COMPILE_ERROR}`.
 

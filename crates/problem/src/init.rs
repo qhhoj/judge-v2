@@ -44,9 +44,6 @@ pub struct InitYaml {
     /// Flags: `unicode` makes token comparison UTF-8 aware; `nobigmath` is refused (UNSUPPORTED).
     #[serde(default)]
     pub hints: Vec<String>,
-    /// Parsed only to answer `UNSUPPORTED`: no legacy problem uses a generator (none of the old site's problems used one).
-    #[serde(default)]
-    pub generator: Option<Value>,
     #[serde(default)]
     pub signature_grader: Option<SignatureSpec>,
 }
@@ -92,7 +89,7 @@ pub struct CaseEntry {
     /// resolve to the same checker, otherwise the problem is UNSUPPORTED (`checker.per_case`).
     #[serde(default)]
     pub checker: Option<CheckerSpec>,
-    /// Parsed only to answer UNSUPPORTED: arguments of a generator, which this judge does not run.
+    /// Written by the backend when a case has generator arguments (judge contract `generator_args`); grading ignores it.
     #[serde(default)]
     pub generator_args: Option<Vec<String>>,
 }
@@ -196,19 +193,10 @@ impl ModeKey {
             ModeKey::FileIo => "file_io",
         }
     }
-
-    /// The session modes must be the only mode of their file. Legacy modes keep every combination that
-    /// parsed before them: refusing those waits for a query proving no stored problem has one.
-    fn is_exclusive(self) -> bool {
-        matches!(self, ModeKey::SignatureSplit)
-    }
 }
 
 impl InitYaml {
     pub fn unsupported_feature(&self) -> Option<String> {
-        if self.generator.is_some() {
-            return Some("generator".into());
-        }
         if self.hints.iter().any(|hint| hint == "nobigmath") {
             return Some("hints.nobigmath".into());
         }
@@ -308,13 +296,14 @@ fn check_signature(spec: &SignatureSpec) -> Result<(), InitError> {
     }
 }
 
-/// An exclusive mode with any other mode key is refused, naming both keys.
+/// A file sets at most one mode; two are refused, naming both keys. No stored problem sets two (production scan,
+/// 2026-11-19: 1446 init.yml), and the backend writes at most one.
 fn check_modes(init: &InitYaml) -> Result<(), InitError> {
-    let modes = init.mode_keys();
-    let Some(exclusive) = modes.iter().copied().find(|mode| mode.is_exclusive()) else { return Ok(()) };
-    match modes.iter().find(|mode| **mode != exclusive) {
-        Some(other) => Err(InitError::Unsupported(format!("{} with {}", exclusive.name(), other.name()))),
-        None => Ok(()),
+    match init.mode_keys()[..] {
+        [first, second, ..] => {
+            Err(InitError::Unsupported(format!("{} with {}", first.name(), second.name())))
+        }
+        _ => Ok(()),
     }
 }
 
@@ -352,9 +341,13 @@ mod tests {
     }
 
     #[test]
-    fn capability_gated_features_are_reported() {
-        let generator = parse_init("generator: gen.cpp\ntest_cases: []\n").unwrap();
-        assert_eq!(generator.unsupported_feature().as_deref(), Some("generator"));
+    fn unknown_keys_and_capability_gated_features_are_refused() {
+        let generator = parse_init("generator: gen.cpp\ntest_cases: []\n").unwrap_err();
+        assert_eq!(
+            generator,
+            InitError::Unsupported("generator".into()),
+            "an unknown key, refused like any other"
+        );
         let cms = parse_init(
             "test_cases: []\nchecker: {name: bridged, args: {type: cms, lang: CPP17, files: c.cpp}}\n",
         )
@@ -517,25 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn a_split_problem_is_the_only_mode_of_its_file() {
-        let others = [
-            ("interactive: {files: i.cpp, type: testlib, lang: CPP17}", "interactive"),
-            ("output_only: true", "output_only"),
-            ("file_io: {input: a.inp, output: a.out}", "file_io"),
-        ];
-        for (line, name) in others {
-            let text = format!(
-                "test_cases: []\n{line}\nsignature_grader: {{entry: g.cpp, header: s.h, split: true}}\n"
-            );
-            assert_eq!(
-                parse_init(&text).unwrap_err(),
-                InitError::Unsupported(format!("signature_grader.split with {name}")),
-            );
-        }
-    }
-
-    #[test]
-    fn every_legacy_combination_of_mode_keys_still_parses() {
+    fn every_combination_of_two_mode_keys_is_refused_naming_both() {
         let lines = [
             "interactive: {files: i.cpp, type: testlib, lang: CPP17}",
             "signature_grader: {entry: g.cpp, header: s.h}",
@@ -545,8 +520,11 @@ mod tests {
         for (index, first) in lines.iter().enumerate() {
             for second in &lines[index + 1..] {
                 let text = format!("test_cases: []\n{first}\n{second}\n");
-                let init = parse_init(&text).unwrap_or_else(|e| panic!("{first} + {second}: {e}"));
-                assert_eq!(init.mode_keys().len(), 2, "{first} + {second}");
+                let error = parse_init(&text).expect_err(&format!("{first} + {second}"));
+                assert!(
+                    matches!(&error, InitError::Unsupported(keys) if keys.contains(" with ")),
+                    "{error:?}"
+                );
             }
         }
     }
