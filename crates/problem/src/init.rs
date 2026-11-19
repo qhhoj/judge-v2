@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_gated_features_are_reported() {
+    fn unknown_keys_and_capability_gated_features_are_refused() {
         let generator = parse_init("generator: gen.cpp\ntest_cases: []\n").unwrap_err();
         assert_eq!(generator, InitError::Unsupported("generator".into()), "an unknown key, refused like any other");
         let cms = parse_init(
