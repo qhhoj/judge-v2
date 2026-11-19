@@ -130,6 +130,7 @@ message Pong {
   double load = 3;
 }
 
+// Unused: no judge reads it, and the bridge sends none since 2026-11-19. Kept so v1 stays additive-only.
 message Meta {
   // Participation number: 0 live, -1 spectate, n virtual; absent outside contests.
   optional sint32 in_contest = 1;
