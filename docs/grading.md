@@ -30,8 +30,10 @@ Case statuses, as the bridge stores them:
 2. **MLE:** `cg-oom-killed`, or the program's own memory over the limit.
 3. **OLE:** more bytes written than the output cap, or a SIGXFSZ exit. This is decided ahead of TLE, because the JVM
    ignores SIGXFSZ and swallows the write error, so a print loop would otherwise run on to the time limit.
-4. **TLE:** isolate status `TO` (CPU or wall time). A run whose CPU time went past the limit is TLE even when the
-   cgroup then OOM-killed it, or its memory went over the limit: it had failed on time first.
+4. **TLE:** isolate status `TO` (CPU or wall time). A run that isolate stopped on time (`TO`) with its CPU time past
+   the limit is TLE even when its memory was over the limit or `cg-oom-killed` is set: it had failed on time first.
+   A run the cgroup OOM-killed before isolate stopped it (status `SG`) is MLE, even when its CPU time had
+   already passed the limit on the way to the hard cap.
 5. status `SG` (killed by another signal) is RTE with the signal name; status `RE` (non-zero exit) is IR.
 6. Otherwise the run is fine and the checker decides AC, WA or partial points.
 
@@ -77,10 +79,28 @@ replaces the first one before short-circuiting sees it (`grader/src/rerun.rs`).
 
 ### Memory
 
-The program's memory is `Meta::memory_kib` (`sandbox/src/meta.rs`): the cgroup peak (`cg-mem`) less the page cache of the
-run's own input and output files, but never below the peak resident set (`max-rss`) and never above the cgroup peak.
-Pages the program holds without mapping them (tmpfs, memfd, pipes) therefore count; page cache of its own files does
-not. An OOM kill reports the cgroup peak; a run that timed out reports the smaller of the two counters. When isolate reported one counter only, that one is used.
+A contestant's memory is its cgroup peak (`cg-mem`, `Meta::memory_kib` with `MemoryCount::CgroupPeak` in
+`sandbox/src/meta.rs`): every page charged to the run, including pages it holds without mapping them (tmpfs, memfd,
+pipes) and the page cache of files it writes. Without `file_io` nothing is subtracted. Its stdout (without `file_io`) and kept stderr are
+pipes the judge drains (`sandbox/src/drain.rs`, `IsolateBox::run_drained`; for an interactive solution its stderr,
+`session::run::ChannelPlan::StdioPipes`), so they are never page cache in its cgroup. Without `file_io` its stdin is a
+sealed memfd copy of the input (`sandbox/src/sealed_input.rs`): shmem charged to the judge, which reclaim never
+evicts to be charged to the box again, and which the box can read, seek and map but not write or resize (the box
+file `input` is still there). Both box files of the input, `input` and the `file_io` name with its aliases, are
+symlinks to the judge's copy on a read-only mount (`IsolateBox::put_read_only`): the box can read them but not
+write, `chmod` or replace that copy, and a file it makes under one of those names is its own, charged to it. With
+`file_io` the judge maps the input, faults it in and
+locks it in memory (`sandbox/src/pinned_input.rs`, `LimitMEMLOCK` in the unit), so its pages are the judge's and
+reading them charges the box nothing. The output file's page cache is charged to the run, so a `file_io` run's
+memory is `max(P - min(F, out), N, min(P, rss))` (`grader/src/file_io_memory.rs`): `P` the cgroup peak, `F` the
+largest regular-file page cache of the box cgroup, `out` the output file's size at the end, `N` the largest memory
+other than regular-file page cache (memfd and tmpfs pages included), `rss` the peak resident set. `F` and `N` come
+from the box cgroup's `memory.stat`, read every 1 ms during the run and once after it (`sandbox/src/memory_sampler.rs`);
+a run whose `memory.stat` could not be read is a sandbox error. At most the output's own size is subtracted, so the
+figure is never more than one output cap under the cgroup peak. An OOM kill and a timeout keep their figures as
+below. A split contestant (C++ only) keeps no stderr. Jury programs and compilers report the smaller of the cgroup
+peak and the peak resident set (`max-rss`). An OOM kill reports the cgroup peak; a run that timed out reports the
+smaller of the two counters. When isolate reported one counter only, that one is used.
 
 The cgroup limit is the memory limit plus room for the page cache of what the run writes (one output cap, at most
 64 MiB, `spec::cgroup_memory_kib`), so a small-memory program with a large output is not OOM-killed for its page cache.
@@ -109,7 +129,14 @@ becomes RTE named by the exception.
 ### Output limits
 
 `output_limit_length` (bytes; the case's value, else the problem's, else `limits.default_output_limit`) becomes
-isolate's `--fsize`, rounded up to KiB plus 1 KiB of slack. Only `output_prefix_length` bytes (at most 512) of the output are ever sent back.
+the run's file size limit, rounded up to KiB plus 1 KiB of slack (plus 16 MiB for a language that keeps stderr):
+isolate's `--fsize` for files the program writes, and the most the judge reads of a drained stdout or stderr. The judge
+keeps the first cap + 1 bytes of stdout (more than the cap is OLE) and the last 64 KiB of the first 16 MiB of stderr
+(searched for the exception), reads on to the limit, then closes the pipe: the program's next write gets SIGPIPE, as a
+write past `--fsize` gets SIGXFSZ, and a run killed by either is OLE. After a read that found little, the reader
+waits 1 ms, so a program that flushes every line is not slowed by waking it on every write. Unlike a file, a pipe still takes up to 64 KiB
+written past the limit before that write fails, and stdout cannot be seeked or mapped. Only `output_prefix_length` bytes
+(at most 512) of the output are ever sent back.
 
 ## Cases, batches and points
 
@@ -136,8 +163,9 @@ helper). The worker is pinned to one core.
 
 Per run: no network (an empty namespace), default directories read-only, the only extra mounts are read-only runtime trees
 (`dirs` in `languages.toml`), `--open-files=64`, `--env=PATH` and `HOME=/box`. Solution stderr goes to `/dev/null`
-except for languages that need it (see above). The solution box sees only its own input: answers and other cases never
-enter it.
+except for languages that need it (see above), whose stderr the judge drains. The solution box sees only its own input: answers and other cases never
+enter it. The case input is a read-only judge file at `/staged/<name>`, mode 0444 (`noexec`), and the box's input
+names are symlinks to it; such a run passes `--special-files` so that isolate keeps those symlinks.
 
 Every box's `/dev` holds `null`, `zero`, `full`, `random`, `urandom` (the host's devices) and the links `fd`, `stdin`,
 `stdout`, `stderr`, nothing else (`crates/sandbox/src/box_dev.rs`); `/proc/keys` and `/proc/key-users` cannot be read.

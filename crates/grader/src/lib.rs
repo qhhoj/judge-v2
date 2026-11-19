@@ -6,6 +6,7 @@ pub mod checkers;
 pub mod compile;
 pub mod error;
 pub mod file_io;
+pub mod file_io_memory;
 pub mod generate;
 pub mod grade;
 pub mod interactor;

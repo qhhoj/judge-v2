@@ -43,6 +43,8 @@ LockPersonality=yes
 RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 UMask=0022
+# The file_io input is locked in memory for each run (crates/sandbox/src/pinned_input.rs).
+LimitMEMLOCK=infinity
 
 [Install]
 WantedBy=multi-user.target

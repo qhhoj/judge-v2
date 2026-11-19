@@ -78,6 +78,7 @@ fn sandbox_config(config: &Config) -> SandboxConfig {
             .disk_quota
             .map(|q| DiskQuota { headroom_kib: q.headroom_kib, headroom_inodes: q.headroom_inodes }),
         gate: Arc::new(RunGate::new(Some(config.run_lock()))),
+        isolate_config: config.isolate.config.clone(),
     }
 }
 

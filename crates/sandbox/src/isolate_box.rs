@@ -1,19 +1,22 @@
 //! One isolate box. Every run starts from a fresh `--init`, so no run sees another's files (docs/grading.md#box-lifecycle).
 //! A channel run (`command_with_channel`) is the only way fds above 2 reach a box.
 
+use crate::drain::{Drain, Drained, Keep};
 use crate::error::SandboxError;
+use crate::memory_sampler::{MemorySample, MemorySampler};
 use crate::meta::{Meta, parse_meta};
 use crate::room::Room;
 use crate::run_gate::{RunGate, RunPass};
-use crate::spec::{RunSpec, isolate_args};
+use crate::spec::{READ_ONLY_DIR, RunSpec, isolate_args};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::fd::OwnedFd;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A disk quota on everything in a box (isolate `--quota`, in 1 KiB blocks); `--fsize` caps one file only.
 /// isolate sets it on the box uid at `--init`, and at `--run` charges every file in `/box` to that uid, the
@@ -56,6 +59,8 @@ pub struct SandboxConfig {
     pub disk_quota: Option<DiskQuota>,
     /// Held by every run of a box with this config (`run_gate`); clones share it.
     pub gate: Arc<RunGate>,
+    /// isolate's own config: where the box cgroups are (`isolate_config::box_memory_stat`).
+    pub isolate_config: PathBuf,
 }
 
 impl Default for SandboxConfig {
@@ -66,6 +71,7 @@ impl Default for SandboxConfig {
             meta_dir: "/var/cache/qhhoj-judge/meta".into(),
             disk_quota: None,
             gate: Arc::default(),
+            isolate_config: "/usr/local/etc/isolate".into(),
         }
     }
 }
@@ -91,6 +97,8 @@ pub struct IsolateBox {
     core: Option<u32>,
     dir: PathBuf,
     dirty: bool,
+    /// Files were put in with `put_read_only` since the last reset.
+    read_only: bool,
 }
 
 /// isolate's error when the box root cannot take a quota: "quotas have not been enabled", or `quotactl` failed.
@@ -143,7 +151,7 @@ impl IsolateBox {
         crate::box_dev::prepare(&box_dev_dir(config))?;
         cleanup_box(config, id)?;
         let dir = init_box(config, id, config.disk_quota, Room::default())?;
-        Ok(IsolateBox { config: config.clone(), id, core, dir, dirty: false })
+        Ok(IsolateBox { config: config.clone(), id, core, dir, dirty: false, read_only: false })
     }
 
     pub fn reset(&mut self) -> Result<(), SandboxError> {
@@ -163,6 +171,7 @@ impl IsolateBox {
 
     fn reset_to(&mut self, headroom: Option<DiskQuota>, room: Room) -> Result<(), SandboxError> {
         cleanup_box(&self.config, self.id)?;
+        self.remove_read_only()?;
         self.dir = init_box(&self.config, self.id, headroom, room)?;
         self.dirty = false;
         Ok(())
@@ -211,6 +220,46 @@ impl IsolateBox {
         write_new(&target, &mut File::open(src)?, if executable { 0o755 } else { 0o644 })
     }
 
+    /// Puts a copy of a host file where the run can read it but not change it, and the box file `name` as a
+    /// symlink to it; returns the copy's host path. The copy is the judge's (mode 0444) on a read-only mount
+    /// (`spec::READ_ONLY_DIR`), so the box can neither write it nor take it over, whereas isolate gives every
+    /// file in `/box` to the box uid. `src` is trusted (the daemon's own files); `name` is not.
+    pub fn put_read_only(&mut self, name: &str, src: &Path) -> Result<PathBuf, SandboxError> {
+        let target = self.box_path(name)?;
+        let copy = self.make_read_only_dir()?.join(name);
+        write_new(&copy, &mut File::open(src)?, 0o444)?;
+        if std::fs::symlink_metadata(&target).is_ok() {
+            std::fs::remove_file(&target)?;
+        }
+        std::os::unix::fs::symlink(Path::new("/").join(READ_ONLY_DIR).join(name), &target)?;
+        self.read_only = true;
+        Ok(copy)
+    }
+
+    /// The host directory of this box's read-only files: in a private (0700) directory of the judge's, and
+    /// itself 0711 so the box uid can open a file in it by name.
+    fn read_only_dir(&self) -> PathBuf {
+        self.config.meta_dir.join("read-only").join(self.id.to_string())
+    }
+
+    fn make_read_only_dir(&self) -> Result<PathBuf, SandboxError> {
+        let dir = self.read_only_dir();
+        let parent = dir.parent().unwrap_or(&self.config.meta_dir);
+        for (path, mode) in [(parent, 0o700), (dir.as_path(), 0o711)] {
+            make_dir(path)?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+        }
+        Ok(dir)
+    }
+
+    fn remove_read_only(&mut self) -> Result<(), SandboxError> {
+        self.read_only = false;
+        match std::fs::remove_dir_all(self.read_only_dir()) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        }
+    }
+
     pub fn put_bytes(&self, name: &str, bytes: &[u8]) -> Result<(), SandboxError> {
         write_new(&self.box_path(name)?, &mut &bytes[..], 0o644)
     }
@@ -235,14 +284,8 @@ impl IsolateBox {
         Ok(file)
     }
 
-    /// Bytes of disk the regular box file `name` holds: its allocated blocks, not its length, so the holes
-    /// of a sparse file count nothing. 0 for a missing file or a symlink.
-    pub fn allocated_bytes(&self, name: &str) -> u64 {
-        let blocks = self.open_output(name).and_then(|file| Ok(file.metadata()?.blocks()));
-        blocks.map_or(0, |blocks| blocks * 512)
-    }
-
-    /// Gives the box file `existing` a second name. Returns false, changing nothing, when `name` is taken.
+    /// Gives the box file `existing` a second name (a symlink itself, never its target). Returns false, changing
+    /// nothing, when `name` is taken.
     pub fn link(&self, existing: &str, name: &str) -> Result<bool, SandboxError> {
         match std::fs::hard_link(self.box_path(existing)?, self.box_path(name)?) {
             Ok(()) => Ok(true),
@@ -293,7 +336,13 @@ impl IsolateBox {
             line.extend([self.config.taskset_bin.clone().into(), "-c".into(), core.to_string().into()]);
         }
         line.push(self.config.isolate_bin.clone().into());
-        let args = isolate_args(self.id, spec, &self.meta_path(), &box_dev_dir(&self.config));
+        let read_only = self.read_only.then(|| self.read_only_dir());
+        let args = isolate_args(
+            self.id,
+            spec,
+            &self.meta_path(),
+            (&box_dev_dir(&self.config), read_only.as_deref()),
+        );
         line.extend(args.into_iter().map(OsString::from));
         Ok(line)
     }
@@ -356,16 +405,98 @@ impl IsolateBox {
 
     /// One run, holding a shared pass of the run gate from before the preload until isolate has exited.
     pub fn run(&mut self, spec: &RunSpec) -> Result<Meta, SandboxError> {
+        self.run_with(spec, [Stdio::null(), Stdio::null(), Stdio::null()])
+    }
+
+    /// One run whose stdin, when given, is `stdin` (a `sealed_input` copy) and whose stdout and stderr, as
+    /// `drains` asks, are pipes the judge reads (`drain`), each held to the spec's file size limit. A stream
+    /// given here must not also be redirected by the spec's stdio. With `sample_memory`, the box cgroup's
+    /// `memory.stat` is read while the run is live and once after it (`memory_sampler`).
+    pub fn run_drained(
+        &mut self,
+        spec: &RunSpec,
+        stdin: Option<File>,
+        (drains, sample_memory): (Drains, bool),
+    ) -> Result<DrainedRun, SandboxError> {
+        let stdio = &spec.stdio;
+        let given = [stdin.is_some(), drains.stdout.is_some(), drains.stderr.is_some()];
+        let named = [&stdio.stdin, &stdio.stdout, &stdio.stderr].map(Option::is_some);
+        if given.iter().zip(named).any(|(given, named)| *given && named) {
+            return Err(SandboxError::Isolate(
+                "a stream the judge gives is also redirected to a file".into(),
+            ));
+        }
+        let limit = spec.limits.fsize_kib.saturating_mul(1024);
+        let (stdout, stdout_pipe) = start_drain(drains.stdout, limit)?;
+        let (stderr, stderr_pipe) = start_drain(drains.stderr, limit)?;
+        let stdin = stdin.map_or_else(Stdio::null, Stdio::from);
+        let (meta, memory) = self.run_sampled(spec, [stdin, stdout_pipe, stderr_pipe], sample_memory)?;
+        Ok(DrainedRun { meta, stdout: finish_drain(stdout)?, stderr: finish_drain(stderr)?, memory })
+    }
+
+    /// The command (and with it the daemon's copies of the fds in `stdio`) is dropped on return.
+    fn run_with(&mut self, spec: &RunSpec, stdio: [Stdio; 3]) -> Result<Meta, SandboxError> {
+        self.run_sampled(spec, stdio, false).map(|(meta, _)| meta)
+    }
+
+    /// `run_with`, and with `sample` the box cgroup's memory samples from the start of the run to its end.
+    fn run_sampled(
+        &mut self,
+        spec: &RunSpec,
+        [stdin, stdout, stderr]: [Stdio; 3],
+        sample: bool,
+    ) -> Result<(Meta, Option<MemorySample>), SandboxError> {
         let _pass = self.run_pass()?;
         let mut command = self.command(spec)?;
         self.dirty = true;
-        let status = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+        let sampler = if sample { Some(MemorySampler::start(&self.memory_stat()?)?) } else { None };
+        let status = command.stdin(stdin).stdout(stdout).stderr(stderr).status();
+        let memory = sampler.map(MemorySampler::finish).transpose();
+        let status = status?;
         // isolate exits 1 for a program that failed and 2 for its own errors; the meta file decides.
         if status.code() == Some(2) {
             return Err(SandboxError::Isolate(format!("isolate exited with {status}")));
         }
-        self.read_meta()
+        Ok((self.read_meta()?, memory?))
     }
+
+    /// This box's cgroup `memory.stat`, which isolate makes at `--init` and keeps until the next one.
+    fn memory_stat(&self) -> Result<PathBuf, SandboxError> {
+        crate::isolate_config::box_memory_stat(&self.config.isolate_config, self.id).ok_or_else(|| {
+            SandboxError::Isolate(format!("no cg_root in {}", self.config.isolate_config.display()))
+        })
+    }
+}
+
+/// Which of a run's stdout and stderr the judge drains, and what it keeps of each (`IsolateBox::run_drained`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Drains {
+    pub stdout: Option<Keep>,
+    pub stderr: Option<Keep>,
+}
+
+/// A drained run: its meta file and what was kept of each stream (empty for one not drained).
+#[derive(Debug)]
+pub struct DrainedRun {
+    pub meta: Meta,
+    pub stdout: Drained,
+    pub stderr: Drained,
+    /// The box cgroup's memory samples, when the run asked for them.
+    pub memory: Option<MemorySample>,
+}
+
+/// How long a drained stream may stay open after isolate exited (isolate kills the box's processes first).
+const DRAIN_GRACE: Duration = Duration::from_secs(5);
+
+fn start_drain(keep: Option<Keep>, limit: u64) -> Result<(Option<Drain>, Stdio), SandboxError> {
+    match keep {
+        Some(keep) => Drain::start(keep, limit).map(|(drain, pipe)| (Some(drain), Stdio::from(pipe))),
+        None => Ok((None, Stdio::null())),
+    }
+}
+
+fn finish_drain(drain: Option<Drain>) -> Result<Drained, SandboxError> {
+    drain.map_or(Ok(Drained::default()), |drain| drain.finish(DRAIN_GRACE))
 }
 
 impl Drop for IsolateBox {
@@ -374,6 +505,7 @@ impl Drop for IsolateBox {
             eprintln!("isolate cleanup of box {} failed: {error}", self.id);
         }
         let _ = self.remove_meta();
+        let _ = self.remove_read_only();
     }
 }
 

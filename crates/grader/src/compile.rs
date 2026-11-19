@@ -247,7 +247,7 @@ mod tests {
                 preload: vec![],
                 inherit_fds: false,
             };
-            isolate_args(0, &spec, Path::new("/m"), Path::new("/d"))
+            isolate_args(0, &spec, Path::new("/m"), (Path::new("/d"), None))
         };
         // the language's host dirs only: the --dir rules every run has are left out
         let flags = |dirs: Vec<String>| {

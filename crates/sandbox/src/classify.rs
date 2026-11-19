@@ -1,6 +1,6 @@
 //! isolate meta → run verdict (docs/grading.md#verdict-rules).
 
-use crate::meta::Meta;
+use crate::meta::{MemoryCount, Meta};
 use crate::spec::{Limits, whole_ms};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,20 +14,23 @@ pub enum RunVerdict {
     Internal(String),
 }
 
-/// What a run did with its files: `written` bytes of output against its `cap`, and `own_files_kib`, the
-/// page cache its own input and output files may hold (`Meta::memory_kib`; None when not measured).
+/// What a run did with its output: `written` bytes against its `cap`, whether a drained stdout or stderr
+/// reached the file size limit (`cut`, `drain`), and which counter its memory is (`MemoryCount`).
 #[derive(Debug, Clone, Copy)]
 pub struct OutputUse {
     pub written: u64,
     pub cap: u64,
-    pub own_files_kib: Option<u64>,
+    pub cut: bool,
+    pub memory: MemoryCount,
 }
 
 impl OutputUse {
-    /// A run whose output is not capped and whose files are not measured (compilers, jury programs).
-    pub const UNMEASURED: OutputUse = OutputUse { written: 0, cap: u64::MAX, own_files_kib: None };
+    /// A run whose output is not capped and whose memory is the smaller counter (compilers, jury programs).
+    pub const UNMEASURED: OutputUse =
+        OutputUse { written: 0, cap: u64::MAX, cut: false, memory: MemoryCount::Smaller };
 }
 
+const SIGPIPE: i32 = 13;
 const SIGXFSZ: i32 = 25;
 
 pub fn signal_name(signal: i32) -> String {
@@ -50,28 +53,31 @@ pub fn signal_name(signal: i32) -> String {
 
 /// The verdict of a run made with `limits`, in order MLE, OLE, TLE, then how the program ended.
 ///
-/// MLE is the program's own memory (`Meta::memory_kib`) over `limits.memory_kib`, or an OOM kill by the
-/// cgroup, whose limit has room above the memory limit for page cache (`spec::cgroup_memory_kib`). The
-/// cgroup peak less the page cache of the run's own files (`output.own_files_kib`) is the program's, so
-/// tmpfs or memfd pages it wrote and read back unmapped count, the page cache of its input and output not.
+/// MLE is the run's memory (`Meta::memory_kib`, counted as `output.memory` says) over `limits.memory_kib`,
+/// or an OOM kill by the cgroup, whose limit has room above the memory limit for page cache
+/// (`spec::cgroup_memory_kib`).
 ///
-/// Output over the cap is OLE even when the run then timed out: the JVM ignores SIGXFSZ and `PrintStream`
-/// swallows the write error, so a Java or Kotlin print loop runs on to the time limit once its output is cut.
+/// Output over the cap is OLE even when the run then timed out: the JVM ignores SIGPIPE and SIGXFSZ and
+/// `PrintStream` swallows the write error, so a Java or Kotlin print loop runs on to the time limit once its
+/// output is cut. A run killed past the file size limit is OLE too: by SIGXFSZ for a box file, by SIGPIPE
+/// for a drained stdout or stderr the judge closed there (`drain`).
 ///
-/// A run past its time limit (status TO, CPU over the limit) is TLE (or OLE), not MLE, even when the cgroup
-/// OOM-killed it on the way to the hard cap (`spec::hard_cap_s`): it had already failed on time. On a TO
-/// isolate's max-rss is its own proxy's (~820 KiB), so `Meta::memory_kib` stays under the limit.
+/// A run isolate stopped on time (status TO) with its CPU over the limit is TLE (or OLE), not MLE, even when its
+/// memory was over the limit or the OOM flag is set: it had already failed on time. A run the cgroup OOM-killed
+/// first (status SG) is MLE, even when its CPU had passed the limit on the way to the hard cap
+/// (`spec::hard_cap_s`). On a TO isolate's max-rss is its own proxy's (~820 KiB), so `Meta::memory_kib` stays
+/// under the limit.
 pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     let status = meta.status.as_deref();
     if status == Some("XX") {
         return RunVerdict::Internal(meta.message.clone());
     }
     let past_time_limit = status == Some("TO") && whole_ms(meta.time_s) > whole_ms(limits.time_s);
-    let over_memory = meta.oom_killed || meta.memory_kib(output.own_files_kib) > limits.memory_kib;
+    let over_memory = meta.oom_killed || meta.memory_kib(output.memory) > limits.memory_kib;
     if over_memory && !past_time_limit {
         return RunVerdict::Mle;
     }
-    if output.written > output.cap || meta.exit_signal == Some(SIGXFSZ) {
+    if over_output(meta, output) {
         return RunVerdict::Ole;
     }
     if status == Some("TO") {
@@ -84,40 +90,39 @@ pub fn classify(meta: &Meta, output: OutputUse, limits: &Limits) -> RunVerdict {
     }
 }
 
+/// Output over the cap, or a run killed by writing past the file size limit.
+fn over_output(meta: &Meta, output: OutputUse) -> bool {
+    let signal = meta.exit_signal;
+    output.written > output.cap || signal == Some(SIGXFSZ) || (output.cut && signal == Some(SIGPIPE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::meta::parse_meta;
 
-    /// The verdict under a `memory_kib` limit of a run whose own files hold `files_kib` of page cache.
-    fn verdict_with_files(meta: &str, files_kib: u64, memory_kib: u64) -> RunVerdict {
-        let limits = Limits::for_solution(1.0, memory_kib, 1, 24 << 20);
-        let output = OutputUse { written: 0, cap: 24 << 20, own_files_kib: Some(files_kib) };
+    /// The verdict under a 16 MiB limit and a 4096-byte output cap of a contestant's run that wrote `written`
+    /// bytes, its drained output `cut` or not.
+    fn verdict_cut(meta: &str, written: u64, cut: bool) -> RunVerdict {
+        let limits = Limits::for_solution(1.0, 16_384, 1, 4096);
+        let output = OutputUse { written, cap: 4096, cut, memory: MemoryCount::CgroupPeak };
         classify(&parse_meta(meta).unwrap(), output, &limits)
     }
 
-    /// The verdict under a 16 MiB limit and a 4096-byte output cap of a run that wrote `written` bytes.
     fn verdict(meta: &str, written: u64) -> RunVerdict {
-        let limits = Limits::for_solution(1.0, 16_384, 1, 4096);
-        let output = OutputUse { written, cap: 4096, own_files_kib: Some(written.div_ceil(1024)) };
-        classify(&parse_meta(meta).unwrap(), output, &limits)
+        verdict_cut(meta, written, false)
     }
 
     #[test]
-    fn tmpfs_pages_count_against_the_limit_and_the_page_cache_of_the_runs_own_files_does_not() {
-        // 60 MiB of heap and 22 MiB in /dev/shm read back with pread: under the cgroup limit, no OOM kill
-        let shm = "exitcode:0\nmax-rss:62840\ncg-mem:85472\n";
-        assert_eq!(verdict_with_files(shm, 0, 65_536), RunVerdict::Mle);
+    fn pages_a_contestant_holds_unmapped_count_against_the_limit() {
+        // 10 MiB of heap and 7 MiB in a memfd read back with pread: under the cgroup limit, no OOM kill
+        assert_eq!(verdict("exitcode:0\nmax-rss:10240\ncg-mem:17408\n", 0), RunVerdict::Mle);
+        let limits = Limits::for_solution(1.0, 16_384, 1, 4096);
+        let meta = parse_meta("exitcode:0\nmax-rss:10240\ncg-mem:17408\n").unwrap();
         assert_eq!(
-            verdict_with_files(shm, 22 << 10, 65_536),
+            classify(&meta, OutputUse::UNMEASURED, &limits),
             RunVerdict::Ok,
-            "the same peak, 22 MiB of output"
-        );
-        let evicted_input = "exitcode:0\nmax-rss:7460\ncg-mem:42720\n";
-        assert_eq!(
-            verdict_with_files(evicted_input, 40 << 10, 32_768),
-            RunVerdict::Ok,
-            "40 MiB of input read"
+            "a jury program: the smaller counter"
         );
     }
 
@@ -140,15 +145,21 @@ mod tests {
     }
 
     #[test]
+    fn a_run_killed_writing_to_an_output_closed_at_the_file_size_limit_is_ole() {
+        // A kept stderr past its allowance: the judge closed the pipe, the next write got SIGPIPE
+        assert_eq!(verdict_cut("status:SG\nexitsig:13\n", 10, true), RunVerdict::Ole);
+        let own_pipe = verdict_cut("status:SG\nexitsig:13\n", 10, false);
+        assert_eq!(own_pipe, RunVerdict::Rte { reason: "SIGPIPE".into() }, "a pipe of the program's own");
+        assert_eq!(verdict_cut("exitcode:0\n", 10, true), RunVerdict::Ok, "no write after the cut");
+    }
+
+    #[test]
     fn mle_is_the_programs_own_memory_over_the_limit_or_an_oom_kill() {
         assert_eq!(verdict("exitcode:0\nmax-rss:16385\ncg-mem:17000\n", 0), RunVerdict::Mle, "over by 1 KiB");
-        let at_the_limit = "exitcode:0\nmax-rss:16384\ncg-mem:17000\n";
-        assert_eq!(verdict_with_files(at_the_limit, 616, 16_384), RunVerdict::Ok, "exactly the limit");
-        let page_cache = "exitcode:0\nmax-rss:1800\ncg-mem:40000\n";
         assert_eq!(
-            verdict_with_files(page_cache, 38 << 10, 16_384),
+            verdict("exitcode:0\nmax-rss:16000\ncg-mem:16384\n", 0),
             RunVerdict::Ok,
-            "38 MiB of output written"
+            "exactly the limit"
         );
         // As PyPy's a+b (max-rss 56 MiB, cg-mem 19 MiB): ~37 MiB of the RSS is libpypy, cached, not charged
         let shared_objects = "exitcode:0\nmax-rss:40000\ncg-mem:9000\n";
@@ -183,7 +194,7 @@ mod tests {
         let limits = Limits::for_solution(2.01, 16_384, 1, 4096);
         let one_ms_past =
             parse_meta("time:2.011\nstatus:TO\nexitsig:9\ncg-mem:17000\ncg-oom-killed:1\n").unwrap();
-        let output = OutputUse { written: 0, cap: 4096, own_files_kib: Some(0) };
+        let output = OutputUse { written: 0, cap: 4096, cut: false, memory: MemoryCount::CgroupPeak };
         assert_eq!(classify(&one_ms_past, output, &limits), RunVerdict::Tle, "TL 2.01: 2.011 s is past it");
     }
 }

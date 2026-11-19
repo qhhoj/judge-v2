@@ -4,8 +4,10 @@
 //! and the deployer adds them (DEPLOY.md).
 
 use judge_sandbox::boxes::box_pair;
+use judge_sandbox::isolate_config::cgroup_parent;
+pub(crate) use judge_sandbox::isolate_config::settings;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// How the owned boxes are kept on their cores.
 #[derive(Debug, PartialEq, Eq)]
@@ -30,16 +32,6 @@ fn box_cores(box_base: u32, cores: &[u32]) -> Vec<(u32, u32)> {
 /// The isolate config lines that pin both boxes of every worker to the worker's core.
 pub fn isolate_cpus_lines(box_base: u32, cores: &[u32]) -> String {
     box_cores(box_base, cores).iter().map(|(id, core)| format!("box{id}.cpus = {core}\n")).collect()
-}
-
-/// `key = value` settings of an isolate config, comments and blank lines skipped.
-pub(crate) fn settings(isolate_config: &str) -> impl Iterator<Item = (&str, &str)> {
-    isolate_config
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| line.split_once('='))
-        .map(|(key, value)| (key.trim(), value.trim()))
 }
 
 fn box_cpus(isolate_config: &str) -> BTreeMap<u32, &str> {
@@ -71,15 +63,6 @@ pub fn pinning(isolate_config: &str, subtree_control: &str, box_base: u32, cores
         );
     }
     if unpinned.is_empty() { Pinning::Cpuset } else { Pinning::TasksetOnly(unpinned) }
-}
-
-/// isolate's cgroup parent: `cg_root`, or for `auto:FILE` the path isolate's cg keeper wrote to FILE.
-fn cgroup_parent(isolate_config: &str) -> Option<PathBuf> {
-    let cg_root = settings(isolate_config).find(|(key, _)| *key == "cg_root")?.1;
-    match cg_root.strip_prefix("auto:") {
-        Some(file) => Some(std::fs::read_to_string(file).ok()?.lines().next()?.trim().into()),
-        None => Some(cg_root.into()),
-    }
 }
 
 /// `pinning` of this host: reads isolate's config at `isolate_config` and its cgroup parent.

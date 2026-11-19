@@ -9,8 +9,7 @@ use crate::error::GradeError;
 use crate::languages::{Placeholders, expand};
 use crate::program::Program;
 use crate::run_case::{
-    Runnable, STDERR_FILE, contestant_dirs, contestant_room, keeps_stderr, own_files_kib, refine,
-    reported_memory, solution_limits,
+    Runnable, contestant_dirs, contestant_room, keeps_stderr, reported_memory, solution_limits,
 };
 use crate::session::Boxes;
 use crate::session::channel::PipeChannel;
@@ -21,6 +20,7 @@ use crate::session::verdict::MemberRun;
 use judge_interface::runtime::{CHARGE_FILE, PROTOCOL_FAULT_FILE};
 use judge_sandbox::classify::{OutputUse, RunVerdict, classify};
 use judge_sandbox::error::SandboxError;
+use judge_sandbox::meta::MemoryCount;
 use judge_sandbox::spec::{Limits, RunSpec, Stdio};
 use judge_sandbox::{IsolateBox, Room};
 use std::fs::File;
@@ -61,22 +61,26 @@ pub fn jury_limits(contestant: &Limits, output_cap: u64) -> Limits {
     limits
 }
 
-fn contestant_spec(case: &SplitCase) -> RunSpec {
+/// A split problem accepts only C++ (`SPLIT_LANGUAGES`), whose stderr is never kept: a contestant that keeps
+/// it is refused, as its fds 0-2 carry no pipe to drain it.
+fn contestant_spec(case: &SplitCase) -> Result<RunSpec, GradeError> {
     let (program, limits) = (case.contestant.program, case.contestant.limits);
-    let stderr = if keeps_stderr(program) { STDERR_FILE } else { "/dev/null" };
-    RunSpec {
+    if keeps_stderr(program) {
+        return Err(GradeError::Io("a split contestant's stderr cannot be kept".into()));
+    }
+    Ok(RunSpec {
         argv: expand(&program.run, &Placeholders { memory_kib: limits.memory_kib, class: None }),
         limits: solution_limits(case.contestant, case.output_cap),
         stdio: Stdio {
             stdin: Some("/dev/null".into()),
             stdout: Some("/dev/null".into()),
-            stderr: Some(stderr.into()),
+            stderr: Some("/dev/null".into()),
         },
         env: program.env.clone(),
         dirs: contestant_dirs(program),
         preload: program.preload.clone(),
         inherit_fds: true,
-    }
+    })
 }
 
 fn jury_spec(case: &SplitCase, contestant: &Limits) -> RunSpec {
@@ -119,13 +123,13 @@ fn prepare(boxes: &mut Boxes, case: &SplitCase) -> Result<(), GradeError> {
 /// Runs the pair and copies the jury's `output` to `output` (the checker resets the helper box).
 pub fn run_split(mut boxes: Boxes, case: &SplitCase, output: &Path) -> Result<SplitRun, GradeError> {
     prepare(&mut boxes, case)?;
-    let contestant = contestant_spec(case);
+    let contestant = contestant_spec(case)?;
     let jury = jury_spec(case, &contestant.limits);
     let manager = MemberSpec { sandbox: &*boxes.helper, run: &jury };
     let member = MemberSpec { sandbox: &*boxes.solution, run: &contestant };
     let mut session = spawn_session(&manager, &member, ChannelPlan::Pipes(PipeChannel::create()?))?;
     wait_all(&mut session, host_deadline(&jury.limits))?;
-    let contestant_run = contestant_result(boxes.solution, case, &contestant.limits)?;
+    let contestant_run = contestant_result(boxes.solution, &contestant.limits)?;
     let (jury_verdict, jury_time_s) = jury_result(boxes.helper, case, (&jury.limits, output))?;
     let charge = boxes.helper.read_output(CHARGE_FILE, CHARGE_BYTES).unwrap_or_default();
     Ok(SplitRun {
@@ -154,22 +158,18 @@ fn not_internal(verdict: RunVerdict) -> Result<RunVerdict, GradeError> {
     }
 }
 
-/// The contestant's own files are its kept stderr alone (no input, no output file).
-fn contestant_result(
-    sandbox: &IsolateBox,
-    case: &SplitCase,
-    limits: &Limits,
-) -> Result<MemberRun, GradeError> {
+/// The contestant writes no file the judge gave it (no input, no output, no stderr): its memory is its cgroup
+/// peak.
+fn contestant_result(sandbox: &IsolateBox, limits: &Limits) -> Result<MemberRun, GradeError> {
     let meta = sandbox.read_meta()?;
-    let program = case.contestant.program;
-    let own_files = Some(own_files_kib(sandbox, program, 0, None));
-    let usage = OutputUse { own_files_kib: own_files, ..OutputUse::UNMEASURED };
-    let verdict = refine(not_internal(classify(&meta, usage, limits))?, program, sandbox);
-    let memory_kib = reported_memory(&meta, own_files, &verdict);
+    let usage = OutputUse { memory: MemoryCount::CgroupPeak, ..OutputUse::UNMEASURED };
+    let verdict = not_internal(classify(&meta, usage, limits))?;
+    let memory_kib = reported_memory(&meta, &verdict);
     Ok(MemberRun { verdict, time_s: meta.time_s, memory_kib })
 }
 
-/// The jury's verdict (its `output` over the cap is OLE, as the one process's was) and its CPU seconds.
+/// The jury's verdict (its `output` over the cap is OLE, as the one process's was) and its CPU seconds. Its
+/// memory is the smaller counter, as for every jury program.
 fn jury_result(
     sandbox: &IsolateBox,
     case: &SplitCase,
@@ -179,9 +179,7 @@ fn jury_result(
     // One byte past the cap tells "exactly the cap" (fine) from "over it" (OLE).
     let written = sandbox.read_output(JURY_OUTPUT, case.output_cap + 1).unwrap_or_default();
     std::fs::write(output, &written)?;
-    let own_files = own_files_kib(sandbox, case.jury, case.input.metadata()?.len(), Some(JURY_OUTPUT));
-    let usage =
-        OutputUse { written: written.len() as u64, cap: case.output_cap, own_files_kib: Some(own_files) };
+    let usage = OutputUse { written: written.len() as u64, cap: case.output_cap, ..OutputUse::UNMEASURED };
     Ok((not_internal(classify(&meta, usage, limits))?, meta.time_s))
 }
 
