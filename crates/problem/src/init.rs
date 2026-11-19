@@ -89,6 +89,9 @@ pub struct CaseEntry {
     /// resolve to the same checker, otherwise the problem is UNSUPPORTED (`checker.per_case`).
     #[serde(default)]
     pub checker: Option<CheckerSpec>,
+    /// Written by the backend when a case has generator arguments (judge contract `generator_args`); grading ignores it.
+    #[serde(default)]
+    pub generator_args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
