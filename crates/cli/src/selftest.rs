@@ -10,10 +10,8 @@ use judge_grader::languages::{LanguageRegistry, host_languages};
 use judge_grader::manifest::{self, Manifest, Row};
 use judge_grader::report::{CaseReport, Reporter};
 use judge_sandbox::boxes::owned_box_ids;
-use judge_sandbox::{RunGate, SandboxConfig};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 #[derive(clap::Args)]
 pub struct SelftestArgs {
@@ -111,18 +109,13 @@ fn plan_with_config(
     let slot_cores = worker_cores(config, sysfs);
     let live_boxes = owned_box_ids(config.box_base, slot_cores.len() as u32);
     check_boxes(args.box_base, &live_boxes)?;
-    let sandbox = SandboxConfig {
-        isolate_bin: config.isolate.bin.clone(),
-        taskset_bin: config.isolate.taskset.clone(),
-        gate: Arc::new(RunGate::new(Some(config.run_lock()))),
-        isolate_config: config.isolate.config.clone(),
-        ..SandboxConfig::default()
-    };
+    let sandbox = judge_daemon::run::sandbox_config(config);
     let core = Some(spare_core(args.core, &slot_cores, sysfs)?);
     Ok(Plan {
         languages: args.languages.clone().unwrap_or_else(|| config.languages_file.clone()),
         testlib: args.testlib.clone().unwrap_or_else(|| config.testlib_dir.clone()),
         programs,
+        // The manifest's small output limit, not `[limits]`: its OLE rows must hit the limit before the time limit.
         boxes: Boxes { base: args.box_base, core, sandbox, defaults: manifest::DEFAULTS },
         live_boxes,
     })

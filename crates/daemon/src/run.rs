@@ -68,7 +68,9 @@ fn fresh_dirs(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sandbox_config(config: &Config) -> SandboxConfig {
+/// The box every run gets from `config`: isolate, meta dir, disk quota and run gate. `selftest` uses it too, so the
+/// install gate proves the box production grades in.
+pub fn sandbox_config(config: &Config) -> SandboxConfig {
     SandboxConfig {
         isolate_bin: config.isolate.bin.clone(),
         taskset_bin: config.isolate.taskset.clone(),
