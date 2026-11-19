@@ -71,7 +71,7 @@ bridged checkers written in Pascal or Java that include testlib do not compile (
 
 ## Grading outcomes (`judge_submission`)
 
-- Refused before any box is used: an init.yml feature not graded here (generator, `nobigmath`, a custom checker
+- Refused before any box is used: an init.yml feature not graded here (an unknown key such as `generator`, two modes, `nobigmath`, a custom checker
   of a kind not graded here wherever init.yml names it (problem, interactive, batch or case: `checker.<type>`), a
   non-testlib interactor, per-case checker overrides) is `RETRY UNSUPPORTED`; a language with no runtime on
   this judge (SCRATCH, or a key removed at start) is `RETRY RUNTIME_MISSING`.

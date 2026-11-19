@@ -166,7 +166,7 @@ fn an_unsupported_problem_is_refused_before_compiling() {
     let mut b = bench(8);
     b.write(
         "gen",
-        &[("init.yml", b"generator: gen.cpp\ntest_cases:\n- {in: 1.in, out: 1.out, points: 1}\n")],
+        &[("init.yml", b"hints: [nobigmath]\ntest_cases:\n- {in: 1.in, out: 1.out, points: 1}\n")],
     );
     let (outcome, rec) = b.run("gen", "CPP17", CPP_SUM);
     assert_eq!(outcome, Outcome::Retry(RetryReason::Unsupported));
