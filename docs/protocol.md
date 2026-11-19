@@ -110,6 +110,5 @@ holds; judges need no HTTP egress to the site. Test generation (`GenerateTests`,
 
 ## Dev-only gates
 
-Setting `control_dir` in the config (loopback bridges only) makes the daemon pause at three points while a hold file
-exists in that directory: `hold-ack` before `Accepted`, `hold-begin` before `GradingStarted`, `hold-end` before `Final`.
-The real-backend end-to-end journey uses them to abort or rejudge a submission mid-run.
+Setting `control_dir` in the config (loopback bridges only) makes the daemon pause before `Accepted` while `hold-ack`
+exists in that directory. Tests use it to abort or reassign a submission mid-run (conformance scenario 28b).

@@ -6,14 +6,16 @@
 //! when it rechecks a loose-file problem's stamp at the end.
 
 use crate::batcher::{CaseBatcher, MAX_BATCH_AGE};
-use crate::gates::{Gates, Stage};
+use crate::gates::Gates;
 use crate::generation::{GenerationAssignment, GenerationLink};
 use crate::metrics::{Metrics, outcome_label};
 use crate::outbox::{AssignmentRef, Body, Outboxes};
 use crate::source::{MAX_FILE_SOURCE, SourceFetch};
 use crate::wire::Assignment;
 use judge_grader::generate::{Control, GenerationFailure, GenerationJob, generate_tests};
-use judge_grader::judge::{JudgeEnv, Outcome, RetryReason, Submission, SubmissionSource, judge_submission};
+use judge_grader::judge::{
+    JudgeEnv, Outcome, RetryReason, Submission, SubmissionSource, judge_submission, outcome_of_data,
+};
 use judge_grader::report::{CaseReport, Reporter};
 use judge_problem::data_version::DataError;
 use judge_problem::resolve::{ResolvedProblem, Resolver};
@@ -116,7 +118,6 @@ struct ChannelReporter {
     tx: mpsc::UnboundedSender<Event>,
     abort: Arc<AtomicBool>,
     outboxes: Arc<Outboxes>,
-    gates: Gates,
 }
 
 impl Reporter for ChannelReporter {
@@ -125,7 +126,6 @@ impl Reporter for ChannelReporter {
     }
 
     fn started(&mut self, pretested: bool, case_count: u32) {
-        self.gates.wait_blocking(Stage::Begin, &self.abort);
         let _ = self.tx.send(Event::Started(pretested, case_count));
     }
 
@@ -152,7 +152,7 @@ impl Reporter for ChannelReporter {
 
 /// One job on this slot's runner. The outbox was opened by `Pool::assign`, so acks that arrive before the worker starts find it.
 pub async fn process(deps: &WorkerDeps, runner: Box<dyn Runner>, job: Job) -> Box<dyn Runner> {
-    deps.gates.wait(Stage::Ack, &job.abort).await;
+    deps.gates.wait_for_ack(&job.abort).await;
     if job.aborted() {
         // Aborted or dropped before Accepted: only Final{ABORTED}, at seq 1 (docs/protocol.md#reconnect-and-resume: every killed run ends with a Final).
         finish(deps, &job, Outcome::Aborted, 0).await;
@@ -216,10 +216,7 @@ async fn resolve(deps: &WorkerDeps, a: &Assignment) -> Result<ResolvedProblem, O
         .await
         .map_err(|e| Outcome::InternalError(e.to_string()))?;
     deps.metrics.data_wait.observe(started.elapsed().as_secs_f64());
-    resolved.map_err(|error| match error {
-        DataError::Unavailable { .. } => Outcome::Retry(RetryReason::DataUnavailable),
-        other => Outcome::InternalError(other.to_string()),
-    })
+    resolved.map_err(outcome_of_data)
 }
 
 /// What a runner grades.
@@ -264,7 +261,6 @@ async fn grade(
         tx,
         abort: job.abort.clone(),
         outboxes: deps.outboxes.clone(),
-        gates: deps.gates.clone(),
     };
     let forwarder = Forwarder::new(deps, &job.assignment);
     let forward = tokio::spawn(forwarder.run(rx));
@@ -374,7 +370,6 @@ impl Forwarder {
 /// the bridge frees that slot only on this Final (docs/protocol.md#reconnect-and-resume).
 async fn finish(deps: &WorkerDeps, job: &Job, outcome: Outcome, data_version_used: u64) {
     let r = &job.assignment.r;
-    deps.gates.wait(Stage::End, &job.abort).await;
     let outcome = if job.aborted() { Outcome::Aborted } else { outcome };
     deps.metrics.assignment_finished(&outcome);
     tracing::info!(
@@ -445,7 +440,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let outboxes = Arc::new(Outboxes::new(OUTBOX_WATERMARK));
         let abort = Arc::new(AtomicBool::new(false));
-        let mut reporter = ChannelReporter { tx, abort, outboxes, gates: Gates::default() };
+        let mut reporter = ChannelReporter { tx, abort, outboxes };
         reporter.cases(vec![ac(1), ac(2), ac(3)]);
         reporter.case(ac(4));
         reporter.case(ac(5));

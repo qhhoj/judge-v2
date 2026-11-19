@@ -28,7 +28,7 @@ use crate::split::contestant::contestant_job;
 use crate::split::jury::{SplitJury, build_jury};
 use crate::split::sources::{SplitSources, split_sources};
 use judge_problem::data_version::{DataError, StampSource};
-use judge_problem::init::{CheckerSpec, FilesSpec, InitYaml, InteractiveSpec, SignatureSpec};
+use judge_problem::init::{CheckerSpec, FilesSpec, InitError, InitYaml, InteractiveSpec, SignatureSpec};
 use judge_problem::plan::{CasePlan, PlanOptions, plan_cases};
 use judge_problem::resolve::ResolvedProblem;
 use judge_sandbox::{IsolateBox, RunGate};
@@ -98,8 +98,19 @@ pub fn outcome_of(error: GradeError) -> Outcome {
         GradeError::Sandbox(_) => Outcome::Retry(RetryReason::SandboxFailure),
         GradeError::RuntimeMissing(_) => Outcome::Retry(RetryReason::RuntimeMissing),
         GradeError::Unsupported(_) => Outcome::Retry(RetryReason::Unsupported),
-        GradeError::Data(DataError::Unavailable { .. }) => Outcome::Retry(RetryReason::DataUnavailable),
+        GradeError::Data(error) => outcome_of_data(error),
         GradeError::Aborted => Outcome::Aborted,
+        other => Outcome::InternalError(other.to_string()),
+    }
+}
+
+/// What a problem-data error does to a submission, before or during grading: data not there yet waits, an init.yml
+/// this build cannot grade (an unknown key, a refused combination) is refused like an unsupported feature, the rest is
+/// an internal error.
+pub fn outcome_of_data(error: DataError) -> Outcome {
+    match error {
+        DataError::Unavailable { .. } => Outcome::Retry(RetryReason::DataUnavailable),
+        DataError::Init(InitError::Unsupported(_)) => Outcome::Retry(RetryReason::Unsupported),
         other => Outcome::InternalError(other.to_string()),
     }
 }
@@ -501,6 +512,14 @@ mod tests {
             (
                 GradeError::Data(DataError::Io("1.in missing".into())),
                 Outcome::InternalError("problem data i/o: 1.in missing".into()),
+            ),
+            (
+                GradeError::Data(DataError::Init(InitError::Unsupported("generator".into()))),
+                Outcome::Retry(RetryReason::Unsupported),
+            ),
+            (
+                GradeError::Data(DataError::Init(InitError::Invalid("test_cases".into()))),
+                Outcome::InternalError("invalid init.yml: test_cases".into()),
             ),
         ];
         for (error, outcome) in cases {
