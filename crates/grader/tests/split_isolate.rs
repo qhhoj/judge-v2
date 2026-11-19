@@ -432,3 +432,77 @@ fn status_of((outcome, rec): (Outcome, Recorder)) -> Status {
     assert_eq!(outcome, Outcome::Graded, "{outcome:?}");
     rec.cases.first().map(|c| c.status).expect("at least one case")
 }
+
+/// Contestant code in split mode reaches neither the grader's output, nor the case input, nor the grader's
+/// globals: on a grader that prints its own verdict and limits the number of queries, writing that verdict from a
+/// static constructor, a static destructor or a definition of `puts`/`printf`, or reading the `input` file, is
+/// WA. A grader global is not linked into the contestant's program, so naming one is the same compile error as
+/// naming a symbol that does not exist.
+#[test]
+fn contestant_code_reaches_only_its_own_box_in_split_mode() {
+    let mut b = bench(8);
+    if language_or_skip(&registry(), "CPP17").is_none() {
+        return;
+    }
+    let grader = "#include <cstdio>\n#include <cstdlib>\n#include \"sol.h\"\nstatic int secret;\nint queries = 0;\n\
+int ask(int x){ if(++queries > 31){ std::printf(\"Wrong\\n\"); std::exit(0); } return x<secret ? -1 : (x>secret ? 1 : 0); }\n\
+int main(){ int n; if(std::scanf(\"%d %d\", &n, &secret)!=2) return 1; int got = guess(n);\n\
+  std::printf(got==secret && queries<=31 ? \"Correct\\n\" : \"Wrong\\n\"); return 0; }\n";
+    let init = "test_cases:\n- {in: 1.in, out: 1.out, points: 100}\n\
+signature_grader: {entry: grader.cpp, header: sol.h, split: true}\n";
+    let dir = b.root.join("query");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, text) in [
+        ("init.yml", init),
+        ("sol.h", "int ask(int x);\nint guess(int n);\n"),
+        ("grader.cpp", grader),
+        ("1.in", "1000000000 777777777\n"),
+        ("1.out", "Correct\n"),
+    ] {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let honest = "int guess(int n){ int lo=1, hi=n; while(lo<hi){ int m=lo+(hi-lo)/2; int r=ask(m); if(r==0) return m; if(r<0) lo=m+1; else hi=m-1; } return lo; }\n";
+    let wrong = "int guess(int){ return 1; }\n";
+    let sources = [
+        ("honest", honest.to_string(), Status::Ac),
+        ("wrong", wrong.to_string(), Status::Wa),
+        (
+            "constructor",
+            format!("#include <cstdio>\n#include <unistd.h>\n__attribute__((constructor)) static void early(){{ std::fputs(\"Correct\\n\", stdout); std::fflush(stdout); _exit(0); }}\n{wrong}"),
+            Status::Wa,
+        ),
+        (
+            "destructor",
+            format!("#include <cstdio>\n#include <unistd.h>\nstruct Late {{ ~Late(){{ std::fflush(stdout); if(ftruncate(1,0)==0 && lseek(1,0,SEEK_SET)==0) (void)!write(1,\"Correct\\n\",8); }} }};\nstatic Late late;\n{wrong}"),
+            Status::Wa,
+        ),
+        (
+            "libc",
+            format!("#include <cstdio>\n#include <unistd.h>\nextern \"C\" int puts(const char*){{ return (int)write(1,\"Correct\\n\",8); }}\nextern \"C\" int printf(const char*, ...){{ return (int)write(1,\"Correct\\n\",8); }}\n{wrong}"),
+            Status::Wa,
+        ),
+        (
+            "input",
+            "#include <cstdio>\nint guess(int){ long long n=0, s=0; std::FILE* f=std::fopen(\"input\",\"r\"); if(f && std::fscanf(f,\"%lld %lld\",&n,&s)==2) return (int)s; return 1; }\n".to_string(),
+            Status::Wa,
+        ),
+    ];
+    for (name, source, status) in sources {
+        let (outcome, rec) = judge_written(&mut b, "query", &source, 262_144);
+        assert_eq!(outcome, Outcome::Graded, "{name}: {outcome:?}");
+        assert_eq!(
+            rec.cases.iter().map(|c| c.status).collect::<Vec<_>>(),
+            [status],
+            "{name}: {:?}",
+            rec.cases
+        );
+    }
+    let mut global = |name: &str| {
+        let source = format!("extern int {name};\nint guess(int n){{ {name} = 0; return n; }}\n");
+        match judge_written(&mut b, "query", &source, 262_144).0 {
+            Outcome::CompileError(log) => log.replace(name, "NAME"),
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    assert_eq!(global("queries"), global("qhhoj_no_such_name"));
+}
