@@ -257,11 +257,7 @@ async fn grade(
         return (runner, Outcome::Aborted); // before compile
     }
     let (tx, rx) = mpsc::unbounded_channel();
-    let mut reporter = ChannelReporter {
-        tx,
-        abort: job.abort.clone(),
-        outboxes: deps.outboxes.clone(),
-    };
+    let mut reporter = ChannelReporter { tx, abort: job.abort.clone(), outboxes: deps.outboxes.clone() };
     let forwarder = Forwarder::new(deps, &job.assignment);
     let forward = tokio::spawn(forwarder.run(rx));
     // Grader events (a TLE re-run) carry the submission through this span.
