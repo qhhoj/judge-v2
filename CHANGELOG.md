@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.4 (2026-11-19)
+
+### Fixes
+
+- Security update (GHSA-7jr6-jv73-f5hm). Deploy note: the systemd unit now needs `LimitMEMLOCK=infinity` (the packaged unit sets it); install the new unit and run `systemctl daemon-reload` before restarting the daemon.
+- Security update (GHSA-f7jg-q7qp-rxr9).
+- Security update (GHSA-g3jc-p5c3-52vv).
+- A problem with no init.yml (no test cases configured) fails with "no init.yml: the problem has no test cases configured" instead of a bare "No such file or directory".
+- Conformance rows for the two-process signature mode.
+
 ## 2.7.3 (2026-11-14)
 
 ### Fixes
