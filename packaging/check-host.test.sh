@@ -63,7 +63,10 @@ expect_fail "userns open" 'echo 0 > "$root/proc/sys/kernel/apparmor_restrict_unp
 expect_fail "rw mount" 'sed -i "s/ ro,/ rw,/" "$root/proc/self/mounts"'
 expect_fail "exec mount" 'sed -i "s/noexec,//" "$root/proc/self/mounts"'
 expect_fail "slow attribute cache" 'sed -i "s/actimeo=1/actimeo=60/" "$root/proc/self/mounts"'
-expect_fail "no data mount" 'echo > "$root/proc/self/mounts"'
+expect_fail "local data the judge user can write (or no data at all)" 'echo > "$root/proc/self/mounts"; echo > "$fixtures/data-access"'
+expect_fail "local data with no access answer" 'echo > "$root/proc/self/mounts"'
+expect_pass "local data the judge user reads but cannot write (judge on the site host)" \
+  'echo "/dev/sda1 / ext4 rw,relatime 0 0" > "$root/proc/self/mounts"; echo read-only > "$fixtures/data-access"'
 expect_fail "key readable" 'chmod 0644 "$root/etc/qhhoj-judge/key"'
 expect_fail "no CA" 'rm "$root/etc/qhhoj-judge/bridge-ca.pem"'
 expect_fail "no user" 'echo > "$root/etc/passwd"'

@@ -29,8 +29,18 @@ swap_off() { [ "$(wc -l < "$R/proc/swaps")" -le 1 ]; }
 smt_off() { grep -qxE 'off|forceoff|notsupported' "$R/sys/devices/system/cpu/smt/control"; }
 userns_closed() { file_is /proc/sys/kernel/apparmor_restrict_unprivileged_userns 1 || file_is /proc/sys/kernel/unprivileged_userns_clone 0; }
 data_mount_options() { awk -v d="$DATA" '$2 == d && $3 ~ /^nfs/ { print $4 }' "$R/proc/self/mounts"; }
-data_mount_safe() {
-  local options; options="$(data_mount_options)"; [ -n "$options" ] || return 1
+# The judge only reads problem data. An external judge mounts it over NFS (read-only, no exec, short attribute cache);
+# a judge on the site host reads the site's own directory, which the judge user must be able to read but not write.
+data_safe() {
+  local options; options="$(data_mount_options)"
+  if [ -n "$options" ]; then nfs_options_safe "$options"; else local_data_read_only; fi
+}
+local_data_read_only() {
+  output_of data-access runuser -u qhhoj-judge -- sh -c 'test -r "$1" && test -x "$1" && ! test -w "$1" && echo read-only' \
+    _ "$R$DATA" | grep -x read-only >/dev/null
+}
+nfs_options_safe() {
+  local options="$1"
   for flag in ro nosuid nodev noexec; do grep -q ",$flag," <<<",$options," || return 1; done
   local actimeo; actimeo="$(echo ",$options," | sed -n 's/.*,actimeo=\([0-9]*\),.*/\1/p')"
   [ -n "$actimeo" ] && [ "$actimeo" -le 3 ]
@@ -121,7 +131,7 @@ check "swap off" swap_off
 check "SMT off (or nosmt)" smt_off
 check "kernel.randomize_va_space = 2" file_is /proc/sys/kernel/randomize_va_space 2
 check "unprivileged user namespaces restricted" userns_closed
-check "$DATA is NFS ro,nosuid,nodev,noexec with actimeo<=3" data_mount_safe
+check "$DATA is NFS ro,nosuid,nodev,noexec with actimeo<=3, or local and read-only to qhhoj-judge" data_safe
 check "judge key is 0400 root" key_private
 check "bridge CA present" test -s "$R/etc/qhhoj-judge/bridge-ca.pem"
 check "config present" test -s "$R$CONFIG"
