@@ -10,7 +10,7 @@ steps:
   - judge: {from: j1, message: {hello: {protocolMinor: 0, build: conformance, slots: 2, runtimes: [{languageKey: CPP17, name: g++, version: "13.2"}]}}}
   - bridge: {to: j1, message: {welcome: {sessionId: "*", protocolMinor: 0}}}
   - api: {judge: [s1]}
-  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}, problemCode: p1, dataVersion: "3", languageKey: CPP17, shortCircuit: true}}}}
+  - bridge: {to: j1, message: {assign: {ref: {submissionId: "{{s1}}", generation: 1}, problemCode: p1, dataVersion: "3", languageKey: CPP17, shortCircuit: true}}}
   - judge: {from: j1, message: {accepted: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
   - bridge: {to: j1, message: {ack: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 1}}}
   - judge: {from: j1, message: {compiled: {ref: {submissionId: "{{s1}}", generation: 1}, seq: 2, log: "warning: unused x"}}}
