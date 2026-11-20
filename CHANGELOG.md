@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.8.0 (2026-11-20)
+
+### Features
+
+- `selftest` requires every language of the languages file that has conformance rows, unless `languages.toml` marks it `selftest_optional = true` (BF). The `--require` flag is removed: drop it from deploy scripts.
+
+### Fixes
+
+- Conformance scenario 11-grade no longer expects `Assign.meta`; the bridge stops sending it.
+- `check-host.sh` accepts problem data on a local filesystem when the judge user can read but not write it (a judge on the site host); NFS mounts keep the flag and `actimeo` checks.
+- `check-host.sh` no longer fails at random, and an isolate warning can no longer pass: no pipeline ends in `grep -q` under pipefail.
+- An init.yml with two modes is refused as unsupported (no stored problem has one); `generator` is refused as an unknown key, with the same outcome.
+- An init.yml this judge cannot grade (an unknown key, two exclusive modes) is refused as unsupported, like an unsupported feature, instead of ending as an internal error. Only the `hold-ack` dev gate remains.
+- Test: contestant code in split mode cannot write the grader's verdict or read the case input.
+
 ## 2.7.4 (2026-11-19)
 
 ### Fixes
