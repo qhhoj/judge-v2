@@ -1,6 +1,6 @@
 # Pushes run change-file (PRs), rust, release and image; a v* tag push also publishes the GitHub Release. The isolate suite needs a tuned judge host (SMT off, no swap,
 # pinned governor); on a stock GitHub runner Pascal/Java/Kotlin compiles and a few limit verdicts differ, so it runs
-# only by hand (Actions -> ci -> Run workflow) and, authoritatively, as `selftest --require` on each judge host.
+# only by hand (Actions -> ci -> Run workflow) and, authoritatively, as `selftest` on each judge host.
 name: ci
 on: { push: { branches: [main], tags: ['v*'] }, pull_request: {}, workflow_dispatch: {} }
 # Third-party actions are pinned by commit SHA (the comment names the tag); bump them deliberately.
@@ -75,7 +75,7 @@ jobs:
     timeout-minutes: 60
     env:
       JUDGE_TEST_ISOLATE_PATCHED: "1" # isolate is built below with packaging/isolate-2.6-keys.patch
-      JUDGE_SUITE_REQUIRE: C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT
+      JUDGE_SUITE_REQUIRE_ALL: "1" # every language not `selftest_optional` in languages.toml must be installed
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/setup-protoc
@@ -117,11 +117,10 @@ jobs:
           isolate --cg -b 0 --init && isolate --cg -b 0 --cleanup
       - name: isolate tests (one test thread, the tests share isolate boxes)
         run: .github/scripts/only-stdio.sh cargo test --locked -p judge-sandbox -p judge-grader -p judge-daemon -p judge-cli --features isolate -- --test-threads=1
-      - name: selftest (the manifest again through the binary; host copy of languages.toml, every CI language required)
+      - name: selftest (the manifest again through the binary; host copy of languages.toml, every language not selftest_optional required)
         run: |
           cargo run --locked -q -p judge-cli --features isolate -- selftest --languages languages.toml --testlib assets/testlib \
-            --programs tests/programs --host-languages "$RUNNER_TEMP/languages.host.toml" \
-            --require "$JUDGE_SUITE_REQUIRE"
+            --programs tests/programs --host-languages "$RUNNER_TEMP/languages.host.toml"
   # The container image (packaging/Containerfile). Pull requests only build it (so this can be a required check); pushes to main and v* tags also
   # push it to ghcr.io/qhhoj/judge-v2 (:sha-<12>, :main, and :vX.Y.Z on a tag that check-release-tag.sh accepts) with a build provenance
   # attestation (`gh attestation verify oci://ghcr.io/qhhoj/judge-v2:<tag> -R qhhoj/judge-v2`). The isolate selftest needs cgroup

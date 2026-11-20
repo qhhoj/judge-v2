@@ -41,7 +41,6 @@ Never send private keys (WireGuard `privatekey`, the judge key) back anywhere.
 | This judge inside the tunnel | `10.77.0.2` (a second judge gets `10.77.0.3`, and so on: ask the site admin) |
 | Bridge | `bridge.qhhoj.internal:9990` (gRPC over TLS) |
 | Problem data | NFS `10.77.0.1:/srv/qhhoj/problem-data`, mounted read-only at `/srv/qhhoj/problem-data` |
-| Day-one languages | `C,C11,CLANG,CPP03,CPP11,CPP14,CPP17,CPP20,CPP23,CLANGX,PY3,PYPY3,PAS,JAVA,JAVA8,KOTLIN,RUBY,D,LUA,ADA,GAS64,TEXT` |
 
 ## Phase A: prepare the machine (on your own)
 
@@ -154,9 +153,8 @@ systemctl stop qhhoj-judge
 install -o root -g root -m 4755 isolate /usr/local/bin/isolate
 diff "$B/isolate.conf" /usr/local/etc/isolate && echo "config unchanged"
 probe                                   # add_key: Function not implemented
-DAY_ONE_LANGUAGES=$(sed -n 's/^| Day-one languages | `\(.*\)` |$/\1/p' /opt/qhhoj-judge/current/DEPLOY.md)
 sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
-  --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # last line ends in ok
+  --config /etc/qhhoj-judge/config.toml       # last line ends in ok
 systemctl start qhhoj-judge             # only after the probe line above and a selftest without MISMATCH
 ```
 
@@ -312,9 +310,8 @@ From the second session, open a **new** SSH connection to prove you can still ge
 ### 10. Verify
 
 ```sh
-DAY_ONE_LANGUAGES=$(sed -n 's/^| Day-one languages | `\(.*\)` |$/\1/p' /opt/qhhoj-judge/current/DEPLOY.md)   # the row of "Fixed values"
 sudo -u qhhoj-judge /opt/qhhoj-judge/current/qhhoj-judge selftest \
-  --config /etc/qhhoj-judge/config.toml --require "$DAY_ONE_LANGUAGES"       # last line ends in ok
+  --config /etc/qhhoj-judge/config.toml       # last line ends in ok
 bash /opt/qhhoj-judge/current/packaging/check-host.sh --bridge bridge.qhhoj.internal:9990
 systemctl show qhhoj-judge -p NoNewPrivileges                               # NoNewPrivileges=no
 ```
@@ -363,7 +360,7 @@ podman run --rm --cgroupns=private --systemd=always --cap-add=SYS_ADMIN --cap-ad
   -v /etc/qhhoj-judge:/etc/qhhoj-judge:ro \
   -v /srv/qhhoj/problem-data:/srv/qhhoj/problem-data:ro \
   -v qhhoj-isolate:/var/local/lib/isolate \
-  ghcr.io/qhhoj/judge-v2:main qhhoj-judge selftest --require "$DAY_ONE_LANGUAGES"
+  ghcr.io/qhhoj/judge-v2:main qhhoj-judge selftest
 ```
 
 The entrypoint (`cg-setup.sh`) prepares the cgroup, then runs the command you give; with no command
@@ -502,7 +499,7 @@ layer is not set up; `test result: ok` with no `skip:` lines is the pass.
 | TLS check fails with "verify error" | Wrong `bridge-ca.pem`, or `/etc/hosts` lacks `bridge.qhhoj.internal` |
 | Journal: `Judge key check failed` / no session | Wrong key or `name`; the key file must be exactly the key, mode 0400 root |
 | Every submission is "internal error" | `NoNewPrivileges=yes`, isolate not setuid, or `isolate.service` not running |
-| One language always fails | `selftest --require <LANG>` names the missing compiler |
+| One language always fails | `selftest` names a language whose compiler or runtime is missing ("not advertised") |
 | Judge refuses to start: `isolate config pins box …` or `… no cpuset controller` | [CPU pinning by cpuset](#cpu-pinning-by-cpuset): regenerate the `box<id>.cpus` lines, or check the controller |
 | After a reboot nothing works | `systemctl status wg-quick@wg0 isolate qhhoj-judge-tuning qhhoj-judge`; `findmnt /srv/qhhoj/problem-data` |
 

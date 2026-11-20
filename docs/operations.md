@@ -48,7 +48,8 @@ metadata; the bridge stores only its sha256. Sources are never logged, and compi
 At start the daemon loads the config and logs, probes which languages this host can run (a language whose compiler is
 missing is not advertised in `Hello.runtimes`), creates fresh cache directories, cleans every box it owns, then dials the
 bridge. `qhhoj-judge selftest` judges every row of the conformance manifest (`tests/programs/manifest.toml`) on the host and is
-the check that a host is ready (`--require` names languages that must pass).
+the check that a host is ready: every language of the languages file that has manifest rows must be advertised, unless
+the file marks it `selftest_optional`.
 
 ## Drain
 
@@ -72,8 +73,7 @@ JSON lines to stdout, which journald stores, with fields such as `judge`, `submi
 
 1. Unpack the release tarball (or pull the image) next to the running one.
 2. Run the new binary's `qhhoj-judge check-config --config ...` (the daemon's config, data root, cache size, pinning and disk-bound checks; it must print `ok`),
-   then `qhhoj-judge selftest --config ... --require <the day-one languages>` and confirm every line is `ok`
-   (the list is in DEPLOY.md).
+   then `qhhoj-judge selftest --config ...` and confirm every line is `ok`.
 3. Point the `current` symlink at the new release and `systemctl restart qhhoj-judge`; the restart drains the old process.
 4. Roll hosts one at a time, waiting for each to show online.
 
