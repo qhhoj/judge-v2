@@ -157,19 +157,42 @@ mod with_isolate {
         let failing = [
             ("a mismatch", selftest_row("PY3", AC, "WA", &[]), "MISMATCH"),
             ("AC then WA", selftest_row("PY3", "print(3)\n", "AC", &[]), "MISMATCH"),
-            (
-                "a required language absent",
-                selftest_row("PY3", AC, "AC", &["--require", "ZZZ"]),
-                "required but",
-            ),
+            ("a listed language not advertised", selftest_with_absent_language(false), "not advertised ("),
             ("nothing judged", selftest_row("ZZZ", AC, "AC", &[]), "0 judged"),
         ];
         for (what, out, says) in failing {
             assert_eq!(out.code, Some(1), "{what}: {}{}", out.stdout, out.stderr);
             assert!(out.stdout.contains(says), "{what}: {}", out.stdout);
         }
-        let matching = selftest_row("PY3", AC, "AC", &[]);
-        assert_eq!(matching.code, Some(0), "{}{}", matching.stdout, matching.stderr);
+        for (what, out) in [
+            ("one row matching", selftest_row("PY3", AC, "AC", &[])),
+            ("an absent language marked selftest_optional", selftest_with_absent_language(true)),
+        ] {
+            assert_eq!(out.code, Some(0), "{what}: {}{}", out.stdout, out.stderr);
+        }
+    }
+
+    /// selftest with a matching PY3 row and a row for ZZZ, a language whose runtime is missing here.
+    fn selftest_with_absent_language(optional: bool) -> Finished {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sol.py"), AC).unwrap();
+        let rows = "rows = [{ lang = \"PY3\", file = \"sol.py\", expect = \"AC\" }, \
+                    { lang = \"ZZZ\", file = \"sol.py\", expect = \"AC\" }]\n";
+        std::fs::write(dir.path().join("manifest.toml"), rows).unwrap();
+        let shipped = std::fs::read_to_string(format!("{ROOT}/languages.toml")).unwrap();
+        let absent = format!(
+            "{shipped}\n[[language]]\nkey = \"ZZZ\"\nname = \"Absent\"\nsource = \"main.z\"\n\
+             run = [\"/nonexistent/zzz\"]\nversion = [\"/nonexistent/zzz\", \"--version\"]\nselftest_optional = {optional}\n"
+        );
+        let languages = dir.path().join("languages.toml");
+        std::fs::write(&languages, absent).unwrap();
+        let (languages, testlib) = (languages.to_str().unwrap(), format!("{ROOT}/assets/testlib"));
+        let args = ["selftest", "--config", "/nonexistent", "--languages", languages, "--testlib", &testlib];
+        let base = box_base(26);
+        run_within(
+            &[&args[..], &["--programs", dir.path().to_str().unwrap(), "--box-base", &base]].concat(),
+            LIMIT,
+        )
     }
 }
 

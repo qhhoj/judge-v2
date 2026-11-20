@@ -1,7 +1,8 @@
 //! `selftest`: every row of the conformance manifest (`tests/programs/manifest.toml`, shipped in the release)
 //! judged by the real grader with the installed languages file and isolate, on two spare boxes pinned to a
 //! core no slot owns at a low priority, so the live judge keeps running. Fails on any verdict that differs from the
-//! manifest's and on a required language the judge does not advertise; the others are skipped.
+//! manifest's and on a language of the languages file that has manifest rows but is not advertised, unless the file
+//! marks it `selftest_optional`.
 
 use crate::local::{Boxes, LocalJudge};
 use judge_daemon::config::Config;
@@ -33,8 +34,6 @@ pub struct SelftestArgs {
     /// Niceness of the selftest and its boxes.
     #[arg(long, default_value_t = 10)]
     pub nice: i32,
-    #[arg(long, value_delimiter = ',')]
-    pub require: Vec<String>,
     /// Write the host copy of the languages file (runtimes resolved past `/etc`) here and self-test it.
     #[arg(long)]
     pub host_languages: Option<PathBuf>,
@@ -253,11 +252,12 @@ fn run_rows(judge: &mut LocalJudge, programs: &Path, rows: &[Row]) -> anyhow::Re
     Ok(tally)
 }
 
-/// Required keys the judge does not advertise or the manifest has no row for.
-fn missing_required(required: &[String], judge: &LocalJudge, rows: &[Row]) -> Vec<String> {
-    let has_rows = |key: &String| rows.iter().any(|row| &row.lang == key);
-    let missing = required.iter().filter(|key| judge.registry.get(key).is_none() || !has_rows(key));
-    missing.cloned().collect()
+/// The languages the file lists and the manifest has rows for, not `selftest_optional`, that the judge does not advertise.
+fn missing_required(listed: &LanguageRegistry, judge: &LocalJudge, rows: &[Row]) -> Vec<String> {
+    let required = |key: &&str| listed.get(key).is_some_and(|language| !language.selftest_optional);
+    let has_rows = |key: &&str| rows.iter().any(|row| row.lang == *key);
+    let listed_keys = listed.keys().into_iter().filter(required).filter(has_rows);
+    listed_keys.filter(|key| judge.registry.get(key).is_none()).map(str::to_string).collect()
 }
 
 fn print_placement(plan: &Plan, nice: i32) {
@@ -281,11 +281,14 @@ pub fn selftest(plan: Plan, args: &SelftestArgs) -> anyhow::Result<bool> {
     print_placement(&plan, args.nice);
     let mut judge = LocalJudge::new(&languages, &plan.testlib, plan.boxes)?;
     let tally = run_rows(&mut judge, &plan.programs, &rows)?;
-    let missing = missing_required(&args.require, &judge, &rows);
+    let listed = LanguageRegistry::from_toml(&std::fs::read_to_string(&languages)?)?;
+    let missing = missing_required(&listed, &judge, &rows);
     let skipped: Vec<_> = tally.skipped.iter().filter(|key| !missing.contains(key)).collect();
     println!("skipped (not advertised): {skipped:?}");
     if !missing.is_empty() {
-        println!("required but not advertised or without rows: {missing:?}");
+        println!(
+            "not advertised (install it, or mark it selftest_optional in the languages file): {missing:?}"
+        );
     }
     let ok = tally.mismatched == 0 && missing.is_empty() && tally.judged > 0;
     let result = if ok { "ok" } else { "FAIL" };

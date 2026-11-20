@@ -1,6 +1,7 @@
 #![cfg(feature = "isolate")]
 //! Every manifest row, judged for real in isolate, plus the sandbox escape checks. Languages without a
-//! runtime are skipped unless `JUDGE_SUITE_REQUIRE` (comma separated keys) names them. A hung judge
+//! runtime are skipped, unless `JUDGE_SUITE_REQUIRE_ALL=1` (CI) and `languages.toml` does not mark them
+//! `selftest_optional` (the rule `selftest` applies on a judge host). A hung judge
 //! cannot hang the run: every judged submission has a watchdog that ends the process.
 mod common;
 
@@ -171,20 +172,20 @@ fn verdict(s: &mut Suite, code: &str, lang: &str, file: &str) -> String {
     summary(judge(s, code, lang, program(file)))
 }
 
-fn required_keys() -> Vec<String> {
-    let list = std::env::var("JUDGE_SUITE_REQUIRE").unwrap_or_default();
-    list.split(',').filter(|s| !s.is_empty()).map(String::from).collect()
+/// With `JUDGE_SUITE_REQUIRE_ALL=1`, a language must have its runtime here unless it is `selftest_optional`.
+fn required(registry: &LanguageRegistry, key: &str) -> bool {
+    let all = std::env::var("JUDGE_SUITE_REQUIRE_ALL").is_ok_and(|v| v == "1");
+    all && !registry.get(key).is_some_and(|language| language.selftest_optional)
 }
 
 #[test]
 fn every_manifest_row_gets_its_verdict() {
-    let required = required_keys();
     let mut s = suite();
     let mut failures = Vec::new();
     let (mut skipped, mut judged) = (std::collections::BTreeSet::new(), 0);
     for row in &manifest().expanded() {
         if !has_runtime(&s.registry, &row.lang) {
-            if required.contains(&row.lang) {
+            if required(&s.registry, &row.lang) {
                 failures.push(format!("{} required but absent", row.lang));
             }
             skipped.insert(row.lang.clone());
@@ -211,18 +212,10 @@ fn every_manifest_row_gets_its_verdict() {
 }
 
 #[test]
-fn every_required_language_is_in_the_manifest() {
-    let rows = manifest().expanded();
-    for key in required_keys() {
-        assert!(rows.iter().any(|row| row.lang == key), "{key} is required but has no manifest row");
-    }
-}
-
-#[test]
 fn a_pypy_program_gets_the_same_gc_nursery_on_every_host() {
     let mut s = suite();
     if !has_runtime(&s.registry, "PYPY3") {
-        assert!(!required_keys().contains(&"PYPY3".to_string()), "PYPY3 required but absent");
+        assert!(!required(&s.registry, "PYPY3"), "PYPY3 required but absent");
         return eprintln!("skipped: no PYPY3 runtime");
     }
     write_problem(s.data_root(), "nursery", &[("", "4194304\n")]);

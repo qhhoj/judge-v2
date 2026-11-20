@@ -96,6 +96,10 @@ pub struct Language {
     /// name, the other install layout): they are preloaded when present and never reported missing.
     #[serde(default)]
     pub preload_optional: Vec<String>,
+    /// `selftest` may find it not advertised: its runtime is not installed on every host. Every other language with
+    /// conformance rows must be advertised, or the selftest fails.
+    #[serde(default)]
+    pub selftest_optional: bool,
     /// Set at load: the `preload` (required) entries, as written for this host, that name no existing file.
     #[serde(skip)]
     pub preload_missing: Vec<String>,

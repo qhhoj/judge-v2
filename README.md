@@ -39,8 +39,8 @@ boxes 900 and 901 are in use. `qhhoj-judge selftest` judges every row of `tests/
    compile-error program.
 3. `tests/programs/manifest.toml`: one row per program with its expected status (`same_as` reuses another key's rows).
 4. `packaging/Containerfile`: install the compiler or runtime.
-5. `DEPLOY.md`: the apt line in step 3 and the "Day-one languages" row of "Fixed values" (the one place that list is
-   written); also `JUDGE_SUITE_REQUIRE` in `.github/workflows/ci.yml`.
+5. `DEPLOY.md`: the apt line in step 3. `selftest` then requires the language on every host; a runtime that some
+   hosts cannot install gets `selftest_optional = true` in `languages.toml`.
 
 The backend keeps its own language list: add the key there too, or no problem will allow it.
 
@@ -111,9 +111,9 @@ in the per-run outbox, and ends with the session that assigned it (the judge can
 - Caps: `max_total_bytes` over inputs and answers (`STAGE_JOB`, `OUTPUT_LIMIT`), `max_upload_bytes` over the zip,
   `deadline_s` from receipt (`JOB_TIME_LIMIT`), all checked between runs.
 
-`qhhoj-judge selftest [--require KEYS]` judges every row of `tests/programs/manifest.toml` (shipped next to the
-binary) on this host, on spare boxes and a core no slot owns, and exits 1 when any case's status differs (DEPLOY.md
-step 10).
+`qhhoj-judge selftest` judges every row of `tests/programs/manifest.toml` (shipped next to the
+binary) on this host, on spare boxes and a core no slot owns, and exits 1 when any case's status differs, or when a language of the
+languages file that has rows is not advertised (its runtime is missing) and is not `selftest_optional` (DEPLOY.md step 10).
 
 `qhhoj-judge check-config [--probe-box N]` runs the daemon's config, pinning and disk-bound checks (the quota probed
 on spare box 900) and prints the disk bound; it exits non-zero when one of them fails. `selftest` covers the

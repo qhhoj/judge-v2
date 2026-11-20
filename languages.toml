@@ -13,7 +13,8 @@
 # version is written. check-config fails for an installed language when any `preload` entry names no file here (a
 # pattern gone stale would stop preloading silently); `preload_optional` has the same syntax for entries that may be
 # absent on a working host (an extra library, the run binary's own name): preloaded when present, never reported.
-# compile_processes defaults to 32, processes to 1. A missing compiler only disables its language (selftest).
+# compile_processes defaults to 32, processes to 1. A missing compiler disables its language on that host; `selftest`
+# then fails, unless the entry has `selftest_optional = true` (a runtime some hosts cannot install).
 
 [[language]]
 key = "C"
@@ -283,6 +284,8 @@ name = "Brainfuck"
 source = "main.bf"
 run = ["/usr/bin/bf", "main.bf"]
 version = ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "bf"]
+# Ubuntu 24.04 ships no `bf` interpreter: the language is disabled on the site (4 legacy submissions).
+selftest_optional = true
 
 [[language]]
 key = "GAS64"
