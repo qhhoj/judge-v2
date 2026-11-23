@@ -8,14 +8,18 @@ use crate::wire::{self, Assignment, BridgeEvent, HelloInfo, JudgeMessage, Resume
 use judge_grader::generate::{GenerationFailure, GenerationPlan};
 use judge_proto::v1::judge_link_client::JudgeLinkClient;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc, watch};
-use tokio_stream::wrappers::ReceiverStream;
+use tokio::sync::{RwLock, mpsc, oneshot, watch};
+use tokio_stream::Stream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
 pub const HANDSHAKE: Duration = Duration::from_secs(15);
 pub const IDLE: Duration = Duration::from_secs(60);
+/// After the judge ended its stream at stop, the bridge ends the session within this, or it is cut.
+pub const CLOSE: Duration = Duration::from_secs(15);
 /// A session at least this long resets the reconnect backoff.
 pub const STABLE_SESSION: Duration = Duration::from_secs(30);
 pub const MAX_MESSAGE: usize = 4 << 20;
@@ -103,16 +107,15 @@ pub fn authed<T>(config: &Config, message: T) -> Result<tonic::Request<T>, LinkE
     Ok(request)
 }
 
-/// Runs sessions until `stop` turns true (a live session is cut at once); reconnects with backoff.
+/// Runs sessions until `stop` turns true; reconnects with backoff. A welcomed session ends its stream after
+/// `Draining` and waits up to `CLOSE` for the bridge to end it (issue #94); one still connecting is cut at once.
 pub async fn run_link(ctx: LinkContext, mut stop: watch::Receiver<bool>) {
     let reconnect = &ctx.config.reconnect;
     let mut backoff =
         Backoff::new(Duration::from_millis(reconnect.initial_ms), Duration::from_millis(reconnect.max_ms));
     while !*stop.borrow() {
         let started = std::time::Instant::now();
-        if let Some(ended) = until_stopped(session(&ctx), &mut stop).await {
-            log_end(ended);
-        }
+        log_end(session(&ctx, &mut stop).await);
         // Only a session that lasted resets the backoff: a Welcome-then-close loop keeps backing off.
         if started.elapsed() >= STABLE_SESSION {
             backoff.reset();
@@ -139,7 +142,7 @@ async fn stopped(stop: &mut watch::Receiver<bool>) {
 
 fn log_end(ended: Result<(), LinkError>) {
     match ended {
-        Ok(()) => tracing::info!("bridge closed the session"),
+        Ok(()) => tracing::info!("bridge session ended"),
         Err(error) => tracing::warn!(%error, "bridge session ended"),
     }
 }
@@ -157,7 +160,30 @@ struct Watch {
     draining: watch::Receiver<bool>,
     /// Until Draining is sent.
     watching: bool,
+    stop: watch::Receiver<bool>,
+    /// Our stream has ended: `idle_at` is the `CLOSE` deadline.
+    closing: bool,
     idle_at: tokio::time::Instant,
+}
+
+/// The session's request stream: the queued messages, then its end once `close` fires (or its sender is gone).
+struct Outbound {
+    rx: mpsc::Receiver<JudgeMessage>,
+    close: Option<oneshot::Receiver<()>>,
+}
+
+impl Stream for Outbound {
+    type Item = JudgeMessage;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<JudgeMessage>> {
+        let closed = self.close.as_mut().is_some_and(|close| Pin::new(close).poll(cx).is_ready());
+        if closed {
+            // What is already queued still goes out; nothing new is taken.
+            self.rx.close();
+            self.close = None;
+        }
+        self.rx.poll_recv(cx)
+    }
 }
 
 /// Per-session state: what has been sent per ref, and the send queue.
@@ -165,6 +191,8 @@ struct Session<'a> {
     ctx: &'a LinkContext,
     session_id: String,
     tx: mpsc::Sender<JudgeMessage>,
+    /// Ends the request stream (`Outbound`).
+    close: Option<oneshot::Sender<()>>,
     sent: HashMap<AssignmentRef, u32>,
 }
 
@@ -177,9 +205,9 @@ struct Welcomed {
 async fn handshake(
     ctx: &LinkContext,
     client: &mut JudgeLinkClient<Channel>,
-    rx: mpsc::Receiver<JudgeMessage>,
+    outbound: Outbound,
 ) -> Result<(tonic::Streaming<wire::BridgeMessage>, Welcomed), LinkError> {
-    let mut inbound = client.session(authed(&ctx.config, ReceiverStream::new(rx))?).await?.into_inner();
+    let mut inbound = client.session(authed(&ctx.config, outbound)?).await?.into_inner();
     let first = inbound.message().await?;
     let event = first.map(wire::from_bridge).transpose().map_err(|e| LinkError::Protocol(e.to_string()))?;
     let Some(BridgeEvent::Welcome { session_id, resume, max_cases_per_message, max_log_bytes, .. }) = event
@@ -190,24 +218,41 @@ async fn handshake(
     Ok((inbound, Welcomed { session_id, resume }))
 }
 
-async fn session(ctx: &LinkContext) -> Result<(), LinkError> {
+/// One session: connecting and the handshake are cut at once by `stop`; a welcomed session closes itself.
+async fn session(ctx: &LinkContext, stop: &mut watch::Receiver<bool>) -> Result<(), LinkError> {
+    let Some(opened) = until_stopped(open(ctx), stop).await else {
+        return Ok(());
+    };
+    let (mut state, mut inbound) = opened?;
+    state.run(&mut inbound, stop.clone()).await
+}
+
+async fn open(ctx: &LinkContext) -> Result<(Session<'_>, tonic::Streaming<wire::BridgeMessage>), LinkError> {
     let channel = endpoint(&ctx.config)?.connect().await?;
     let mut client = JudgeLinkClient::new(channel.clone()).max_decoding_message_size(MAX_MESSAGE);
     let (tx, rx) = mpsc::channel(64);
+    let (close, close_rx) = oneshot::channel();
     let in_flight = ctx.outboxes.in_flight();
     tx.send(wire::hello(&ctx.hello, ctx.pool.slots(), &in_flight)).await.ok();
     // The whole handshake (response headers and Welcome) gets 15 s: a wedged bridge is left.
-    let (mut inbound, welcomed) = tokio::time::timeout(HANDSHAKE, handshake(ctx, &mut client, rx))
-        .await
-        .map_err(|_| LinkError::Protocol("no Welcome in 15 s".into()))??;
+    let (inbound, welcomed) =
+        tokio::time::timeout(HANDSHAKE, handshake(ctx, &mut client, Outbound { rx, close: Some(close_rx) }))
+            .await
+            .map_err(|_| LinkError::Protocol("no Welcome in 15 s".into()))??;
     let outbound = tx.clone();
-    let mut state = Session { ctx, session_id: welcomed.session_id.clone(), tx, sent: HashMap::new() };
+    let mut state = Session {
+        ctx,
+        session_id: welcomed.session_id.clone(),
+        tx,
+        close: Some(close),
+        sent: HashMap::new(),
+    };
     // Resume decisions apply before the session is visible, so no fetch or worker races them.
     state.apply_resume(in_flight, welcomed.resume);
     *ctx.connection.write().await = Some(Connection { channel, session_id: welcomed.session_id, outbound });
     // The backend's local-stack script (scripts/judge/judge-v2-up.sh) waits for this line.
     tracing::info!(judge = %ctx.config.name, "bridge session started");
-    state.run(&mut inbound).await
+    Ok((state, inbound))
 }
 
 impl Session<'_> {
@@ -232,12 +277,17 @@ impl Session<'_> {
         }
     }
 
-    async fn run(&mut self, inbound: &mut tonic::Streaming<wire::BridgeMessage>) -> Result<(), LinkError> {
+    async fn run(
+        &mut self,
+        inbound: &mut tonic::Streaming<wire::BridgeMessage>,
+        stop: watch::Receiver<bool>,
+    ) -> Result<(), LinkError> {
         let mut draining = self.ctx.draining.clone();
         // A drain that began while disconnected is announced before anything is replayed.
         let watching = self.announce_if_draining(&mut draining).await;
         // Only bridge messages (pings included) keep the session alive; our own sends do not.
-        let mut watch = Watch { draining, watching, idle_at: tokio::time::Instant::now() + IDLE };
+        let idle_at = tokio::time::Instant::now() + IDLE;
+        let mut watch = Watch { draining, watching, stop, closing: false, idle_at };
         self.flush().await;
         while self.step(inbound, &mut watch).await? {}
         Ok(())
@@ -257,16 +307,40 @@ impl Session<'_> {
                 w.watching = changed.is_ok() && self.announce_if_draining(&mut w.draining).await;
                 Ok(true)
             }
+            _ = stopped(&mut w.stop), if !w.closing => {
+                self.close(w).await;
+                Ok(true)
+            }
             message = inbound.message() => {
-                w.idle_at = tokio::time::Instant::now() + IDLE;
+                if !w.closing {
+                    w.idle_at = tokio::time::Instant::now() + IDLE;
+                }
                 self.on_message(message).await
             }
-            _ = tokio::time::sleep_until(w.idle_at) => Err(LinkError::Protocol("idle for 60 s".into())),
+            _ = tokio::time::sleep_until(w.idle_at) => Err(LinkError::Protocol(if w.closing {
+                "the bridge did not end the session in 15 s after ours ended".into()
+            } else {
+                "idle for 60 s".into()
+            })),
             _ = self.ctx.outboxes.notified() => {
                 self.flush().await;
                 Ok(true)
             }
         }
+    }
+
+    /// Stop: `Draining` is queued if not sent yet, then our stream ends after it. The session ends when the bridge
+    /// ends it, which it does only after reading our end, so `Draining` is never lost to the stop (issue #94).
+    async fn close(&mut self, w: &mut Watch) {
+        if w.watching {
+            self.announce_if_draining(&mut w.draining).await;
+            w.watching = false;
+        }
+        if let Some(close) = self.close.take() {
+            let _ = close.send(());
+        }
+        w.closing = true;
+        w.idle_at = tokio::time::Instant::now() + CLOSE;
     }
 
     /// Sends `Draining` if the daemon drains; true while it does not (keep watching).

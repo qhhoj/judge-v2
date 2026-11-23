@@ -50,12 +50,14 @@ impl JudgeLink for Service {
             s.push(tx);
             s.len() - 1
         };
-        let received = self.0.received.clone();
+        let (received, sessions) = (self.0.received.clone(), self.0.sessions.clone());
         let mut inbound = request.into_inner();
         tokio::spawn(async move {
             while let Some(Ok(message)) = inbound.next().await {
                 received.lock().unwrap().push((session, message));
             }
+            // As the real bridge does: the judge ended its stream, so the session ends.
+            sessions.lock().unwrap()[session] = mpsc::unbounded_channel().0;
         });
         Ok(Response::new(Box::pin(UnboundedReceiverStream::new(rx))))
     }
