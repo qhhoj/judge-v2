@@ -140,6 +140,15 @@ async fn the_daemon_grades_refuses_unknown_languages_and_drains() {
     let f = graded(&bridge, "scratch").await;
     assert_eq!((f.outcome, f.reason), (v1::Outcome::Retry as i32, v1::RetryReason::RuntimeMissing as i32));
     ack(&bridge, &f);
+    // The Pong comes after the ack was handled: the daemon is idle when the shutdown comes (issue #94).
+    bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Ping(v1::Ping { nonce: 77 })) });
+    eventually(|| {
+        bridge
+            .messages(0)
+            .iter()
+            .any(|m| matches!(&m.body, Some(judge_message::Body::Pong(p)) if p.nonce == 77))
+    })
+    .await;
 
     shutdown.send(()).unwrap();
     eventually(|| {
