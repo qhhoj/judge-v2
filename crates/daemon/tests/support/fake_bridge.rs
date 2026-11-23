@@ -32,6 +32,8 @@ pub struct Shared {
     pub ended: Arc<Mutex<Vec<usize>>>,
     /// When set, a session stays open after the judge ended its stream: a wedged bridge.
     pub hold_open: Arc<AtomicBool>,
+    /// When set, sessions started from now on never read the judge's stream: a stalled bridge.
+    pub deaf: Arc<AtomicBool>,
 }
 
 struct Service(Shared);
@@ -58,7 +60,14 @@ impl JudgeLink for Service {
         let shared = self.0.clone();
         let mut inbound = request.into_inner();
         tokio::spawn(async move {
-            while let Some(Ok(message)) = inbound.next().await {
+            if shared.deaf.load(Ordering::SeqCst) {
+                // The stream stays open, unread: the judge's sends back up.
+                let _unread = inbound;
+                return std::future::pending().await;
+            }
+            while let Some(message) = inbound.next().await {
+                // As the real bridge does: a stream error is only logged; the session ends on the stream's end.
+                let Ok(message) = message else { return };
                 shared.received.lock().unwrap().push((session, message));
             }
             shared.ended.lock().unwrap().push(session);

@@ -18,7 +18,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
 pub const HANDSHAKE: Duration = Duration::from_secs(15);
 pub const IDLE: Duration = Duration::from_secs(60);
-/// After the judge ended its stream at stop, the bridge ends the session within this, or it is cut.
+/// From the stop, a welcomed session has this long to close (Draining, our end, the bridge's end), or it is cut.
 pub const CLOSE: Duration = Duration::from_secs(15);
 /// A session at least this long resets the reconnect backoff.
 pub const STABLE_SESSION: Duration = Duration::from_secs(30);
@@ -156,14 +156,12 @@ async fn end_session(ctx: &LinkContext) {
     ctx.metrics.reconnects.inc();
 }
 
-/// What a session's loop watches besides the stream: the drain signal and the idle deadline.
+/// What a session's loop watches besides the stream: the drain signal, stop, and the idle deadline.
 struct Watch {
     draining: watch::Receiver<bool>,
     /// Until Draining is sent.
     watching: bool,
     stop: watch::Receiver<bool>,
-    /// Our stream has ended: `deadline` is the `CLOSE` deadline, not the idle one.
-    closing: bool,
     deadline: tokio::time::Instant,
 }
 
@@ -174,12 +172,12 @@ enum Signal {
 }
 
 impl Watch {
-    /// The next drain change (while watching) or stop (until closing); the drain goes first when both are ready.
-    async fn next_signal(&mut self) -> Signal {
+    /// The next drain change (while watching) or stop (until `closing`); the drain goes first when both are ready.
+    async fn next_signal(&mut self, closing: bool) -> Signal {
         tokio::select! {
             biased;
             changed = self.draining.changed(), if self.watching => Signal::Drain { open: changed.is_ok() },
-            _ = stopped(&mut self.stop), if !self.closing => Signal::Stop,
+            _ = stopped(&mut self.stop), if !closing => Signal::Stop,
             else => std::future::pending().await,
         }
     }
@@ -248,14 +246,30 @@ async fn handshake(
     Ok((inbound, Welcomed { session_id, resume }))
 }
 
-/// One session: only connecting and the handshake are cut at once by `stop`. From the Welcome on, the session is
-/// started and run outside the stop, so it closes itself and `Draining` is never lost (issue #94).
+/// One session: only connecting and the handshake are cut at once by `stop`. From the Welcome on, the session
+/// closes itself, so `Draining` is never lost (issue #94); `CLOSE` after the stop it is cut wherever it waits.
 async fn session(ctx: &LinkContext, stop: &mut watch::Receiver<bool>) -> Result<(), LinkError> {
     let Some(opened) = until_stopped(open(ctx), stop).await else {
         return Ok(());
     };
-    let (mut state, mut inbound) = start(ctx, opened?).await;
-    state.run(&mut inbound, stop.clone()).await
+    let opened = opened?;
+    let mut bound = stop.clone();
+    tokio::select! {
+        biased;
+        ended = welcomed(ctx, opened, stop.clone()) => ended,
+        _ = close_bound(&mut bound) => Err(LinkError::Protocol("the session did not close in 15 s after stop".into())),
+    }
+}
+
+async fn welcomed(ctx: &LinkContext, opened: Opened, stop: watch::Receiver<bool>) -> Result<(), LinkError> {
+    let (mut state, mut inbound) = start(ctx, opened).await;
+    state.run(&mut inbound, stop).await
+}
+
+/// Resolves `CLOSE` after `stop` turned true.
+async fn close_bound(stop: &mut watch::Receiver<bool>) {
+    stopped(stop).await;
+    tokio::time::sleep(CLOSE).await;
 }
 
 /// Connects, sends Hello and waits for the Welcome.
@@ -325,7 +339,7 @@ impl Session<'_> {
         let watching = self.announce_if_draining(&mut draining).await;
         // Only bridge messages (pings included) keep the session alive; our own sends do not.
         let deadline = tokio::time::Instant::now() + IDLE;
-        let mut watch = Watch { draining, watching, stop, closing: false, deadline };
+        let mut watch = Watch { draining, watching, stop, deadline };
         self.flush().await;
         while self.step(inbound, &mut watch).await? {}
         Ok(())
@@ -341,7 +355,7 @@ impl Session<'_> {
         tokio::select! {
             // Draining first: when a drain and a Final are both ready, the bridge sees Draining first.
             biased;
-            signal = w.next_signal() => self.on_signal(signal, w).await,
+            signal = w.next_signal(self.closing()) => self.on_signal(signal, w).await,
             // A message that is ready wins over its deadline.
             message = tokio::time::timeout_at(deadline, inbound.message()) => self.on_inbound(message, w).await,
             _ = self.ctx.outboxes.notified() => self.on_outbox_change().await,
@@ -361,18 +375,16 @@ impl Session<'_> {
         Ok(true)
     }
 
-    /// A bridge message, or its deadline passed (`Elapsed`). A message moves the idle deadline, not the `CLOSE` one.
+    /// A bridge message, or the idle deadline passed (`Elapsed`).
     async fn on_inbound(
         &mut self,
         message: Result<Result<Option<wire::BridgeMessage>, tonic::Status>, tokio::time::error::Elapsed>,
         w: &mut Watch,
     ) -> Result<bool, LinkError> {
         let Ok(message) = message else {
-            return Err(deadline_error(w.closing));
+            return Err(LinkError::Protocol("idle for 60 s".into()));
         };
-        if !w.closing {
-            w.deadline = tokio::time::Instant::now() + IDLE;
-        }
+        w.deadline = tokio::time::Instant::now() + IDLE;
         self.on_message(message).await
     }
 
@@ -381,19 +393,24 @@ impl Session<'_> {
         Ok(true)
     }
 
-    /// Stop: `Draining` is queued if not sent yet, then our stream ends after it. The session ends when the bridge
-    /// ends it, which it does only after reading our end, so `Draining` is never lost to the stop (issue #94).
+    /// Stop: `Draining` is queued if not sent yet, then any ready outbox message, then our stream ends after them.
+    /// The session ends when the bridge ends it, which it does only after reading our end, so `Draining` is never
+    /// lost to the stop (issue #94). `session` bounds this by `CLOSE`.
     async fn end_our_stream(&mut self, w: &mut Watch) -> Result<bool, LinkError> {
         if w.watching {
             self.announce_if_draining(&mut w.draining).await;
             w.watching = false;
         }
+        self.flush().await;
         if let Some(close) = self.close.take() {
             let _ = close.send(());
         }
-        w.closing = true;
-        w.deadline = tokio::time::Instant::now() + CLOSE;
         Ok(true)
+    }
+
+    /// Our stream has ended at stop: nothing more can be sent, so no new work is taken.
+    fn closing(&self) -> bool {
+        self.close.is_none()
     }
 
     /// Sends `Draining` if the daemon drains; true while it does not (keep watching).
@@ -460,6 +477,11 @@ impl Session<'_> {
 
     async fn generate(&mut self, plan: GenerationPlan) {
         let id = plan.id.clone();
+        if self.closing() {
+            // The bridge takes it back when the session ends.
+            tracing::info!(generation = %id, "generation dropped: the judge is stopping");
+            return;
+        }
         if self.ctx.pool.generate(plan, self.session_id.clone()).is_err() {
             self.tx.send(wire::generation_slots_full(&id)).await.ok();
             let refused = GenerationFailure::internal("no free slot");
@@ -469,19 +491,15 @@ impl Session<'_> {
 
     async fn assign(&mut self, assignment: Assignment) {
         let r = assignment.r.clone();
+        if self.closing() {
+            // The bridge takes it back when the session ends.
+            tracing::info!(submission = %r.submission_id, "assignment dropped: the judge is stopping");
+            return;
+        }
         if self.ctx.pool.assign(assignment).is_err() {
             self.tx.send(wire::slots_full(&r)).await.ok();
         }
     }
-}
-
-/// Why the session's deadline passed.
-fn deadline_error(closing: bool) -> LinkError {
-    LinkError::Protocol(if closing {
-        "the bridge did not end the session in 15 s after ours ended".into()
-    } else {
-        "idle for 60 s".into()
-    })
 }
 
 #[cfg(test)]

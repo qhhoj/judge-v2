@@ -1,15 +1,16 @@
 mod support;
 use judge_daemon::config::parse;
-use judge_daemon::link::{CLOSE, LinkContext, SlotPool, SlotsFull, run_link};
+use judge_daemon::link::{CLOSE, Connection, LinkContext, SlotPool, SlotsFull, run_link};
 use judge_daemon::metrics::Metrics;
 use judge_daemon::outbox::{AssignmentRef, Body, OUTBOX_WATERMARK, Outboxes};
 use judge_daemon::wire::{Assignment, HelloInfo, seq_of};
 use judge_grader::generate::GenerationPlan;
 use judge_proto::v1::{self, BridgeMessage, bridge_message, judge_message};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use support::fake_bridge::{eventually, start};
-use tokio::sync::watch;
+use tokio::sync::{RwLock, watch};
 
 #[derive(Default)]
 struct FakePool {
@@ -59,6 +60,7 @@ struct Harness {
     pool: Arc<FakePool>,
     stop: watch::Sender<bool>,
     drain: watch::Sender<bool>,
+    connection: Arc<RwLock<Option<Connection>>>,
     _key: tempfile::TempDir,
 }
 
@@ -74,6 +76,7 @@ async fn harness(full: bool) -> Harness {
     let pool = Arc::new(FakePool { full, ..Default::default() });
     let (stop, stop_rx) = watch::channel(false);
     let (drain, drain_rx) = watch::channel(false);
+    let connection: Arc<RwLock<Option<Connection>>> = Default::default();
     let ctx = LinkContext {
         config: Arc::new(config),
         outboxes: outboxes.clone(),
@@ -84,12 +87,12 @@ async fn harness(full: bool) -> Harness {
             runtimes: vec![],
             features: vec![],
         },
-        connection: Default::default(),
+        connection: connection.clone(),
         metrics: Arc::new(Metrics::new()),
         draining: drain_rx,
     };
     let link = tokio::spawn(run_link(ctx, stop_rx));
-    Harness { link, bridge, outboxes, pool, stop, drain, _key: key }
+    Harness { link, bridge, outboxes, pool, stop, drain, connection, _key: key }
 }
 
 fn welcome(resume: Vec<v1::Resume>) -> BridgeMessage {
@@ -294,7 +297,7 @@ async fn stop_ends_a_live_session() {
 #[tokio::test]
 async fn stop_gives_up_on_a_bridge_that_never_ends_the_session_after_close() {
     let h = harness(false).await;
-    h.bridge.hold_open.store(true, std::sync::atomic::Ordering::SeqCst);
+    h.bridge.hold_open.store(true, Ordering::SeqCst);
     eventually(|| h.bridge.session_count() == 1).await;
     h.bridge.send(0, welcome(vec![]));
     h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Ping(v1::Ping { nonce: 1 })) });
@@ -313,6 +316,87 @@ async fn stop_gives_up_on_a_bridge_that_never_ends_the_session_after_close() {
         "the CLOSE deadline ended it, not the idle one: {waited:?}"
     );
     assert_eq!(h.bridge.session_count(), 1, "no reconnect after stop");
+}
+
+/// Welcomes session 0 and waits for a Pong: the session is live and idle.
+async fn live_session(h: &Harness) {
+    h.bridge.send(0, welcome(vec![]));
+    h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Ping(v1::Ping { nonce: 1 })) });
+    eventually(|| h.bridge.messages(0).iter().any(|m| matches!(&m.body, Some(judge_message::Body::Pong(_)))))
+        .await;
+}
+
+/// A bridge that stops reading: the session blocks in a send on its full queue, where it does not see the stop.
+/// The link still ends `CLOSE` after the stop. The outbox is far more than HTTP/2 and the queue can hold.
+#[tokio::test]
+async fn stop_ends_a_session_blocked_on_a_bridge_that_stopped_reading() {
+    let h = harness(false).await;
+    h.bridge.deaf.store(true, Ordering::SeqCst);
+    eventually(|| h.bridge.session_count() == 1).await;
+    let log = "x".repeat(64 << 10);
+    for i in 0..512 {
+        let id = r(&format!("big{i}"));
+        h.outboxes.open(&id);
+        let body = Body::Final {
+            outcome: judge_grader::judge::Outcome::Graded,
+            log: log.clone(),
+            data_version_used: 0,
+        };
+        h.outboxes.push(&id, body);
+    }
+    h.bridge.send(0, welcome(vec![]));
+    eventually(|| h.connection.try_read().is_ok_and(|c| c.is_some())).await;
+    tokio::time::pause();
+    let stopped_at = tokio::time::Instant::now();
+    h.stop.send(true).unwrap();
+    // Well under the HTTP/2 keepalive timeout (10 + 20 s), which would also end the session.
+    let ended = tokio::time::timeout(CLOSE + Duration::from_secs(1), h.link).await;
+    ended.expect("the link ended within CLOSE of the stop").unwrap();
+    assert!(stopped_at.elapsed() >= CLOSE, "the session was blocked until the bound");
+}
+
+fn assign_message(id: &str) -> BridgeMessage {
+    BridgeMessage {
+        body: Some(bridge_message::Body::Assign(v1::Assign {
+            r#ref: pref(id),
+            problem_code: "p".into(),
+            data_version: 1,
+            language_key: "PY3".into(),
+            source: b"print(1)".to_vec(),
+            time_limit_s: 1.0,
+            memory_limit_kib: 262_144,
+            ..Default::default()
+        })),
+    }
+}
+
+/// After stop the session takes no new work: its result could never be sent. A Welcome that arrives with the stop
+/// is the same case, as the session sees the stop before its first bridge message.
+#[tokio::test]
+async fn after_stop_the_session_starts_no_run_and_no_generation() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    live_session(&h).await;
+    h.bridge.send(0, assign_message("late"));
+    h.bridge.send(0, generate_message("g-late"));
+    // Still handled after stop: its event shows that the two messages before it were read.
+    h.bridge.send(0, abort_message("marker"));
+    h.stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), h.link).await.expect("link stopped").unwrap();
+    assert_eq!(*h.pool.events.lock().unwrap(), ["abort marker", "cancel all generations"]);
+}
+
+/// Issue #94: drain and stop at once on an idle session; Draining still reaches the bridge before our end.
+#[tokio::test]
+async fn drain_then_stop_on_an_idle_session_sends_draining_before_our_end() {
+    let h = harness(false).await;
+    eventually(|| h.bridge.session_count() == 1).await;
+    live_session(&h).await;
+    h.drain.send(true).unwrap();
+    h.stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), h.link).await.expect("link stopped").unwrap();
+    assert_eq!(drainings(&h.bridge.messages(0)), 1);
+    assert!(h.bridge.ended.lock().unwrap().contains(&0), "the bridge saw our end");
 }
 
 fn order_of(messages: &[v1::JudgeMessage]) -> Vec<&'static str> {
