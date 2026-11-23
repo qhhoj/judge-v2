@@ -34,6 +34,8 @@ tonic = { workspace = true, features = ["tls-ring"] }
 
 [dev-dependencies]
 prost.workspace = true
+# tokio::time::pause: the CLOSE bound test runs 15 s of paused time at once.
+tokio = { workspace = true, features = ["test-util"] }
 conformance.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true

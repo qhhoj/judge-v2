@@ -56,6 +56,8 @@ the file marks it `selftest_optional`.
 On SIGTERM the daemon sends `Draining` (the bridge stops assigning to it) and finishes running assignments for up to
 `drain_timeout_s`, then exits; unfinished work follows the grace path in [protocol.md](protocol.md). A draining judge
 still accepts an `Assign` that crossed its `Draining` message while a slot is free; it refuses only when no slot is free.
+A stop can take up to `drain_timeout_s` + 15 s (the bridge gets 15 s to end the session), so keep that sum under the
+unit's `TimeoutStopSec` (150 s; the default 120 + 15 = 135 s fits).
 
 ## Metrics
 

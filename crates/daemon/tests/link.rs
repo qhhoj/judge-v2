@@ -1,12 +1,13 @@
 mod support;
 use judge_daemon::config::parse;
-use judge_daemon::link::{LinkContext, SlotPool, SlotsFull, run_link};
+use judge_daemon::link::{CLOSE, LinkContext, SlotPool, SlotsFull, run_link};
 use judge_daemon::metrics::Metrics;
 use judge_daemon::outbox::{AssignmentRef, Body, OUTBOX_WATERMARK, Outboxes};
 use judge_daemon::wire::{Assignment, HelloInfo, seq_of};
 use judge_grader::generate::GenerationPlan;
 use judge_proto::v1::{self, BridgeMessage, bridge_message, judge_message};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use support::fake_bridge::{eventually, start};
 use tokio::sync::watch;
 
@@ -285,6 +286,32 @@ async fn stop_ends_a_live_session() {
         .await;
     h.stop.send(true).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(2), h.link).await.expect("link stopped").unwrap();
+    assert_eq!(h.bridge.session_count(), 1, "no reconnect after stop");
+}
+
+/// A bridge that reads our end but never ends the session: the link gives up after `CLOSE`. Time is paused once
+/// our end has reached the bridge, so the 15 s pass at once.
+#[tokio::test]
+async fn stop_gives_up_on_a_bridge_that_never_ends_the_session_after_close() {
+    let h = harness(false).await;
+    h.bridge.hold_open.store(true, std::sync::atomic::Ordering::SeqCst);
+    eventually(|| h.bridge.session_count() == 1).await;
+    h.bridge.send(0, welcome(vec![]));
+    h.bridge.send(0, BridgeMessage { body: Some(bridge_message::Body::Ping(v1::Ping { nonce: 1 })) });
+    eventually(|| h.bridge.messages(0).iter().any(|m| matches!(&m.body, Some(judge_message::Body::Pong(_)))))
+        .await;
+    let stopped_at = tokio::time::Instant::now();
+    h.stop.send(true).unwrap();
+    eventually(|| h.bridge.ended.lock().unwrap().contains(&0)).await;
+    tokio::time::pause();
+    h.link.await.unwrap();
+    let waited = stopped_at.elapsed();
+    assert!(waited >= CLOSE, "the link waited for the bridge: {waited:?}");
+    // The idle deadline (60 s) would end it later; 5 s covers the real time before the pause.
+    assert!(
+        waited < CLOSE + Duration::from_secs(5),
+        "the CLOSE deadline ended it, not the idle one: {waited:?}"
+    );
     assert_eq!(h.bridge.session_count(), 1, "no reconnect after stop");
 }
 

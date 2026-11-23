@@ -125,9 +125,10 @@ pub async fn run_link(ctx: LinkContext, mut stop: watch::Receiver<bool>) {
     }
 }
 
-/// `work`'s output, or None when `stop` turned true first.
+/// `work`'s output, or None when `stop` turned true first; work that is ready wins over a stop.
 async fn until_stopped<T>(work: impl Future<Output = T>, stop: &mut watch::Receiver<bool>) -> Option<T> {
     tokio::select! {
+        biased;
         output = work => Some(output),
         _ = stopped(stop) => None,
     }
@@ -161,9 +162,27 @@ struct Watch {
     /// Until Draining is sent.
     watching: bool,
     stop: watch::Receiver<bool>,
-    /// Our stream has ended: `idle_at` is the `CLOSE` deadline.
+    /// Our stream has ended: `deadline` is the `CLOSE` deadline, not the idle one.
     closing: bool,
-    idle_at: tokio::time::Instant,
+    deadline: tokio::time::Instant,
+}
+
+/// What the session's `Watch` saw: the drain signal changed (`open` false: its channel is gone), or `stop`.
+enum Signal {
+    Drain { open: bool },
+    Stop,
+}
+
+impl Watch {
+    /// The next drain change (while watching) or stop (until closing); the drain goes first when both are ready.
+    async fn next_signal(&mut self) -> Signal {
+        tokio::select! {
+            biased;
+            changed = self.draining.changed(), if self.watching => Signal::Drain { open: changed.is_ok() },
+            _ = stopped(&mut self.stop), if !self.closing => Signal::Stop,
+            else => std::future::pending().await,
+        }
+    }
 }
 
 /// The session's request stream: the queued messages, then its end once `close` fires (or its sender is gone).
@@ -201,6 +220,17 @@ struct Welcomed {
     resume: Vec<(AssignmentRef, ResumeDecision)>,
 }
 
+/// A stream the bridge has welcomed, not yet visible to the rest of the daemon.
+struct Opened {
+    channel: Channel,
+    inbound: tonic::Streaming<wire::BridgeMessage>,
+    welcomed: Welcomed,
+    tx: mpsc::Sender<JudgeMessage>,
+    close: oneshot::Sender<()>,
+    /// The runs the Hello listed, which the Welcome's resume decisions answer.
+    in_flight: Vec<(AssignmentRef, u32)>,
+}
+
 /// Opens the stream and reads the first bridge message, which must be Welcome; its limits apply from now on.
 async fn handshake(
     ctx: &LinkContext,
@@ -218,16 +248,18 @@ async fn handshake(
     Ok((inbound, Welcomed { session_id, resume }))
 }
 
-/// One session: connecting and the handshake are cut at once by `stop`; a welcomed session closes itself.
+/// One session: only connecting and the handshake are cut at once by `stop`. From the Welcome on, the session is
+/// started and run outside the stop, so it closes itself and `Draining` is never lost (issue #94).
 async fn session(ctx: &LinkContext, stop: &mut watch::Receiver<bool>) -> Result<(), LinkError> {
     let Some(opened) = until_stopped(open(ctx), stop).await else {
         return Ok(());
     };
-    let (mut state, mut inbound) = opened?;
+    let (mut state, mut inbound) = start(ctx, opened?).await;
     state.run(&mut inbound, stop.clone()).await
 }
 
-async fn open(ctx: &LinkContext) -> Result<(Session<'_>, tonic::Streaming<wire::BridgeMessage>), LinkError> {
+/// Connects, sends Hello and waits for the Welcome.
+async fn open(ctx: &LinkContext) -> Result<Opened, LinkError> {
     let channel = endpoint(&ctx.config)?.connect().await?;
     let mut client = JudgeLinkClient::new(channel.clone()).max_decoding_message_size(MAX_MESSAGE);
     let (tx, rx) = mpsc::channel(64);
@@ -239,6 +271,12 @@ async fn open(ctx: &LinkContext) -> Result<(Session<'_>, tonic::Streaming<wire::
         tokio::time::timeout(HANDSHAKE, handshake(ctx, &mut client, Outbound { rx, close: Some(close_rx) }))
             .await
             .map_err(|_| LinkError::Protocol("no Welcome in 15 s".into()))??;
+    Ok(Opened { channel, inbound, welcomed, tx, close, in_flight })
+}
+
+/// Applies the Welcome's resume decisions, then makes the session visible (`Connection`).
+async fn start(ctx: &LinkContext, opened: Opened) -> (Session<'_>, tonic::Streaming<wire::BridgeMessage>) {
+    let Opened { channel, inbound, welcomed, tx, close, in_flight } = opened;
     let outbound = tx.clone();
     let mut state = Session {
         ctx,
@@ -252,7 +290,7 @@ async fn open(ctx: &LinkContext) -> Result<(Session<'_>, tonic::Streaming<wire::
     *ctx.connection.write().await = Some(Connection { channel, session_id: welcomed.session_id, outbound });
     // The backend's local-stack script (scripts/judge/judge-v2-up.sh) waits for this line.
     tracing::info!(judge = %ctx.config.name, "bridge session started");
-    Ok((state, inbound))
+    (state, inbound)
 }
 
 impl Session<'_> {
@@ -286,8 +324,8 @@ impl Session<'_> {
         // A drain that began while disconnected is announced before anything is replayed.
         let watching = self.announce_if_draining(&mut draining).await;
         // Only bridge messages (pings included) keep the session alive; our own sends do not.
-        let idle_at = tokio::time::Instant::now() + IDLE;
-        let mut watch = Watch { draining, watching, stop, closing: false, idle_at };
+        let deadline = tokio::time::Instant::now() + IDLE;
+        let mut watch = Watch { draining, watching, stop, closing: false, deadline };
         self.flush().await;
         while self.step(inbound, &mut watch).await? {}
         Ok(())
@@ -299,39 +337,53 @@ impl Session<'_> {
         inbound: &mut tonic::Streaming<wire::BridgeMessage>,
         w: &mut Watch,
     ) -> Result<bool, LinkError> {
+        let deadline = w.deadline;
         tokio::select! {
             // Draining first: when a drain and a Final are both ready, the bridge sees Draining first.
             biased;
-            changed = w.draining.changed(), if w.watching => {
-                // A closed drain channel means the daemon never drains.
-                w.watching = changed.is_ok() && self.announce_if_draining(&mut w.draining).await;
-                Ok(true)
-            }
-            _ = stopped(&mut w.stop), if !w.closing => {
-                self.close(w).await;
-                Ok(true)
-            }
-            message = inbound.message() => {
-                if !w.closing {
-                    w.idle_at = tokio::time::Instant::now() + IDLE;
-                }
-                self.on_message(message).await
-            }
-            _ = tokio::time::sleep_until(w.idle_at) => Err(LinkError::Protocol(if w.closing {
-                "the bridge did not end the session in 15 s after ours ended".into()
-            } else {
-                "idle for 60 s".into()
-            })),
-            _ = self.ctx.outboxes.notified() => {
-                self.flush().await;
-                Ok(true)
-            }
+            signal = w.next_signal() => self.on_signal(signal, w).await,
+            // A message that is ready wins over its deadline.
+            message = tokio::time::timeout_at(deadline, inbound.message()) => self.on_inbound(message, w).await,
+            _ = self.ctx.outboxes.notified() => self.on_outbox_change().await,
         }
+    }
+
+    async fn on_signal(&mut self, signal: Signal, w: &mut Watch) -> Result<bool, LinkError> {
+        match signal {
+            Signal::Drain { open } => self.on_drain_change(open, w).await,
+            Signal::Stop => self.end_our_stream(w).await,
+        }
+    }
+
+    /// `open` is false when the drain channel is closed: the daemon never drains.
+    async fn on_drain_change(&mut self, open: bool, w: &mut Watch) -> Result<bool, LinkError> {
+        w.watching = open && self.announce_if_draining(&mut w.draining).await;
+        Ok(true)
+    }
+
+    /// A bridge message, or its deadline passed (`Elapsed`). A message moves the idle deadline, not the `CLOSE` one.
+    async fn on_inbound(
+        &mut self,
+        message: Result<Result<Option<wire::BridgeMessage>, tonic::Status>, tokio::time::error::Elapsed>,
+        w: &mut Watch,
+    ) -> Result<bool, LinkError> {
+        let Ok(message) = message else {
+            return Err(deadline_error(w.closing));
+        };
+        if !w.closing {
+            w.deadline = tokio::time::Instant::now() + IDLE;
+        }
+        self.on_message(message).await
+    }
+
+    async fn on_outbox_change(&mut self) -> Result<bool, LinkError> {
+        self.flush().await;
+        Ok(true)
     }
 
     /// Stop: `Draining` is queued if not sent yet, then our stream ends after it. The session ends when the bridge
     /// ends it, which it does only after reading our end, so `Draining` is never lost to the stop (issue #94).
-    async fn close(&mut self, w: &mut Watch) {
+    async fn end_our_stream(&mut self, w: &mut Watch) -> Result<bool, LinkError> {
         if w.watching {
             self.announce_if_draining(&mut w.draining).await;
             w.watching = false;
@@ -340,7 +392,8 @@ impl Session<'_> {
             let _ = close.send(());
         }
         w.closing = true;
-        w.idle_at = tokio::time::Instant::now() + CLOSE;
+        w.deadline = tokio::time::Instant::now() + CLOSE;
+        Ok(true)
     }
 
     /// Sends `Draining` if the daemon drains; true while it does not (keep watching).
@@ -420,6 +473,15 @@ impl Session<'_> {
             self.tx.send(wire::slots_full(&r)).await.ok();
         }
     }
+}
+
+/// Why the session's deadline passed.
+fn deadline_error(closing: bool) -> LinkError {
+    LinkError::Protocol(if closing {
+        "the bridge did not end the session in 15 s after ours ended".into()
+    } else {
+        "idle for 60 s".into()
+    })
 }
 
 #[cfg(test)]

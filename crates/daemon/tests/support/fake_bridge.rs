@@ -5,6 +5,7 @@ use judge_proto::v1::{
     BridgeMessage, Chunk, FetchSourceRequest, GenerationRequest, JudgeMessage, UploadChunk, UploadReceipt,
 };
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::{
@@ -27,6 +28,10 @@ pub struct Shared {
     pub bundle: Arc<Mutex<Vec<u8>>>,
     /// Per UploadGeneratedTests call: the first message's generation and session ids, and all the data.
     pub uploads: Arc<Mutex<Vec<Upload>>>,
+    /// The sessions whose judge stream has ended.
+    pub ended: Arc<Mutex<Vec<usize>>>,
+    /// When set, a session stays open after the judge ended its stream: a wedged bridge.
+    pub hold_open: Arc<AtomicBool>,
 }
 
 struct Service(Shared);
@@ -50,14 +55,17 @@ impl JudgeLink for Service {
             s.push(tx);
             s.len() - 1
         };
-        let (received, sessions) = (self.0.received.clone(), self.0.sessions.clone());
+        let shared = self.0.clone();
         let mut inbound = request.into_inner();
         tokio::spawn(async move {
             while let Some(Ok(message)) = inbound.next().await {
-                received.lock().unwrap().push((session, message));
+                shared.received.lock().unwrap().push((session, message));
             }
+            shared.ended.lock().unwrap().push(session);
             // As the real bridge does: the judge ended its stream, so the session ends.
-            sessions.lock().unwrap()[session] = mpsc::unbounded_channel().0;
+            if !shared.hold_open.load(Ordering::SeqCst) {
+                shared.hang_up(session);
+            }
         });
         Ok(Response::new(Box::pin(UnboundedReceiverStream::new(rx))))
     }
